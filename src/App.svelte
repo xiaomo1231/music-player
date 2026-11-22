@@ -27,6 +27,7 @@
   import PlaylistAddModal from './components/PlaylistAddModal.svelte';
   import KeysModal from './components/KeysModal.svelte';
   import FileInfoModal from './components/FileInfoModal.svelte';
+  import ItemMenu from './components/ItemMenu.svelte';
   import VideoPlayer from './overlays/VideoPlayer.svelte';
   import NovelReader from './overlays/NovelReader.svelte';
   import ComicReader from './overlays/ComicReader.svelte';
@@ -176,6 +177,15 @@
     else if (k === '?') ui.open('keys');
   }
 
+  // 屏蔽 WebView 自带的右键菜单（刷新 / 另存为 / 检查等）；输入框里保留复制粘贴。
+  // 开发时在控制台执行 localStorage.setItem('mp.devmenu','1') 可以恢复
+  function onContextMenu(e: MouseEvent) {
+    const t = e.target as HTMLElement | null;
+    if (t?.closest('input, textarea, [contenteditable="true"], .selectable')) return;
+    if (import.meta.env.DEV && localStorage.getItem('mp.devmenu') === '1') return;
+    e.preventDefault();
+  }
+
   // 拖放：文件或文件夹直接入库并播放 / 打开
   let dragging = $state(false);
   onMount(() => {
@@ -211,6 +221,7 @@
   });
 
   const openItem = (id: number, kind: string) => ui.openItem(id, kind);
+  import { openPlaylistMenu } from './lib/playlists';
 
   async function openLocal() {
     if (!inTauri) return;
@@ -245,7 +256,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} onmousemove={wake} onmousedown={wake} onkeydowncapture={wake} onwheel={wake} />
+<svelte:window oncontextmenu={onContextMenu} onkeydown={onKey} onmousemove={wake} onmousedown={wake} onkeydowncapture={wake} onwheel={wake} />
 
 <div class="bg mp-bgfx"><i></i><i></i><i></i></div>
 <aside data-static>
@@ -258,7 +269,8 @@
   <h6>歌单</h6>
   <div id="plside">
     {#each lib.playlists as p (p.id)}
-      <button class:on={ui.view === 'music' && ui.playlistId === p.id} onclick={() => { ui.playlistId = p.id; ui.go('music'); }}>
+      <button class:on={ui.view === 'music' && ui.playlistId === p.id} onclick={() => { ui.playlistId = p.id; ui.go('music'); }}
+        oncontextmenu={e => openPlaylistMenu(e, p)}>
         <Icon name="list" /><span>{p.name}</span><small>{p.count}</small>
       </button>
     {/each}
@@ -312,6 +324,8 @@
 {#if ui.videoId != null}<VideoPlayer />{/if}
 {#if ui.bookId != null}<NovelReader />{/if}
 {#if ui.comicId != null}<ComicReader />{/if}
+
+<ItemMenu />
 
 <div class="mp-dim"></div>
 <div class="mp-refresh" class:run={ui.refreshRun > 0}></div>

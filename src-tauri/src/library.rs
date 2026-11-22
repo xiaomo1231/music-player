@@ -34,7 +34,7 @@ pub struct Track {
     pub size: i64,
 }
 
-const TRACK_COLS: &str = "f.id,f.path,t.title,t.artist,t.album,t.album_artist,t.track_no,t.disc_no,t.year,t.genre,t.duration,t.format,t.lossless,t.bitrate,t.sample_rate,t.bit_depth,t.cover,t.hue,t.play_count,t.skip_count,t.last_played,t.favorite,f.added_at,f.encrypted,f.size";
+const TRACK_COLS: &str = "f.id,f.path,coalesce(f.custom_title,t.title),t.artist,t.album,t.album_artist,t.track_no,t.disc_no,t.year,t.genre,t.duration,t.format,t.lossless,t.bitrate,t.sample_rate,t.bit_depth,coalesce(f.custom_cover,t.cover),t.hue,t.play_count,t.skip_count,t.last_played,t.favorite,f.added_at,f.encrypted,f.size";
 
 fn track_row(r: &Row) -> rusqlite::Result<Track> {
     Ok(Track {
@@ -101,7 +101,7 @@ pub struct Video {
     pub added_at: i64,
 }
 
-const VIDEO_COLS: &str = "f.id,f.path,v.title,v.series_id,v.season,v.episode,v.release_group,v.resolution,v.duration,v.position,v.watched,v.last_played,v.subs,v.thumb,f.size,f.added_at";
+const VIDEO_COLS: &str = "f.id,f.path,coalesce(f.custom_title,v.title),v.series_id,v.season,v.episode,v.release_group,v.resolution,v.duration,v.position,v.watched,v.last_played,v.subs,coalesce(f.custom_cover,v.thumb),f.size,f.added_at";
 
 fn video_row(r: &Row) -> rusqlite::Result<Video> {
     Ok(Video {
@@ -148,7 +148,7 @@ pub struct Series {
 
 pub fn series(conn: &Connection, kind: &str) -> Result<Vec<Series>> {
     let mut st = conn.prepare(
-        "SELECT s.id,s.title,s.kind,s.poster,count(v.file_id),sum(v.watched),count(DISTINCT v.season),sum(v.subs='none'),max(v.last_played),
+        "SELECT s.id,coalesce(s.custom_title,s.title),s.kind,coalesce(s.custom_cover,s.poster),count(v.file_id),sum(v.watched),count(DISTINCT v.season),sum(v.subs='none'),max(v.last_played),
                 (SELECT v2.thumb FROM videos v2 WHERE v2.series_id=s.id AND v2.thumb IS NOT NULL LIMIT 1)
          FROM series s JOIN videos v ON v.series_id=s.id JOIN files f ON f.id=v.file_id
          WHERE f.missing=0 AND s.kind=?1 GROUP BY s.id ORDER BY max(coalesce(v.last_played,0)) DESC, s.title",
@@ -263,7 +263,7 @@ pub struct BookItem {
 
 pub fn books(conn: &Connection) -> Result<Vec<BookItem>> {
     let mut st = conn.prepare(
-        "SELECT f.id,f.path,b.title,b.author,b.format,b.chapter,b.chapters,b.offset,b.cover,b.last_read,f.size FROM books b JOIN files f ON f.id=b.file_id
+        "SELECT f.id,f.path,coalesce(f.custom_title,b.title),b.author,b.format,b.chapter,b.chapters,b.offset,coalesce(f.custom_cover,b.cover),b.last_read,f.size FROM books b JOIN files f ON f.id=b.file_id
          WHERE f.missing=0 ORDER BY coalesce(b.last_read,0) DESC, b.title",
     )?;
     let v = st
@@ -309,7 +309,7 @@ pub struct ComicItem {
 
 pub fn comics(conn: &Connection) -> Result<Vec<ComicItem>> {
     let mut st = conn.prepare(
-        "SELECT f.id,f.path,c.title,c.series,c.format,c.pages,c.page,c.cover,c.last_read FROM comics c JOIN files f ON f.id=c.file_id
+        "SELECT f.id,f.path,coalesce(f.custom_title,c.title),c.series,c.format,c.pages,c.page,coalesce(f.custom_cover,c.cover),c.last_read FROM comics c JOIN files f ON f.id=c.file_id
          WHERE f.missing=0 ORDER BY c.series, c.title",
     )?;
     let mut v: Vec<ComicItem> = st
@@ -377,10 +377,13 @@ pub struct Playlist {
     pub name: String,
     pub count: i64,
     pub covers: Vec<String>,
+    /// 用户设置的封面（绝对路径）
+    pub cover: Option<String>,
 }
 
 pub fn playlists(conn: &Connection) -> Result<Vec<Playlist>> {
-    let mut st = conn.prepare("SELECT p.id,p.name,(SELECT count(*) FROM playlist_items i WHERE i.playlist_id=p.id) FROM playlists p ORDER BY p.sort, p.id")?;
+    let mut st =
+        conn.prepare("SELECT p.id,p.name,(SELECT count(*) FROM playlist_items i WHERE i.playlist_id=p.id),p.cover FROM playlists p ORDER BY p.sort, p.id")?;
     let mut v: Vec<Playlist> = st
         .query_map([], |r| {
             Ok(Playlist {
@@ -388,6 +391,7 @@ pub fn playlists(conn: &Connection) -> Result<Vec<Playlist>> {
                 name: r.get(1)?,
                 count: r.get(2)?,
                 covers: vec![],
+                cover: r.get(3)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;

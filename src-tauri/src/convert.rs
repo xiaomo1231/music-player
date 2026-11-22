@@ -1603,3 +1603,12 @@ mod tests {
         assert!(find_preset("nope").is_err());
     }
 }
+
+/// 删除一条已结束的记录（不动任何文件）
+#[tauri::command]
+pub fn convert_remove(st: State<AppState>, id: i64) -> R<usize> {
+    st.db
+        .lock()
+        .execute("DELETE FROM jobs WHERE id=?1 AND status IN ('done','failed','canceled','undone')", [id])
+        .map_err(s)
+}

@@ -9,6 +9,7 @@ pub mod daily;
 pub mod db;
 pub mod fetch;
 pub mod indexer;
+pub mod item;
 pub mod library;
 pub mod mangatr;
 pub mod media;
@@ -67,7 +68,9 @@ pub struct AppState {
 
 fn init_state(app: &tauri::AppHandle) -> anyhow::Result<AppState> {
     // MP_DATA_DIR：测试时把数据库和缓存放到指定目录，不碰正式数据
-    let (data, cache) = match std::env::var_os("MP_DATA_DIR") {
+    // 只有调试版认这个环境变量，正式版永远用系统的应用数据目录
+    let test_dir = if cfg!(debug_assertions) { std::env::var_os("MP_DATA_DIR") } else { None };
+    let (data, cache) = match test_dir {
         Some(d) => (PathBuf::from(&d), PathBuf::from(&d).join("cache")),
         None => (app.path().app_data_dir()?, app.path().app_local_data_dir()?.join("cache")),
     };
@@ -116,9 +119,14 @@ fn comic_protocol(app: &tauri::AppHandle, req: &tauri::http::Request<Vec<u8>>) -
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    // 调试版用 MP_DATA_DIR 跑测试实例时不做单实例限制（多个测试实例可以同时开）
+    let test_instance = cfg!(debug_assertions) && std::env::var_os("MP_DATA_DIR").is_some();
+    let mut builder = tauri::Builder::default();
+    if !test_instance {
         // 单实例必须第一个注册
-        .plugin(tauri_plugin_single_instance::init(shell::on_second_instance))
+        builder = builder.plugin(tauri_plugin_single_instance::init(shell::on_second_instance));
+    }
+    builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::Builder::new().args(["--minimized"]).build())
         .plugin(tauri_plugin_dialog::init())
@@ -185,6 +193,13 @@ pub fn run() {
             player::mpv_eq,
             player::mpv_set_option,
             player::mpv_play_video,
+            item::item_files,
+            item::item_rename,
+            item::item_set_cover,
+            item::item_remove,
+            item::item_delete,
+            item::item_save_image,
+            item::playlist_set_cover,
             // 各功能模块
             media::media_probe,
             media::media_thumb,
@@ -217,6 +232,7 @@ pub fn run() {
             convert::convert_retry,
             convert::convert_undo,
             convert::convert_expand,
+            convert::convert_remove,
             subtitle::sub_list_videos,
             subtitle::sub_start,
             subtitle::sub_batch,
@@ -255,6 +271,7 @@ pub fn run() {
             fetch::fetch_subscribe,
             fetch::fetch_unsubscribe,
             fetch::fetch_subs,
+            fetch::fetch_remove_task,
             mangatr::mangatr_get,
             mangatr::mangatr_translate_page,
             mangatr::mangatr_translate_range,

@@ -923,3 +923,12 @@ mod tests {
         assert_eq!(n, 0);
     }
 }
+
+/// 从下载列表里删掉一条已结束的记录（已整理入库的文件不受影响）
+#[tauri::command]
+pub fn fetch_remove_task(app: AppHandle, id: i64) -> Result<usize, String> {
+    with_db(&app, |c| {
+        Ok(c.execute("DELETE FROM fetch_tasks WHERE id=?1 AND status NOT IN ('queued','downloading')", [id])?)
+    })
+    .map_err(e)
+}

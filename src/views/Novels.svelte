@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MoreButton from '../components/MoreButton.svelte';
+  import { openMenu, mediaEntries } from '../lib/items.svelte';
   import { invoke, inTauri, type BookItem } from '../lib/api';
   import { lib } from '../lib/library.svelte';
   import { ui } from '../lib/ui.svelte';
@@ -38,6 +40,9 @@
   function open(id: number) {
     ui.bookId = id;
   }
+  function bookMenu(e: MouseEvent, b: BookItem) {
+    openMenu(e, b.title, mediaEntries('book', b.id, b.title, [{ label: '打开', run: () => open(b.id) }]));
+  }
 </script>
 
 <section class="lib on">
@@ -56,14 +61,15 @@
     <div class="mp-grid">
       {#each books as b (b.id)}
         {@const pr = progress(b)}
-        <button type="button" class="mp-card mp-book" onclick={() => open(b.id)}>
+        <div class="mp-card mp-book" role="button" tabindex="0" onclick={() => open(b.id)} onkeydown={e => e.key === 'Enter' && open(b.id)} oncontextmenu={e => bookMenu(e, b)}>
           <Cover cover={b.cover} name={b.title} tag="div" cls="mp-poster">
             {#if !b.cover}<span class="mp-pt">{b.title}</span>{/if}
             <i class="mp-bar" style="width:{pr.pct}%"></i>
+            <MoreButton onopen={e => bookMenu(e, b)} />
           </Cover>
           <div class="mp-card-t">{b.title}</div>
           <div class="mp-card-s">{b.author || '佚名'} · {pr.label}</div>
-        </button>
+        </div>
       {/each}
     </div>
   {/if}

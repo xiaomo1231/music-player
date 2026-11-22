@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invoke } from '../../lib/api';
   // 下载列表：进度、速度、状态，暂停 / 继续 / 取消 / 重试，完成后显示整理到的路径
   import { toast } from '../../lib/ui.svelte';
   import { fetchApi, canResume, fmtBytes, isActive, STATUS_TEXT, type TaskRow } from '../../lib/fetch';
@@ -49,6 +50,9 @@
       {#if isActive(t.status) || canResume(t.status)}
         <button class="mp-btn ghost" onclick={() => act(() => fetchApi.cancel(t.id, false), '已取消')}>取消</button>
         <button class="mp-btn ghost" title="取消并删除已下载的文件" onclick={() => act(() => fetchApi.cancel(t.id, true), '已取消并删除文件')}>删除</button>
+      {/if}
+      {#if !isActive(t.status)}
+        <button class="mp-btn ghost" title="只从列表里删掉这条记录，已整理入库的文件不受影响" onclick={() => act(async () => { await invoke('fetch_remove_task', { id: t.id }); }, '已删除记录')}>删除记录</button>
       {/if}
     </div>
   </div>

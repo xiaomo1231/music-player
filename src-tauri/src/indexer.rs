@@ -24,7 +24,17 @@ pub fn initials(s: &str) -> String {
     out
 }
 
-fn set_search(conn: &Connection, file_id: i64, kind: &str, title: &str, sub: &str) -> Result<()> {
+pub fn set_search(conn: &Connection, file_id: i64, kind: &str, title: &str, sub: &str) -> Result<()> {
+    // 用户改过名字时，搜索用改过的名字（番剧用整部的名字）
+    let custom: Option<String> = conn
+        .query_row(
+            "SELECT coalesce(f.custom_title, s.custom_title) FROM files f LEFT JOIN videos v ON v.file_id=f.id LEFT JOIN series s ON s.id=v.series_id WHERE f.id=?1",
+            [file_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    let title = custom.as_deref().unwrap_or(title);
     conn.execute("DELETE FROM search_idx WHERE file_id=?1", [file_id])?;
     let ini = format!("{} {}", initials(title), initials(sub));
     conn.execute(
@@ -42,6 +52,14 @@ pub enum Outcome {
 
 /// 入库或更新；文件没变（大小 + 修改时间一致）时直接跳过
 pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Result<Outcome> {
+    // 用户“从媒体库移除”过的文件，扫描时跳过
+    let excluded: bool = conn
+        .query_row("SELECT 1 FROM excluded WHERE path=?1", [path.to_string_lossy()], |_| Ok(true))
+        .optional()?
+        .unwrap_or(false);
+    if excluded {
+        return Ok(Outcome::Unchanged);
+    }
     let meta = std::fs::metadata(path)?;
     let size = meta.len() as i64;
     let mtime = meta

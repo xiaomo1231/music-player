@@ -1,5 +1,5 @@
 // 视频与番剧模块的前端共享逻辑：缩略图目录、缩略图按需生成队列、字幕解析、类型
-import { invoke, inTauri, fileUrl } from './api';
+import { invoke, inTauri, fileUrl, isAbs } from './api';
 import { coverCSS, hueOf } from './util';
 
 export interface MediaTrack { index: number; lang: string; title: string; codec: string }
@@ -18,6 +18,7 @@ if (inTauri) {
 
 /** 缩略图文件名 → 可显示的地址 */
 export function thumbUrl(name: string | null | undefined): string {
+  if (name && isAbs(name)) return fileUrl(name);
   return name && mediaState.thumbDir ? fileUrl(mediaState.thumbDir + '/' + name) : '';
 }
 

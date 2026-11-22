@@ -16,6 +16,7 @@ export interface SmartDef {
   custom?: boolean;
   rules?: Rule[];
   limit?: number;
+  cover?: string | null;
 }
 
 const day = 86400;
@@ -69,15 +70,26 @@ export interface StoredList {
   name: string;
   rules: Rule[];
   limit?: number;
+  cover?: string | null;
 }
 
 class CustomLists {
   list = $state<SmartDef[]>([]);
+  /** 被隐藏的内置智能列表 */
+  hidden = $state<string[]>([]);
   private raw: StoredList[] = [];
   async load() {
     if (!inTauri) return;
     this.raw = ((await invoke<StoredList[] | null>('get_setting', { key: 'smart_lists' })) ?? []) as StoredList[];
+    this.hidden = ((await invoke<string[] | null>('get_setting', { key: 'smart_hidden' })) ?? []) as string[];
     this.build();
+  }
+  async setHidden(key: string, hide: boolean) {
+    this.hidden = hide ? [...new Set([...this.hidden, key])] : this.hidden.filter(k => k !== key);
+    await invoke('set_setting', { key: 'smart_hidden', value: this.hidden });
+  }
+  get(key: string) {
+    return this.raw.find(x => x.key === key);
   }
   private build() {
     this.list = this.raw.map((s, i) => ({
@@ -88,6 +100,7 @@ class CustomLists {
       custom: true,
       rules: s.rules,
       limit: s.limit,
+      cover: s.cover,
       pick: (t: Track[]) => {
         const r = t.filter(x => matchRules(x, s.rules));
         return s.limit ? r.slice(0, s.limit) : r;

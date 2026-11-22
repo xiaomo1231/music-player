@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MoreButton from '../components/MoreButton.svelte';
+  import { openMenu, mediaEntries } from '../lib/items.svelte';
   import { invoke, inTauri, type ComicItem } from '../lib/api';
   import { lib } from '../lib/library.svelte';
   import { ui } from '../lib/ui.svelte';
@@ -57,6 +59,9 @@
   function open(id: number) {
     ui.comicId = id;
   }
+  function comicMenu(e: MouseEvent, c: ComicItem) {
+    openMenu(e, c.title, mediaEntries('comic', c.id, c.title, [{ label: '打开', run: () => open(c.id) }]));
+  }
 </script>
 
 <section class="lib on">
@@ -76,15 +81,16 @@
       <h3 class="series">{g.name} <small>{g.items.length} 卷</small></h3>
       <div class="mp-grid">
         {#each g.items as c (c.id)}
-          <button type="button" class="mp-card mp-book" onclick={() => open(c.id)}>
+          <div class="mp-card mp-book" role="button" tabindex="0" onclick={() => open(c.id)} onkeydown={e => e.key === 'Enter' && open(c.id)} oncontextmenu={e => comicMenu(e, c)}>
             <Cover cover={c.cover} name={c.title} tag="div" cls="mp-poster">
               <span class="mp-badge">{fmt(c)}</span>
               {#if !c.cover}<span class="mp-pt">{c.title}</span>{/if}
               <i class="mp-bar" style="width:{pct(c)}%"></i>
+              <MoreButton onopen={e => comicMenu(e, c)} />
             </Cover>
             <div class="mp-card-t">{c.title}</div>
             <div class="mp-card-s">{status(c)}</div>
-          </button>
+          </div>
         {/each}
       </div>
     {/each}

@@ -4,6 +4,8 @@
 //!   番剧\作品名\Season 01\作品名 - S01E03.ext
 //!   音乐\艺人\专辑 (年份)\03 - 曲名.ext
 //!   视频\名字\原文件名
+//!   漫画\作品名\作品名 第03话.cbz
+//!   小说\书名 - 作者.epub
 use crate::{indexer, parse, AppState};
 use anyhow::Result;
 use lofty::file::TaggedFileExt;
@@ -84,6 +86,30 @@ pub fn video_rel(title: &str, orig: &str) -> PathBuf {
     PathBuf::from("视频").join(sanitize(title)).join(sanitize(orig))
 }
 
+/// 漫画：漫画\作品名\原文件名（作品名去掉“第 N 话 / 卷”“Vol.N”等）
+pub fn manga_rel(stem: &str, ext: &str) -> PathBuf {
+    static RE: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"(?i)\s*(?:第\s*[\d.]+\s*[话話卷册冊回]|vol\.?\s*\d+|v\d+\b).*$").unwrap());
+    let series = RE.replace(stem, "").trim().to_string();
+    let series = if series.is_empty() { stem.to_string() } else { series };
+    PathBuf::from("漫画").join(sanitize(&series)).join(format!("{}.{ext}", sanitize(stem)))
+}
+
+/// 小说：小说\原文件名
+pub fn novel_rel(stem: &str, ext: &str) -> PathBuf {
+    PathBuf::from("小说").join(format!("{}.{ext}", sanitize(stem)))
+}
+
+/// 漫画 / 小说文件的类型；下载任务标明是漫画时，zip / pdf 也算漫画
+fn book_kind(p: &Path, media_kind: &str) -> Option<&'static str> {
+    match parse::classify(p) {
+        Some("manga") => Some("manga"),
+        Some("novel") => Some("novel"),
+        _ if media_kind == "manga" && parse::COMIC.contains(&parse::ext(p).as_str()) => Some("manga"),
+        _ => None,
+    }
+}
+
 /// 目标已存在时加 (2)、(3)……
 pub fn unique(p: PathBuf) -> PathBuf {
     if !p.exists() {
@@ -136,6 +162,11 @@ fn plan(path: &Path, media_kind: &str) -> Option<PathBuf> {
     if parse::classify(path) == Some("music") {
         return music_plan(path);
     }
+    if let Some(k) = book_kind(path, media_kind) {
+        let stem = path.file_stem()?.to_string_lossy().into_owned();
+        let ext = parse::ext(path);
+        return Some(if k == "manga" { manga_rel(&stem, &ext) } else { novel_rel(&stem, &ext) });
+    }
     let info = parse::parse_episode(path);
     let ext = parse::ext(path);
     if info.episode.is_some() || media_kind == "anime" {
@@ -154,8 +185,8 @@ fn plan(path: &Path, media_kind: &str) -> Option<PathBuf> {
     Some(video_rel(&title, &name))
 }
 
-fn is_main_media(p: &Path) -> bool {
-    matches!(parse::classify(p), Some("music") | Some("video"))
+fn is_main_media(p: &Path, media_kind: &str) -> bool {
+    matches!(parse::classify(p), Some("music") | Some("video") | Some("anime")) || book_kind(p, media_kind).is_some()
 }
 
 fn is_companion(p: &Path) -> bool {
@@ -228,7 +259,7 @@ pub fn finish(app: &AppHandle, src: &Path, media_kind: &str, org_root: &Path, co
     } else {
         String::new()
     };
-    let media: Vec<PathBuf> = files.iter().filter(|p| is_main_media(p)).cloned().collect();
+    let media: Vec<PathBuf> = files.iter().filter(|p| is_main_media(p, media_kind)).cloned().collect();
     let companions: Vec<PathBuf> = files.iter().filter(|p| is_companion(p)).cloned().collect();
     if media.is_empty() {
         return Ok(Outcome {
@@ -242,7 +273,13 @@ pub fn finish(app: &AppHandle, src: &Path, media_kind: &str, org_root: &Path, co
     let mut manual: Vec<String> = vec![];
     let mut moved_companions: HashSet<PathBuf> = HashSet::new();
     for m in &media {
-        let kind: &'static str = if parse::classify(m) == Some("music") { "music" } else { "video" };
+        let kind: &'static str = match (parse::classify(m), book_kind(m, media_kind)) {
+            (Some("music"), _) => "music",
+            (_, Some(k)) => k,
+            (Some("anime"), _) => "anime",
+            _ if media_kind == "anime" => "anime",
+            _ => "video",
+        };
         let Some(rel) = plan(m, media_kind) else {
             manual.push(m.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
             continue;
@@ -366,11 +403,28 @@ mod tests {
 
     #[test]
     fn media_and_companions() {
-        assert!(is_main_media(Path::new("a.mkv")));
-        assert!(is_main_media(Path::new("a.flac")));
-        assert!(!is_main_media(Path::new("a.srt")));
+        assert!(is_main_media(Path::new("a.mkv"), "video"));
+        assert!(is_main_media(Path::new("a.flac"), "music"));
+        assert!(!is_main_media(Path::new("a.srt"), "anime"));
+        // 发布组命名的番剧文件会被认成 anime，也要整理
+        assert!(is_main_media(Path::new("[字幕组] 星屑邮局 - 03 [1080p].mkv"), "anime"));
+        assert!(is_main_media(Path::new("星屑 第3话.cbz"), "manga"));
+        assert!(is_main_media(Path::new("书 - 作者.epub"), "novel"));
+        // 普通 zip 只有任务标明是漫画时才算
+        assert!(!is_main_media(Path::new("D:\\dl\\a.zip"), "video"));
+        assert!(is_main_media(Path::new("D:\\dl\\a.zip"), "manga"));
         assert!(is_companion(Path::new("a.zh.srt")));
         assert!(!is_companion(Path::new("a.zip")));
+    }
+
+    #[test]
+    fn manga_and_novel_templates() {
+        assert_eq!(manga_rel("星屑 第03话", "cbz"), PathBuf::from("漫画").join("星屑").join("星屑 第03话.cbz"));
+        assert_eq!(manga_rel("星屑 Vol.2", "zip"), PathBuf::from("漫画").join("星屑").join("星屑 Vol.2.zip"));
+        assert_eq!(manga_rel("第1话", "cbz"), PathBuf::from("漫画").join("第1话").join("第1话.cbz"));
+        assert_eq!(novel_rel("潮汐档案 - 林间", "epub"), PathBuf::from("小说").join("潮汐档案 - 林间.epub"));
+        assert_eq!(plan(Path::new("星屑 第03话.cbz"), "manga"), Some(manga_rel("星屑 第03话", "cbz")));
+        assert_eq!(plan(Path::new("潮汐档案 - 林间.epub"), "novel"), Some(novel_rel("潮汐档案 - 林间", "epub")));
     }
 
     #[test]

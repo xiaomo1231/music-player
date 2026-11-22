@@ -2,6 +2,7 @@
 //! 自动归类入库、追更。子模块：source（各类来源）、web（网页 AI 规则）、download（下载队列）、organize（整理入库）。
 pub mod download;
 pub mod organize;
+pub mod pack;
 pub mod provider;
 pub mod source;
 pub mod web;
@@ -335,6 +336,19 @@ pub fn enrich(h: &mut Hit) {
     h.group = info.group;
     h.resolution = info.resolution;
     h.special = info.special;
+}
+
+/// 追更记“已见”用的键：下载源结果用“下载源 id + 条目 id”（地址里带着整条结果，封面、档位一变地址就变），
+/// 其他来源用下载地址
+fn seen_key(h: &Hit) -> String {
+    if h.kind == "provider" {
+        if let Some((pid, item, _)) = provider::parse_task_url(&h.url) {
+            if !item.id.is_empty() {
+                return format!("{}{pid}/{}", provider::SCHEME, item.id);
+            }
+        }
+    }
+    h.url.clone()
 }
 
 fn group_key(work: &str) -> String {
@@ -772,7 +786,7 @@ pub async fn fetch_subscribe(app: AppHandle, source_id: i64, query: String, medi
     let mk = if media_kind.trim().is_empty() { "anime".to_string() } else { media_kind };
     // 订阅时把当前已有的结果记为“已见”，之后只下载新出现的集
     let out = search(&app, &q, &mk, Some(source_id)).await?;
-    let seen: Vec<String> = out.hits.iter().map(|h| h.url.clone()).collect();
+    let seen: Vec<String> = out.hits.iter().map(seen_key).collect();
     let id = with_db(&app, |c| {
         c.execute(
             "INSERT INTO fetch_subs(source_id,query,media_kind,last_check,seen_json) VALUES(?1,?2,?3,?4,?5)",
@@ -847,10 +861,11 @@ pub async fn check_subs(app: &AppHandle) {
         };
         let mut fresh = vec![];
         for h in out.hits {
-            if seen.contains(&h.url) {
+            let key = seen_key(&h);
+            if seen.contains(&key) {
                 continue;
             }
-            seen.push(h.url.clone());
+            seen.push(key);
             if h.episode.is_some() {
                 fresh.push(h);
             }
@@ -919,6 +934,27 @@ mod tests {
         let root = Path::new("D:/dl");
         assert!(Path::new("D:/dl/a/b.mkv").starts_with(root));
         assert!(!Path::new("D:/media/b.mkv").starts_with(root));
+    }
+
+    #[test]
+    fn seen_key_uses_provider_item_id() {
+        let it = provider::Item {
+            id: "ep-7".into(),
+            title: "x".into(),
+            cover: "https://a/1.jpg?t=1".into(),
+            ..Default::default()
+        };
+        let mut h = provider::to_hit("demo", &it);
+        assert_eq!(seen_key(&h), "provider://demo/ep-7");
+        // 封面地址变了，仍算同一集
+        let it2 = provider::Item {
+            cover: "https://a/1.jpg?t=2".into(),
+            ..it.clone()
+        };
+        assert_eq!(seen_key(&provider::to_hit("demo", &it2)), "provider://demo/ep-7");
+        h.kind = "magnet".into();
+        h.url = "magnet:?xt=1".into();
+        assert_eq!(seen_key(&h), "magnet:?xt=1");
     }
 
     #[test]

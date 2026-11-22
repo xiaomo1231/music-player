@@ -4,7 +4,7 @@
   import Icon from '../../lib/Icon.svelte';
   import { listen, inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, KIND_TEXT, MEDIA_TEXT, type ProviderInfo, type Source, type SourceStep } from '../../lib/fetch';
+  import { fetchApi, KIND_TEXT, MEDIA_TEXT, metaApi, type MetaInfo, type ProviderInfo, type Source, type SourceStep } from '../../lib/fetch';
 
   let { onchange }: { onchange?: () => void } = $props();
 
@@ -17,6 +17,9 @@
   let steps = $state<SourceStep[]>([]);
   // 已接入的下载源（默认没有）；已经添加过的不再列出
   let providers = $state<ProviderInfo[]>([]);
+  // 已接入的资料源（作品资料，默认没有）：不用添加，自动用在搜索页
+  let metas = $state<MetaInfo[]>([]);
+  const kindsText = (kinds: string[]) => (kinds.length ? kinds.map(k => MEDIA_TEXT[k] ?? k).join('、') : '全部类型');
   let addable = $derived(providers.filter(p => !list.some(s => s.kind === 'provider' && s.url === `provider://${p.id}`)));
 
   const ICON: Record<string, string> = { rss: 'list', ytdlp: 'video', dir: 'folder', web: 'search', provider: 'download' };
@@ -29,6 +32,11 @@
       providers = await fetchApi.providers();
     } catch (err) {
       toast(String(err));
+    }
+    try {
+      metas = await metaApi.providers();
+    } catch {
+      /* 旧版本没有资料源命令时忽略 */
     }
   }
 
@@ -143,9 +151,18 @@
   <div class="frow" style="margin-top:10px">
     <span>可添加的下载源</span>
     {#each addable as p (p.id)}
-      <button class="mp-btn ghost" title={p.note || p.media_kinds.map(k => MEDIA_TEXT[k] ?? k).join('、')} onclick={() => addProvider(p)} disabled={busy}>{p.name}</button>
+      <button class="mp-btn ghost" title={(p.note ? p.note + '\n' : '') + '支持：' + kindsText(p.media_kinds)} onclick={() => addProvider(p)} disabled={busy}>{p.name}</button>
     {/each}
   </div>
+{/if}
+{#if metas.length > 0}
+  <div class="frow metas" style="margin-top:10px">
+    <span>资料源</span>
+    {#each metas as m (m.id)}
+      <span class="mp-chip" title={m.note}>{m.name} · {kindsText(m.media_kinds)}</span>
+    {/each}
+  </div>
+  <div class="note" style="margin-top:4px">搜索时会自动用资料源查作品的封面、简介和分集，不用单独添加。</div>
 {/if}
 <details class="adv">
   <summary>高级选项</summary>
@@ -195,6 +212,12 @@
     gap: 6px;
     align-items: center;
     justify-self: end;
+    flex-wrap: wrap;
+  }
+  .metas {
+    display: flex;
+    gap: 6px;
+    align-items: center;
     flex-wrap: wrap;
   }
   .adv {

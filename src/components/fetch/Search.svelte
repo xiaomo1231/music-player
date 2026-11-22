@@ -1,5 +1,6 @@
 <script lang="ts">
-  // 搜索并下载：同时搜所有来源，按作品分组；AI 挑推荐版本；整季 / 选中下载；追更订阅
+  // 搜索并下载：同时搜所有来源，按作品分组；AI 挑推荐版本；整季 / 选中下载；追更订阅。
+  // 番剧 / 漫画 / 小说 / 音乐 / 视频共用；有资料源时在结果上方显示作品资料卡
   import { onMount } from 'svelte';
   import { inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
@@ -7,14 +8,21 @@
     fetchApi,
     fmtBytes,
     fmtDur,
+    epText,
     hitKindText,
     MEDIA_TEXT,
+    metaApi,
+    supportsKind,
     providerItem,
     providerQualityKey,
     withQuality,
     type DlItem,
     type Group,
     type Hit,
+    type MetaCard,
+    type MetaEpisode,
+    type MetaInfo,
+    type ProviderInfo,
     type ProviderItem,
     type SearchOut,
     type SubRow,
@@ -22,7 +30,7 @@
 
   let { onqueued }: { onqueued?: () => void } = $props();
 
-  let mk = $state<'anime' | 'music' | 'video'>('anime');
+  let mk = $state('anime');
   let q = $state('');
   let out = $state<SearchOut | null>(null);
   let searching = $state(false);
@@ -34,21 +42,77 @@
   // 下载源结果：曲目信息（从结果地址里解出）和每行选的档位
   let items = $derived<(ProviderItem | null)[]>(out ? out.hits.map(providerItem) : []);
   let qsel = $state<Record<number, string>>({});
+  // 资料源：搜索时一起查作品资料
+  let metas = $state<MetaInfo[]>([]);
+  let providers = $state<ProviderInfo[]>([]);
+  let cards = $state<MetaCard[]>([]);
+  let cardIdx = $state(0);
+  let eps = $state<Record<string, MetaEpisode[] | 'loading'>>({});
+  const card = $derived(cards[cardIdx] ?? null);
+  const cardKey = (c: MetaCard) => `${c.provider}/${c.subject.id}`;
+  /** 这个类型目前有没有能用的下载源（漫画 / 小说只能来自下载源） */
+  const noBookSource = $derived((mk === 'manga' || mk === 'novel') && !providers.some(p => supportsKind(p.media_kinds, mk)));
 
   const PLACEHOLDER: Record<string, string> = {
     anime: '例如：星屑邮局',
+    manga: '例如：漫画名或作者',
+    novel: '例如：书名或作者',
     music: '例如：林间信号 或 艺人名',
     video: '例如：某个视频的名字',
   };
   const PREFS_HINT: Record<string, string> = {
     anime: '例如：简中字幕、1080p、优先合集',
+    manga: '例如：彩色版、高清、优先单行本',
+    novel: '例如：完结、带插图',
     music: '例如：无损优先、优先完整专辑',
     video: '例如：1080p、优先完整版',
   };
 
   onMount(() => {
     loadSubs();
+    loadProviders();
   });
+
+  async function loadProviders() {
+    if (!inTauri) return;
+    try {
+      [metas, providers] = await Promise.all([metaApi.providers(), fetchApi.providers()]);
+    } catch {
+      /* 旧版本没有这些命令时忽略 */
+    }
+  }
+
+  /** 查作品资料（没有资料源时什么都不做，不影响搜索） */
+  async function loadCards(text: string) {
+    cards = [];
+    cardIdx = 0;
+    if (!metas.some(m => supportsKind(m.media_kinds, mk))) return;
+    try {
+      const r = await metaApi.search(text, mk);
+      cards = r.cards;
+    } catch {
+      /* 资料查不到不影响下载 */
+    }
+  }
+
+  async function toggleEps(c: MetaCard) {
+    const k = cardKey(c);
+    if (eps[k]) {
+      const next = { ...eps };
+      delete next[k];
+      eps = next;
+      return;
+    }
+    eps[k] = 'loading';
+    try {
+      eps[k] = await metaApi.episodes(c.provider, c.subject.id);
+    } catch (err) {
+      toast(String(err));
+      const next = { ...eps };
+      delete next[k];
+      eps = next;
+    }
+  }
 
   async function loadSubs() {
     if (!inTauri) return;
@@ -68,6 +132,7 @@
     picks = {};
     sel = {};
     qsel = {};
+    loadCards(text);
     try {
       out = await fetchApi.search(text, mk);
     } catch (err) {
@@ -103,8 +168,18 @@
     return qsel[i] !== undefined ? withQuality(h, qsel[i]) : h;
   }
 
-  /** 这一组是不是下载源的结果（按专辑分组，没有“集”，不能追更） */
+  /** 这一组是不是下载源的结果（按专辑 / 作品分组，“全部下载”下整组） */
   const isProviderGroup = (g: Group) => !!out && out.hits[g.indices[0]]?.kind === 'provider';
+  /** 这一组的结果带集数，可以追更（下载源给了 episode 时也可以） */
+  const hasEpisodes = (g: Group) => !!out && g.indices.some(i => out!.hits[i].episode !== null);
+  /** 下载源结果的说明行：音乐显示艺人专辑，其他显示作品、集数、作者 / 字幕组 */
+  function itemLine(it: ProviderItem): string {
+    if (it.media_kind === 'music' || (!it.series && it.episode === null)) {
+      return [it.artist || (it.media_kind === 'music' ? '艺人未知' : ''), it.album, it.year, fmtDur(it.duration)].filter(Boolean).join(' · ');
+    }
+    const season = it.season && it.season > 1 ? `第 ${it.season} 季` : '';
+    return [it.series, season, epText(it.media_kind, it.episode), it.artist, it.year, fmtDur(it.duration)].filter(Boolean).join(' · ');
+  }
 
   async function download(hits: Hit[]) {
     if (hits.length === 0) return toast('没有可下载的条目');
@@ -175,7 +250,7 @@
 <div class="frow">
   <div class="seg">
     {#each Object.keys(MEDIA_TEXT) as k (k)}
-      <button class:on={mk === k} onclick={() => (mk = k as typeof mk)}>{MEDIA_TEXT[k]}</button>
+      <button class:on={mk === k} onclick={() => { mk = k; cards = []; }}>{MEDIA_TEXT[k]}</button>
     {/each}
   </div>
   <input class="tin" style="flex:1;min-width:140px" placeholder={PLACEHOLDER[mk]} autocomplete="off" bind:value={q} onkeydown={e => e.key === 'Enter' && doSearch()} />
@@ -188,7 +263,50 @@
   <button class="mp-btn ghost" onclick={() => download(selectedHits())} disabled={selCount === 0}>下载选中（{selCount}）</button>
 </div>
 
+{#if card}
+  {@const sub = card.subject}
+  {@const ep = eps[cardKey(card)]}
+  <div class="mcard">
+    {#if sub.cover}<img class="mcv" src={sub.cover} alt="" loading="lazy" referrerpolicy="no-referrer" />{/if}
+    <div class="mbody">
+      <div class="mtitle">
+        <b>{sub.title_cn || sub.title}</b>
+        {#if sub.title_cn && sub.title && sub.title !== sub.title_cn}<small>{sub.title}</small>{/if}
+      </div>
+      <small>
+        {[sub.year ?? '', sub.total ? `共 ${sub.total} ${mk === 'manga' ? '话' : mk === 'novel' ? '章' : '集'}` : '', sub.rating ? `评分 ${sub.rating.toFixed(1)}` : '', sub.staff.slice(0, 2).join('、'), '资料：' + card.provider_name]
+          .filter(Boolean)
+          .join(' · ')}
+      </small>
+      {#if sub.summary}<p class="msum">{sub.summary}</p>{/if}
+      <div class="frow mrow">
+        <button class="mp-btn ghost" onclick={() => toggleEps(card)}>{ep ? '收起分集' : '查看分集'}</button>
+        {#if card.link}<a class="mp-btn ghost" href={card.link} target="_blank" rel="noreferrer">作品页</a>{/if}
+        {#if cards.length > 1}
+          <button class="mp-btn ghost" title="资料对不上时换一个" onclick={() => (cardIdx = (cardIdx + 1) % cards.length)}>不是这部（{cardIdx + 1}/{cards.length}）</button>
+        {/if}
+      </div>
+      {#if ep === 'loading'}
+        <small>正在读取分集…</small>
+      {:else if ep}
+        {#if ep.length === 0}
+          <small>这部作品没有分集信息</small>
+        {:else}
+          <ol class="eps">
+            {#each ep as e (e.sort + e.title)}
+              <li><span class="badge2">{e.special ? 'SP' : ''}{e.sort}</span> {e.title_cn || e.title || '（无标题）'}{#if e.airdate}<small> · {e.airdate}</small>{/if}</li>
+            {/each}
+          </ol>
+        {/if}
+      {/if}
+    </div>
+  </div>
+{/if}
+
 <div style="margin-top:12px">
+  {#if noBookSource && !out && !searching}
+    <div class="note" style="margin-bottom:10px">还没有能搜{MEDIA_TEXT[mk]}的下载源。接入后会出现在左边“可添加的下载源”里，添加一下就能在这里搜索和下载；也可以添加你自己的网盘 / NAS 目录。</div>
+  {/if}
   {#if searching}
     <div class="empty">正在搜索你添加的所有来源…</div>
   {:else if !out}
@@ -209,6 +327,9 @@
           <span class="spacer"></span>
           {#if isProviderGroup(g)}
             <button class="mp-btn ghost" onclick={() => download(seasonHits(g))}>全部下载</button>
+            {#if hasEpisodes(g)}
+              <button class="mp-btn ghost" onclick={() => toggleSub(g)}>{subOf(g) ? '取消追更' : '追更'}</button>
+            {/if}
           {:else}
             <button class="mp-btn ghost" onclick={() => download(seasonHits(g))}>下载整季</button>
             <button class="mp-btn ghost" onclick={() => toggleSub(g)}>{subOf(g) ? '取消追更' : '追更'}</button>
@@ -228,10 +349,10 @@
             {#if it}
               {@const qk = qsel[i] ?? providerQualityKey(h)}
               {@const cur = it.qualities.find(x => x.key === qk) ?? it.qualities[0]}
-              <small>{[it.artist || '艺人未知', it.album, it.year, fmtDur(it.duration)].filter(Boolean).join(' · ')}</small>
+              <small>{itemLine(it)}</small>
               <div class="qrow">
                 {#if it.qualities.length > 1}
-                  <select class="sel" aria-label="音质" value={qk} onchange={e => (qsel[i] = e.currentTarget.value)}>
+                  <select class="sel" aria-label={mk === 'music' ? '音质' : '版本'} value={qk} onchange={e => (qsel[i] = e.currentTarget.value)}>
                     {#each it.qualities as x (x.key)}
                       <option value={x.key}>{x.label || x.format.toUpperCase()}{x.size ? ' · ' + fmtBytes(x.size) : ''}</option>
                     {/each}
@@ -320,6 +441,59 @@
   }
   .qrow small {
     grid-column: auto;
+  }
+  .mcard {
+    display: flex;
+    gap: 12px;
+    margin-top: 12px;
+    padding: 10px;
+    border-radius: 10px;
+    background: var(--mp-hover, rgba(127, 127, 127, 0.08));
+    min-width: 0;
+  }
+  .mcv {
+    width: 72px;
+    height: 100px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex: none;
+  }
+  .mbody {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+  }
+  .mtitle {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .msum {
+    margin: 2px 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .mrow {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .eps {
+    margin: 4px 0 0;
+    padding: 0;
+    list-style: none;
+    max-height: 180px;
+    overflow: auto;
+    font-size: 12.5px;
+    display: grid;
+    gap: 3px;
   }
   .chips {
     display: flex;

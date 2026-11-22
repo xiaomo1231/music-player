@@ -1,7 +1,9 @@
 //! 下载引擎：统一队列（同时下载数、暂停 / 继续 / 取消 / 重试），三种后端：
 //! HTTP（断点续传 + 失败重试 3 次 + 限速）、BT / 磁力（librqbit，下完即停或做种到分享率）、yt-dlp（子进程，解析进度行）。
 //! 下载完成后交给 organize 删除可执行文件、识别、重命名、移入整理目录并入库。
-use super::{emit_task, load_settings, load_task, organize, remove_task_files, set_task_progress, set_task_status, source, with_db, FetchSettings, TaskView};
+use super::{
+    emit_task, load_settings, load_task, organize, provider, remove_task_files, set_task_progress, set_task_status, source, with_db, FetchSettings, TaskView,
+};
 use crate::{db, tools};
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::StreamExt;
@@ -193,6 +195,7 @@ async fn run(app: &AppHandle, id: i64, ctl: &Arc<Ctl>) -> Result<Option<organize
         "file" => local_copy(app, &task, &dl_dir).await?,
         "magnet" | "torrent" => bt_download(app, &task, ctl, &dl_dir, &settings).await?,
         "ytdlp" => ytdlp_download(app, &task, ctl, &dl_dir).await?,
+        "provider" => provider_download(app, &task, ctl, &dl_dir, &settings).await?,
         other => bail!("不支持的下载类型：{other}"),
     };
     let Some(path) = downloaded else { return Ok(None) };
@@ -524,6 +527,38 @@ fn newest_file(dir: &Path) -> Option<PathBuf> {
         .map(|e| e.path())
         .filter(|p| p.is_file() && !p.to_string_lossy().ends_with(".part") && !p.to_string_lossy().ends_with(".ytdl"))
         .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+}
+
+/// 下载源：每次开始 / 继续时重新取下载地址（直链可能过期），再交给 HTTP 或 yt-dlp；
+/// 下完后音乐补标签、存歌词，最后照常整理入库
+async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_dir: &Path, settings: &FetchSettings) -> Result<Option<PathBuf>> {
+    let (pid, item, quality) = provider::parse_task_url(&task.url).ok_or_else(|| anyhow!("下载源任务地址不正确"))?;
+    let p = provider::get(&pid).ok_or_else(|| anyhow!("这个版本的软件里没有下载源“{pid}”"))?;
+    let resolved = p.resolve(&item, &quality).await.map_err(|m| anyhow!(m))?;
+    let mut t = task.clone();
+    let got = match &resolved.target {
+        provider::Target::Http { url, ext } => {
+            if t.save_path.is_empty() {
+                t.save_path = organize::unique(dl_dir.join(provider::file_name(&item, ext))).to_string_lossy().into_owned();
+            }
+            t.url = url.clone();
+            http_download(app, &t, ctl, dl_dir, settings).await?
+        }
+        provider::Target::Ytdlp { url } => {
+            t.url = url.clone();
+            ytdlp_download(app, &t, ctl, dl_dir).await?
+        }
+    };
+    let Some(path) = got else { return Ok(None) };
+    if path.is_file() {
+        if let Err(err) = provider::fill_tags(&path, &item) {
+            eprintln!("补标签失败 {}：{err}", path.display());
+        }
+        if let Some(l) = &resolved.lyric {
+            let _ = provider::save_lyric(&path, l);
+        }
+    }
+    Ok(Some(path))
 }
 
 #[cfg(test)]

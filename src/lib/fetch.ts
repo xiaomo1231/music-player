@@ -105,7 +105,16 @@ export const KIND_TEXT: Record<string, string> = {
   ytdlp: '视频网站',
   dir: '网盘 / NAS',
   web: '网页（AI 解析）',
+  provider: '下载源',
 };
+
+/** 已接入的下载源（软件默认没有，开发说明见 docs/下载源接口.md） */
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  media_kinds: string[];
+  note: string;
+}
 
 export const STATUS_TEXT: Record<string, string> = {
   queued: '排队中',
@@ -146,11 +155,12 @@ export const fetchApi = {
     invoke<number>('fetch_subscribe', { sourceId, query, mediaKind }),
   unsubscribe: (id: number) => invoke<void>('fetch_unsubscribe', { id }),
   subs: () => invoke<SubRow[]>('fetch_subs'),
+  providers: () => invoke<ProviderInfo[]>('fetch_providers'),
 };
 
 /** 由地址和类型推断的文案 */
 export function hitKindText(kind: string): string {
-  return { magnet: '磁力', torrent: '种子', http: '直链', ytdlp: '网站', file: '本地文件' }[kind] ?? kind;
+  return { magnet: '磁力', torrent: '种子', http: '直链', ytdlp: '网站', file: '本地文件', provider: '下载源' }[kind] ?? kind;
 }
 
 /** 大小、速度的显示（没有值时给出 —） */

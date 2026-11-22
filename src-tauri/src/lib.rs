@@ -282,6 +282,7 @@ pub fn run() {
             fetch::fetch_unsubscribe,
             fetch::fetch_subs,
             fetch::fetch_remove_task,
+            fetch::fetch_providers,
             mangatr::mangatr_get,
             mangatr::mangatr_translate_page,
             mangatr::mangatr_translate_range,

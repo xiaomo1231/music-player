@@ -150,9 +150,9 @@ body.playing .deck.sq .sleeve{transform:none}
 .smart{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:4px 0 18px}
 .sc{position:relative;border-radius:14px;padding:14px;min-height:92px;background-size:cover;cursor:pointer;overflow:hidden;border:1px solid var(--edge);transition:.25s}
 .sc:hover{transform:translateY(-3px)}.sc.on{outline:2px solid var(--mp-accent)}
-.sc b{display:block;font-size:15px;text-shadow:0 1px 8px #0008}.sc span{font-size:12px;color:#ffffffc0}
-.sc button{position:absolute;right:10px;bottom:10px;width:36px;height:36px;border-radius:50%;border:0;background:#fff;color:#111;display:grid;place-items:center;font-size:16px;box-shadow:0 6px 16px #0006;opacity:0;transform:translateY(6px);transition:.2s}
-.sc:hover button{opacity:1;transform:none}
+.sc b{display:block;font-size:15px;text-shadow:0 1px 8px #0008}.sc .sc-sub{font-size:12px;color:#ffffffc0}
+.sc .sc-play{width:36px;height:36px;border-radius:50%;border:0;background:#fff;color:#111;display:grid;place-items:center;font-size:16px;box-shadow:0 6px 16px #0006;opacity:0;transform:translateY(6px);transition:.2s}
+.sc:hover .sc-play{opacity:1;transform:none}
 .grp{margin:16px 6px 6px;font-size:12px;color:var(--mp-sub);letter-spacing:.06em;display:flex;gap:10px;align-items:center}.grp:after{content:"";flex:1;height:1px;background:var(--edge)}
 .mrow{grid-template-columns:2.2em 2.6em minmax(0,1.4fr) minmax(0,1fr) 6.4em 4.6em 3.2em 4.6em}
 .mrow .pc{color:var(--mp-sub);font-size:12px;font-variant-numeric:tabular-nums}
@@ -266,3 +266,6 @@ body.oled-black .sleeve,body.oled-black .vinyl{box-shadow:none}
  .stage,.stage.q{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.qpanel{display:none !important}.deck{width:min(56vw,28vh)}.meta{display:none}.lyr{height:32vh;font-size:calc(21px*var(--ly-size,1));text-align:center}
  footer{grid-template-columns:1fr}.np,.right{display:none}.mid{width:100%}.ai,.rbody{grid-template-columns:1fr}.rside{display:none}.banner{grid-template-columns:1fr}.banner .pst{display:none}.get{grid-template-columns:minmax(0,1fr)}.lib{padding-inline:14px}
  .mrow{grid-template-columns:2.2em 2.6em minmax(0,1fr) 4.6em}.mrow .mp-al,.mrow .mp-fmt,.mrow .pc,.mrow .mp-n{display:none}.search kbd{display:none}}
+
+/* 滚动内容在顶栏下方淡出，不会露出一截卡片的彩色边 */
+.views>section.lib{-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 14px);mask-image:linear-gradient(to bottom,transparent 0,#000 14px)}

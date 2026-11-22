@@ -213,12 +213,14 @@
           onclick={() => setFilter(filter === 'smart:' + s.key ? 'all' : 'smart:' + s.key)} onkeydown={() => {}}
           oncontextmenu={e => smartMenu(e, s)} style:background-size="cover">
           {#if s.cover}<span class="sc-img" style:background-image={`url("${coverUrl(s.cover)}")`}></span>{/if}
-          <b>{s.name}</b><span>{n} 首 · {s.desc}</span>
-          <span class="sc-more"><MoreButton floating={false} title="更多" onopen={e => smartMenu(e, s)} /></span>
-          <button title="立即播放" onclick={e => { e.stopPropagation(); playGroup(s.pick(lib.tracks)); }}><Icon name="play" /></button>
+          <div class="sc-txt"><b>{s.name}</b><span class="sc-sub">{n} 首 · {s.desc}</span></div>
+          <div class="sc-acts">
+            <button class="sc-play" title="立即播放" onclick={e => { e.stopPropagation(); playGroup(s.pick(lib.tracks)); }}><Icon name="play" /></button>
+            <span class="sc-more"><MoreButton floating={false} title="更多" onopen={e => smartMenu(e, s)} /></span>
+          </div>
         </div>
       {/each}
-      <div class="sc" style="display:grid;place-items:center;background:var(--glass)" role="button" tabindex="-1" onclick={() => (ruleEdit = null)} onkeydown={() => {}}>
+      <div class="sc sc-add" role="button" tabindex="-1" onclick={() => (ruleEdit = null)} onkeydown={() => {}}>
         <span style="text-align:center"><Icon name="plus" size="20px" /><br />自定义智能列表</span>
         {#if hiddenSmart.length}
           <span class="sc-hidden">已隐藏：{#each hiddenSmart as h}<button class="mp-chip" title="恢复显示" onclick={e => { e.stopPropagation(); customLists.setHidden(h.key, false); }}>{h.name} ↺</button>{/each}</span>
@@ -285,9 +287,17 @@
 {#if ruleEdit !== undefined}<SmartRuleModal def={ruleEdit} onclose={() => (ruleEdit = undefined)} />{/if}
 
 <style>
-  .sc .sc-img { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .55; z-index: 0; }
-  .sc > :global(*) { position: relative; }
-  .sc .sc-more { position: absolute; right: 52px; bottom: 12px; z-index: 2; }
-  .sc .sc-hidden { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; font-size: 11.5px; margin-top: 6px; color: var(--mp-sub); align-items: center; }
+  /* 智能列表卡片：固定高度、顶部对齐；文字在左上，按钮锚在右下角，不参与文字流 */
+  .smart { align-items: start; }
+  .sc { height: 100px; min-height: 0; padding: 0; }
+  .sc .sc-img { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .55; }
+  .sc .sc-txt { position: absolute; left: 14px; top: 12px; right: 86px; }
+  .sc .sc-txt b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sc .sc-sub { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 3px; line-height: 1.35; }
+  .sc .sc-acts { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; align-items: center; }
+  .sc .sc-more { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: rgba(0, 0, 0, .45); color: #fff; opacity: 0; transition: opacity .2s; }
+  .sc:hover .sc-more, .sc .sc-more:focus-within { opacity: 1; }
+  .sc.sc-add { display: grid; place-items: center; text-align: center; background: var(--glass); padding: 8px; }
+  .sc .sc-hidden { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; font-size: 11.5px; margin-top: 4px; color: var(--mp-sub); align-items: center; max-height: 44px; overflow: hidden; }
   .sc .sc-hidden .mp-chip { padding: 2px 8px; font-size: 11px; }
 </style>

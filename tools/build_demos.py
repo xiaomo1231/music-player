@@ -4,6 +4,7 @@ import pathlib
 root = pathlib.Path(__file__).resolve().parent.parent
 src, out = root / "demos-src", root / "demos"
 css, js = (src / "core.css").read_text("utf-8"), (src / "core.js").read_text("utf-8")
+pro = (src / "pro.js").read_text("utf-8")
 out.mkdir(exist_ok=True)
 B = lambda attr, ic, label: f'<button {attr} data-icon="{ic}" title="{label}"><span>{label}</span></button>'
 MACROS = {
@@ -23,6 +24,6 @@ for f in sorted((src / "demos").glob("*.html")):
     assert "/*CORE_CSS*/" in html and "/*CORE_JS*/" in html, f.name
     for k, v in MACROS.items():
         html = html.replace(k, v)
-    html = html.replace("/*CORE_CSS*/", css).replace("/*CORE_JS*/", js)
+    html = html.replace("/*CORE_CSS*/", css).replace("/*CORE_JS*/", js).replace("/*PRO_JS*/", pro)
     (out / f.name).write_text(html, "utf-8")
     print("built", f.name, len(html) // 1024, "KB")

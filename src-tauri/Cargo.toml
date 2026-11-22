@@ -52,4 +52,9 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 scraper = "0.24"
+# 在线歌词：QQ 音乐 QRC / 酷狗 KRC 解压、网易云 eapi 加密
+aes = "0.8"
+md-5 = "0.10"
+flate2 = "1"
+hex = "0.4"
 librqbit = { version = "9", default-features = false, features = ["default-tls"] }

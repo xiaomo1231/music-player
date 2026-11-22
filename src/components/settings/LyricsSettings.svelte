@@ -7,16 +7,28 @@
   lyricsfx.load();
   const cfg = $derived(lyricsfx.cfg);
 
-  // 在线歌词开关存在设置键 lyrics_online（后端读取），默认开启
-  let online = $state(true);
+  // 在线歌词存在设置键 lyrics_online（后端读取）：总开关 + 启用的歌词源，默认全开
+  const SOURCES = [
+    { id: 'qq', name: 'QQ 音乐' },
+    { id: 'netease', name: '网易云音乐' },
+    { id: 'kugou', name: '酷狗音乐' },
+    { id: 'lrclib', name: 'LRCLIB' },
+  ];
+  let online = $state({ enabled: true, sources: SOURCES.map(x => x.id) });
   if (inTauri) {
-    invoke<{ enabled?: boolean } | null>('get_setting', { key: 'lyrics_online' })
-      .then(v => (online = v?.enabled ?? true))
+    invoke<{ enabled?: boolean; sources?: string[] } | null>('get_setting', { key: 'lyrics_online' })
+      .then(v => {
+        online = { enabled: v?.enabled ?? true, sources: Array.isArray(v?.sources) ? v.sources : online.sources };
+      })
       .catch(() => {});
   }
-  function setOnline(on: boolean) {
-    online = on;
-    if (inTauri) invoke('set_setting', { key: 'lyrics_online', value: { enabled: on } }).catch(() => {});
+  function saveOnline(patch: Partial<typeof online>) {
+    online = { ...online, ...patch };
+    if (inTauri) invoke('set_setting', { key: 'lyrics_online', value: $state.snapshot(online) }).catch(() => {});
+  }
+  function toggleSource(id: string, on: boolean) {
+    // 保持固定顺序，后端按这个顺序决定同等条件下的优先级
+    saveOnline({ sources: SOURCES.map(x => x.id).filter(x => (x === id ? on : online.sources.includes(x))) });
   }
 </script>
 
@@ -55,9 +67,19 @@
         <input type="checkbox" class="mp-sw" checked={cfg.roma} onchange={e => lyricsfx.set({ roma: (e.currentTarget as HTMLInputElement).checked })} />
       </label>
       <label class="mp-opt">
-        <div>在线获取歌词<small>本地没有 .lrc 和内嵌歌词时，从 LRCLIB 开放歌词库查找，结果缓存在本地</small></div>
-        <input type="checkbox" class="mp-sw" checked={online} onchange={e => setOnline((e.currentTarget as HTMLInputElement).checked)} />
+        <div>在线获取歌词<small>本地没有 .lrc 和内嵌歌词时在线查找，优先逐字歌词和带译文的版本，结果缓存在本地</small></div>
+        <input type="checkbox" class="mp-sw" checked={online.enabled} onchange={e => saveOnline({ enabled: (e.currentTarget as HTMLInputElement).checked })} />
       </label>
+      {#if online.enabled}
+        <div class="mp-opt">
+          <div>歌词源<small>QQ 音乐、网易云、酷狗用的是客户端的非官方接口，偶尔会失效</small></div>
+          <div class="seg">
+            {#each SOURCES as src}
+              <button class:on={online.sources.includes(src.id)} onclick={() => toggleSource(src.id, !online.sources.includes(src.id))}>{src.name}</button>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </div>
     <div class="ly-set-preview" aria-hidden="true">
       <Lyrics cls="lyr ly-preview" pos={0.5} demo />

@@ -1,13 +1,14 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>界面风格 demo</title>
+<title>播放器界面十款</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <style>
-:root{--bg:#0c0d11;--card:#15171d;--text:#eef0f5;--sub:#9aa0ad;--line:#ffffff1a;--acc:#7aa2ff}
-@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#f4f3ef;--card:#fff;--text:#1b1c20;--sub:#62676f;--line:#0000001a;--acc:#2f5fd0}}
-:root[data-theme="light"]{--bg:#f4f3ef;--card:#fff;--text:#1b1c20;--sub:#62676f;--line:#0000001a;--acc:#2f5fd0}
+:root{color-scheme:dark;--bg:#0c0d11;--card:#15171d;--text:#eef0f5;--sub:#9aa0ad;--line:#ffffff1a;--acc:#7aa2ff}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){color-scheme:light;--bg:#f4f3ef;--card:#fff;--text:#1b1c20;--sub:#62676f;--line:#0000001a;--acc:#2f5fd0}}
+:root[data-theme="light"]{color-scheme:light;--bg:#f4f3ef;--card:#fff;--text:#1b1c20;--sub:#62676f;--line:#0000001a;--acc:#2f5fd0}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI Variable","Segoe UI","Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;line-height:1.6}
-.wrap{max-width:1180px;margin:0 auto;padding:56px 16px 80px}
+.wrap{max-width:1180px;margin:0 auto;padding-block:56px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 h1{font-size:clamp(30px,5vw,52px);margin:0 0 10px;letter-spacing:-.02em;line-height:1.15;text-wrap:balance}
 .lead{color:var(--sub);max-width:46em;margin:0 0 26px;font-size:16px}
 .how{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:0 0 40px;padding:0;list-style:none}
@@ -15,7 +16,7 @@ h1{font-size:clamp(30px,5vw,52px);margin:0 0 10px;letter-spacing:-.02em;line-hei
 .how b{display:block;color:var(--text);font-size:14.5px;margin-bottom:2px}
 kbd{border:1px solid var(--line);border-radius:4px;padding:0 5px;font-family:inherit;font-size:12px}
 h2{font-size:13px;letter-spacing:.14em;color:var(--sub);margin:34px 0 14px;font-weight:600}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(310px,100%),1fr));gap:18px}
 a.c{display:block;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;transition:transform .3s,box-shadow .3s,border-color .3s}
 a.c:hover{transform:translateY(-4px);box-shadow:0 18px 40px #0004;border-color:var(--acc)}
 .pv{aspect-ratio:16/8.4;position:relative;overflow:hidden;display:grid;place-items:center}

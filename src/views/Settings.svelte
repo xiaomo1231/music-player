@@ -19,6 +19,7 @@
   } from '../lib/shell.svelte';
   import HotkeyList from '../components/settings/HotkeyList.svelte';
   import LyricsSettings from '../components/settings/LyricsSettings.svelte';
+  import FxSettings from '../components/settings/FxSettings.svelte';
 
   // 设置项的当前值（启动时从 settings 表读取）
   let watch = $state(true);
@@ -261,6 +262,7 @@
     </div>
 
     <LyricsSettings />
+    <FxSettings />
 
     <!-- 快捷键 -->
     <div class="card card-wide">

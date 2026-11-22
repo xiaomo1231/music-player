@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { invoke, inTauri, type Book, type BookItem } from '../lib/api';
   import { ui, toast } from '../lib/ui.svelte';
   import { typing, clamp } from '../lib/util';
@@ -20,8 +20,23 @@
     type Bookmark,
     type ReaderPrefs,
   } from '../lib/reader';
+  import {
+    NOVEL_DEFAULTS,
+    NOVEL_MODES,
+    NOVEL_KEYS,
+    SPEED_MIN,
+    SPEED_MAX,
+    novelFor,
+    novelGlobal,
+    saveNovelBook,
+    saveNovelGlobal,
+    type NovelMode,
+    type NovelPrefs,
+  } from '../lib/readerprefs';
   import AdPanel from '../components/reader/AdPanel.svelte';
   import TocPanel from '../components/reader/TocPanel.svelte';
+  import ModeMenu from '../components/reader/ModeMenu.svelte';
+  import { FLOW_ICON } from '../components/comic/icons';
 
   type Sel = { x: number; y: number; ci: number; pi: number; s: number; e: number; text: string };
 
@@ -47,16 +62,42 @@
   let ttsOn = $state(false);
   let ttsPara = $state(-1);
   let focusSearch = $state(0);
+  /** 翻页方式等（全局默认 + 每本书记住的翻页方式） */
+  let np = $state<NovelPrefs>({ ...NOVEL_DEFAULTS });
+  let menu = $state<{ x: number; y: number } | null>(null);
+  let bars = $state(true);
+  let help = $state(false);
+  // 左右翻页：正文按屏分栏，translateX 翻页
+  let pview: HTMLDivElement | undefined = $state();
+  let pcols: HTMLDivElement | undefined = $state();
+  let PW = $state(0);
+  let PH = $state(0);
+  /** 本章第几屏 / 共几屏 */
+  let pi = $state(0);
+  let pages = $state(1);
+  let sliding = $state(false);
+  let autoPaused = $state(false);
+  let holding = false;
 
   /** 当前加载的是哪本书（非响应式，给保存进度用） */
   let loadedId = 0;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let slideTimer: ReturnType<typeof setTimeout> | undefined;
+  let flipAnim: Animation | null = null;
+  let ngl: NovelPrefs = { ...NOVEL_DEFAULTS };
+  let wheelAcc = 0;
+  let wheelLast = 0;
+  let wheelTurn = 0;
+  /** 分栏之间的空隙（翻页时一次移动 PW + GAP） */
+  const GAP = 48;
 
   const chapter = $derived(book && book.chapters[ci] ? book.chapters[ci] : null);
   const total = $derived(book ? book.chapters.length : 0);
   const pct = $derived(total ? ((ci + ratio) / total) * 100 : 0);
   const appliedCount = $derived(hits.filter(h => h.status === 'applied').length);
   const pStyle = $derived(`line-height:${prefs.lh};font-family:${FONTS[prefs.font]}`);
+  const paged = $derived(np.mode === 'page');
+  const modeInfo = $derived(NOVEL_MODES.find(m => m.id === np.mode) ?? NOVEL_MODES[0]);
 
   /** 每段的渲染结果：已清理（隐藏）、待确认（高亮）、找相似的候选（高亮） */
   const rendered = $derived.by(() => {
@@ -96,12 +137,74 @@
       selPop = null;
       onScroll();
     };
+    const wh = (e: WheelEvent) => onWheel(e);
+    const down = () => (holding = true);
+    const release = () => (holding = false);
     el.addEventListener('mouseup', up);
     el.addEventListener('scroll', sc, { passive: true });
+    el.addEventListener('wheel', wh, { passive: false });
+    el.addEventListener('pointerdown', down);
+    window.addEventListener('pointerup', release);
     return () => {
       el.removeEventListener('mouseup', up);
       el.removeEventListener('scroll', sc);
+      el.removeEventListener('wheel', wh);
+      el.removeEventListener('pointerdown', down);
+      window.removeEventListener('pointerup', release);
     };
+  });
+
+  // 左右翻页：字号、窗口大小、章节内容变化后重新分页，停在同样的位置（章内比例）
+  $effect(() => {
+    if (!paged) return;
+    void PW;
+    void PH;
+    void prefs.fs;
+    void prefs.lh;
+    void prefs.font;
+    void rendered;
+    void raw;
+    const r = untrack(() => ratio);
+    void tick().then(() => {
+      if (!measure()) return;
+      setPi(Math.round(r * (pages - 1)), false);
+    });
+  });
+
+  // 自动滚动：按速度匀速往下滚，滚到章末停一下接着下一章
+  $effect(() => {
+    if (np.mode !== 'auto' || autoPaused || !bodyEl || !book) return;
+    let raf = 0;
+    let last = performance.now();
+    // 自己记小数位置：直接 scrollTop += 小数会被对齐到物理像素，速度不准
+    let pos = bodyEl.scrollTop;
+    let endAt = 0;
+    const step = (now: number) => {
+      const el = bodyEl;
+      if (!el) return;
+      const dt = Math.min(100, now - last);
+      last = now;
+      if (Math.abs(el.scrollTop - pos) > 2) pos = el.scrollTop;
+      if (!holding && !selPop) {
+        pos = Math.min(pos + (np.speed * dt) / 1000, el.scrollHeight - el.clientHeight);
+        el.scrollTop = pos;
+        if (el.scrollTop + el.clientHeight >= el.scrollHeight - 1) {
+          if (!endAt) endAt = now;
+          else if (now - endAt > 1500) {
+            endAt = 0;
+            if (ci + 1 < total) gotoChapter(ci + 1, 0);
+            else {
+              autoPaused = true;
+              toast('已读完全书');
+              return;
+            }
+          }
+        } else endAt = 0;
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
   });
 
   // 外观偏好记在本机
@@ -121,13 +224,18 @@
     adOpen = false;
     raw = false;
     try {
-      const [b, items, marks, hs] = await Promise.all([
+      const [b, items, marks, hs, pf, g] = await Promise.all([
         invoke<Book>('open_book', { id: bid }),
         invoke<BookItem[]>('list_books'),
         loadBookmarks(bid),
         invoke<AdHit[]>('adclean_list', { id: bid }),
+        novelFor(bid),
+        novelGlobal(),
       ]);
       if (loadedId !== bid) return;
+      np = pf;
+      ngl = g;
+      autoPaused = false;
       const item = items.find(x => x.id === bid);
       book = b;
       ci = clamp(item?.chapter ?? 0, 0, Math.max(0, b.chapters.length - 1));
@@ -146,6 +254,7 @@
   }
 
   function currentRatio(): number {
+    if (paged) return pages > 1 ? pi / (pages - 1) : 0;
     const el = bodyEl;
     if (!el) return ratio;
     const max = el.scrollHeight - el.clientHeight;
@@ -153,9 +262,169 @@
   }
 
   function applyScroll() {
+    if (paged) {
+      if (measure()) setPi(Math.round(ratio * (pages - 1)), false);
+      return;
+    }
     const el = bodyEl;
     if (!el) return;
     el.scrollTop = ratio * Math.max(0, el.scrollHeight - el.clientHeight);
+  }
+
+  // ---------- 左右翻页 ----------
+
+  /** 量出本章分成几屏，返回是否量成了 */
+  function measure(): boolean {
+    if (!pcols || PW < 50) return false;
+    pages = Math.max(1, Math.ceil((pcols.scrollWidth + GAP - 4) / (PW + GAP)));
+    return true;
+  }
+
+  function setPi(k: number, anim: boolean) {
+    k = clamp(k, 0, Math.max(0, pages - 1));
+    clearTimeout(slideTimer);
+    sliding = anim;
+    if (anim) slideTimer = setTimeout(() => (sliding = false), 400);
+    pi = k;
+    ratio = pages > 1 ? k / (pages - 1) : 0;
+    if (pview) pview.scrollLeft = 0;
+  }
+
+  function saveSoon() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveNow, 1200);
+  }
+
+  /** 左右翻页：d = +1 下一屏 / -1 上一屏，到章首章尾时换章 */
+  function turnPage(d: number) {
+    if (!book || !paged) return;
+    if (flipAnim) flipAnim.finish();
+    const k = pi + d;
+    if (k < 0) {
+      if (ci > 0) gotoChapter(ci - 1, 1);
+      else toast('已经是第一页');
+      return;
+    }
+    if (k >= pages) {
+      if (ci + 1 < total) gotoChapter(ci + 1, 0);
+      else toast('已经是最后一页');
+      return;
+    }
+    if (np.anim === 'flip') flipTo(k, d);
+    else setPi(k, np.anim === 'slide');
+    saveSoon();
+  }
+
+  /** 仿真翻页：复制一份当前排版，绕左边“书脊”转过去（往回翻时转回来） */
+  function flipTo(k: number, d: number) {
+    const src = pcols;
+    const host = pview;
+    if (!src || !host) return setPi(k, false);
+    const wrap = document.createElement('div');
+    const bg = getComputedStyle(host.closest('.mp-reader') ?? host).backgroundColor;
+    wrap.style.cssText = `position:absolute;inset:0;overflow:hidden;background:${bg};backface-visibility:hidden;transform-origin:left center;z-index:2;box-shadow:0 0 30px #0004;pointer-events:none`;
+    const clone = src.cloneNode(true) as HTMLElement;
+    clone.style.transition = 'none';
+    clone.style.transform = `translateX(${-(d > 0 ? pi : k) * (PW + GAP)}px)`;
+    wrap.appendChild(clone);
+    host.appendChild(wrap);
+    const out = [
+      { transform: 'perspective(1800px) rotateY(0deg)', filter: 'brightness(1)' },
+      { transform: 'perspective(1800px) rotateY(-90deg)', filter: 'brightness(.6)' },
+    ];
+    if (d > 0) setPi(k, false);
+    const a = wrap.animate(d > 0 ? out : [...out].reverse(), { duration: 420, easing: d > 0 ? 'ease-in' : 'ease-out' });
+    flipAnim = a;
+    const done = () => {
+      wrap.remove();
+      if (flipAnim === a) flipAnim = null;
+      if (d < 0) setPi(k, false);
+    };
+    a.onfinish = done;
+    a.oncancel = done;
+  }
+
+  /** 让第 p 段出现在屏幕上（左右翻页时翻到它所在的那一屏） */
+  function showPara(c: number, p: number, smooth = false) {
+    const el = document.getElementById(`p-${c}-${p}`);
+    if (!el) return;
+    if (paged) {
+      if (measure()) setPi(Math.floor((el.offsetLeft + 2) / (PW + GAP)), false);
+    } else el.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' });
+  }
+
+  function onPageClick(e: MouseEvent) {
+    if (!paged || !pview) return;
+    if ((e.target as HTMLElement).closest('button')) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    const r = pview.getBoundingClientRect();
+    const f = (e.clientX - r.left) / r.width;
+    if (f < 1 / 3) turnPage(-1);
+    else if (f > 2 / 3) turnPage(1);
+    else bars = !bars;
+  }
+
+  function onWheel(e: WheelEvent) {
+    if (!paged || e.ctrlKey) return;
+    e.preventDefault();
+    const now = performance.now();
+    if (now - wheelLast > 250) wheelAcc = 0;
+    wheelLast = now;
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    wheelAcc += d;
+    if (Math.abs(wheelAcc) < 30 || now - wheelTurn < 350) return;
+    wheelTurn = now;
+    const s = Math.sign(wheelAcc);
+    wheelAcc = 0;
+    turnPage(s);
+  }
+
+  // ---------- 翻页方式 ----------
+
+  async function setMode(m: NovelMode) {
+    if (np.mode === m) return;
+    const r = currentRatio();
+    if (flipAnim) flipAnim.finish();
+    np.mode = m;
+    autoPaused = false;
+    if (loadedId) void saveNovelBook(loadedId, np);
+    ratio = r;
+    await tick();
+    applyScroll();
+  }
+
+  function cycleMode() {
+    const ids = NOVEL_MODES.map(m => m.id);
+    void setMode(ids[(ids.indexOf(np.mode) + 1) % ids.length]).then(() =>
+      toast(`翻页方式：${NOVEL_MODES.find(m => m.id === np.mode)?.name}`),
+    );
+  }
+
+  function setGlobal<K extends 'anim' | 'speed'>(k: K, v: NovelPrefs[K]) {
+    np[k] = v;
+    ngl = { ...ngl, [k]: v };
+    void saveNovelGlobal(ngl);
+  }
+
+  function setSpeed(v: number) {
+    setGlobal('speed', clamp(Math.round(v), SPEED_MIN, SPEED_MAX));
+  }
+
+  function openMenu(e: MouseEvent) {
+    if (menu) {
+      menu = null;
+      return;
+    }
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    menu = { x: Math.min(r.left, window.innerWidth - 310), y: r.bottom + 6 };
+  }
+
+  /** 上下滚动：按屏滚动 */
+  function scrollScreen(d: number) {
+    const el = bodyEl;
+    if (!el) return;
+    el.scrollBy({ top: d * el.clientHeight * 0.9, behavior: 'smooth' });
   }
 
   function saveNow() {
@@ -165,6 +434,11 @@
   }
 
   function onScroll() {
+    if (paged) {
+      // 分栏模式下正文不滚动（选中文字等可能把它带偏），复位
+      if (bodyEl && bodyEl.scrollTop) bodyEl.scrollTop = 0;
+      return;
+    }
     ratio = currentRatio();
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 1200);
@@ -176,6 +450,7 @@
     if (!keepTts) stopTts();
     ci = k;
     ratio = at;
+    pi = 0;
     flashPara = -1;
     if (bodyEl) bodyEl.scrollTop = 0;
     tick().then(() => {
@@ -197,7 +472,7 @@
   async function jumpTo(c: number, p: number) {
     if (c !== ci) gotoChapter(c);
     await tick();
-    document.getElementById(`p-${c}-${p}`)?.scrollIntoView({ block: 'center' });
+    showPara(c, p);
     flashPara = p;
     setTimeout(() => {
       if (flashPara === p) flashPara = -1;
@@ -231,14 +506,21 @@
   // ---------- 书签 ----------
 
   /** 当前屏幕上第一段文字，用作书签的名字 */
-  function visibleLabel(): string {
+  /** 屏幕上第一段（上下滚动看纵向，左右翻页看当前这一屏） */
+  function firstVisible(): HTMLElement | null {
     const el = bodyEl;
-    if (el) {
-      const top = el.getBoundingClientRect().top;
-      for (const p of el.querySelectorAll<HTMLElement>('p[data-p]')) {
-        if (p.getBoundingClientRect().bottom > top + 4) return cps((p.textContent ?? '').trim()).slice(0, 18).join('');
-      }
+    if (!el) return null;
+    const v = (paged && pview ? pview : el).getBoundingClientRect();
+    for (const p of el.querySelectorAll<HTMLElement>('p[data-p]')) {
+      const r = p.getBoundingClientRect();
+      if (r.bottom > v.top + 4 && r.top < v.bottom && r.right > v.left + 4 && r.left < v.right - 4) return p;
     }
+    return null;
+  }
+
+  function visibleLabel(): string {
+    const p = firstVisible();
+    if (p) return cps((p.textContent ?? '').trim()).slice(0, 18).join('');
     return chapter?.title ?? '';
   }
 
@@ -274,13 +556,8 @@
   }
 
   function firstVisiblePara(): number {
-    const el = bodyEl;
-    if (!el) return 0;
-    const top = el.getBoundingClientRect().top;
-    for (const p of el.querySelectorAll<HTMLElement>('p[data-p]')) {
-      if (p.getBoundingClientRect().bottom > top + 4) return Number(p.dataset.p);
-    }
-    return 0;
+    const p = firstVisible();
+    return p ? Number(p.dataset.p) : 0;
   }
 
   function toggleTts() {
@@ -306,7 +583,7 @@
     const item = rendered[pi];
     const text = item ? item.segs.filter(s => s.s !== 2).map(s => s.t).join('') : chapter.paras[pi];
     ttsPara = pi;
-    document.getElementById(`p-${ci}-${pi}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    showPara(ci, pi, true);
     if (!text.trim()) return speakFrom(pi + 1);
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'zh-CN';
@@ -480,7 +757,9 @@
     }
     if (e.key === 'Escape') {
       e.preventDefault();
-      if (selPop) selPop = null;
+      if (help) help = false;
+      else if (menu) menu = null;
+      else if (selPop) selPop = null;
       else if (tocOpen || adOpen) {
         tocOpen = false;
         adOpen = false;
@@ -505,7 +784,14 @@
       }
       return;
     }
-    switch (e.key) {
+    const k = e.key;
+    if (paged && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', ' '].includes(k)) {
+      e.preventDefault();
+      const back = k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp' || (k === ' ' && e.shiftKey);
+      turnPage(back ? -1 : 1);
+      return;
+    }
+    switch (k) {
       case 'ArrowRight':
       case 'PageDown':
         e.preventDefault();
@@ -516,13 +802,40 @@
         e.preventDefault();
         prevChapter();
         break;
+      case ' ':
+        e.preventDefault();
+        if (np.mode === 'auto') {
+          autoPaused = !autoPaused;
+          toast(autoPaused ? '自动滚动已暂停（空格继续）' : '继续自动滚动');
+        } else scrollScreen(e.shiftKey ? -1 : 1);
+        break;
+      case 'ArrowUp':
+      case 'ArrowDown':
+        if (np.mode === 'auto') {
+          e.preventDefault();
+          setSpeed(np.speed + (k === 'ArrowUp' ? 5 : -5));
+        }
+        break;
       case 'Home':
         e.preventDefault();
-        bodyEl?.scrollTo({ top: 0 });
+        if (paged) setPi(0, false);
+        else bodyEl?.scrollTo({ top: 0 });
         break;
       case 'End':
         e.preventDefault();
-        if (bodyEl) bodyEl.scrollTo({ top: bodyEl.scrollHeight });
+        if (paged) setPi(pages - 1, false);
+        else if (bodyEl) bodyEl.scrollTo({ top: bodyEl.scrollHeight });
+        break;
+      case 'm':
+      case 'M':
+        cycleMode();
+        break;
+      case 'h':
+      case 'H':
+        bars = !bars;
+        break;
+      case '?':
+        help = !help;
         break;
       case 'f':
       case 'F':
@@ -538,12 +851,37 @@
 
 <svelte:window onkeydown={onKey} />
 
+{#snippet content(ch: { title: string })}
+  <h2>{ch.title}</h2>
+  {#each rendered as r (r.pi)}
+    <p
+      data-p={r.pi}
+      id="p-{ci}-{r.pi}"
+      style={pStyle}
+      class:adp={r.allGone}
+      class:gone={r.allGone}
+      class:tts={ttsPara === r.pi}
+      class:flash={flashPara === r.pi}
+    >{#each r.segs as sg, si (si)}{#if sg.s === 2}<span class="ad gone">{sg.t}</span>{:else if sg.s === 1}<span class="ad found">{sg.t}</span>{:else}{sg.t}{/if}{/each}</p>
+  {/each}
+  <div class="chapnav">
+    <button type="button" onclick={prevChapter} disabled={ci <= 0}>← 上一章</button>
+    <span>{ci + 1} / {total}</span>
+    <button type="button" onclick={nextChapter} disabled={ci + 1 >= total}>下一章 →</button>
+  </div>
+{/snippet}
+
+
 <div class="mp-over mp-reader open" class:green={prefs.theme === 'green'} class:night={prefs.theme === 'night'} class:adopen={adOpen} class:showraw={raw}>
-  <div class="mp-rhead">
+  <div class="mp-rhead" class:nobar={!bars}>
     <button type="button" onclick={close}>← 书架</button>
     <b>{book?.title ?? '小说'}</b>
-    <span>{chapter ? chapter.title : ''}</span>
+    <span>{chapter ? chapter.title : ''}{paged && book ? ` · ${pi + 1} / ${pages}` : ''}</span>
     <span style="flex:1"></span>
+    <button type="button" class="nm-btn" class:on={!!menu} onclick={openMenu} title="翻页方式（M）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">{@html FLOW_ICON[np.mode] ?? ''}</svg>
+      {modeInfo.name} ▾
+    </button>
     <button type="button" onclick={() => (tocOpen = !tocOpen)}>目录</button>
     <button type="button" onclick={() => setFs(-2)} title="Ctrl + 减">A−</button>
     <button type="button" onclick={() => setFs(2)} title="Ctrl + 加">A+</button>
@@ -562,8 +900,9 @@
     <button type="button" onclick={() => { tocOpen = true; focusSearch++; }} title="Ctrl + F">搜索</button>
     <button type="button" onclick={() => (adOpen = !adOpen)}>去广告{appliedCount ? ` · ${appliedCount}` : ''}</button>
     <button type="button" onclick={toggleFull} title="F">全屏</button>
+    <button type="button" onclick={() => (help = !help)} title="快捷键（?）">?</button>
   </div>
-  <div class="mp-rprog"><i style="width:{pct}%"></i></div>
+  <div class="mp-rprog" class:nobar={!bars}><i style="width:{pct}%"></i></div>
 
   <div class="mp-rwrap">
     <div class="toc" class:open={tocOpen}>
@@ -581,29 +920,25 @@
       {/if}
     </div>
 
-    <div class="mp-rbody" bind:this={bodyEl}>
+    <div class="mp-rbody" class:pmode={paged} style="--fs:{prefs.fs}px" bind:this={bodyEl}>
       {#if loading}
         <p class="hint">正在打开…</p>
       {:else if err}
         <p class="hint">{err}</p>
-      {:else if chapter}
-        <h2>{chapter.title}</h2>
-        {#each rendered as r (r.pi)}
-          <p
-            data-p={r.pi}
-            id="p-{ci}-{r.pi}"
-            style={pStyle}
-            class:adp={r.allGone}
-            class:gone={r.allGone}
-            class:tts={ttsPara === r.pi}
-            class:flash={flashPara === r.pi}
-          >{#each r.segs as sg, si (si)}{#if sg.s === 2}<span class="ad gone">{sg.t}</span>{:else if sg.s === 1}<span class="ad found">{sg.t}</span>{:else}{sg.t}{/if}{/each}</p>
-        {/each}
-        <div class="chapnav">
-          <button type="button" onclick={prevChapter} disabled={ci <= 0}>← 上一章</button>
-          <span>{ci + 1} / {total}</span>
-          <button type="button" onclick={nextChapter} disabled={ci + 1 >= total}>下一章 →</button>
+      {:else if chapter && paged}
+        <!-- 左右翻页：整章排成等宽的栏，每栏正好一屏，移动整排来翻页 -->
+        <div class="pview" bind:this={pview} bind:clientWidth={PW} bind:clientHeight={PH} onclick={onPageClick} role="presentation">
+          <div
+            class="pcols"
+            class:slide={sliding}
+            bind:this={pcols}
+            style="column-width:{PW}px;column-gap:{GAP}px;height:{PH}px;transform:translateX({-pi * (PW + GAP)}px)"
+          >
+            {@render content(chapter)}
+          </div>
         </div>
+      {:else if chapter}
+        {@render content(chapter)}
       {/if}
     </div>
 
@@ -611,6 +946,43 @@
       <AdPanel {hits} {candidates} {busy} {estimate} {raw} {scanned} act={onAct} />
     </div>
   </div>
+
+  {#if menu}
+    <ModeMenu
+      mode={np.mode}
+      anim={np.anim}
+      speed={np.speed}
+      x={menu.x}
+      y={menu.y}
+      onmode={m => void setMode(m)}
+      onanim={a => setGlobal('anim', a)}
+      onspeed={setSpeed}
+      onclose={() => (menu = null)}
+    />
+  {/if}
+
+  {#if np.mode === 'auto' && book}
+    <div class="autobar">
+      <button type="button" onclick={() => (autoPaused = !autoPaused)} title="空格">{autoPaused ? '▶ 继续' : '❚❚ 暂停'}</button>
+      <button type="button" onclick={() => setSpeed(np.speed - 5)} title="↓">慢</button>
+      <span>速度 {np.speed}</span>
+      <button type="button" onclick={() => setSpeed(np.speed + 5)} title="↑">快</button>
+    </div>
+  {/if}
+
+  {#if paged && book && !bars}
+    <span class="pinfo">{pi + 1} / {pages}</span>
+  {/if}
+
+  {#if help}
+    <div class="nhelp" role="dialog" aria-label="快捷键">
+      <div class="nhelp-head"><b>小说阅读器快捷键</b><button type="button" onclick={() => (help = false)}>关闭</button></div>
+      <div class="nkv">
+        {#each NOVEL_KEYS as [k, v] (k)}<kbd>{k}</kbd><span>{v}</span>{/each}
+      </div>
+      <p>左右翻页时：点击屏幕左右两侧翻页、中间显示 / 隐藏工具栏；滚轮和触摸板滑动也能翻页。</p>
+    </div>
+  {/if}
 
   {#if selPop}
     <div class="mp-selpop open" style="left:{Math.max(8, selPop.x - 80)}px;top:{Math.max(8, selPop.y - 46)}px">
@@ -621,6 +993,145 @@
 </div>
 
 <style>
+  .mp-rhead.nobar,
+  .mp-rprog.nobar {
+    display: none;
+  }
+  .nm-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .nm-btn svg {
+    width: 15px;
+    height: 15px;
+  }
+  .nm-btn.on {
+    opacity: 1;
+    background: rgba(128, 128, 128, 0.18);
+  }
+  .mp-rbody.pmode {
+    overflow: hidden;
+    padding-top: 18px;
+    padding-bottom: 22px;
+    display: flex;
+    flex-direction: column;
+  }
+  .pview {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    cursor: default;
+  }
+  .pcols {
+    position: relative;
+    column-fill: auto;
+    will-change: transform;
+  }
+  .pcols.slide {
+    transition: transform 0.35s cubic-bezier(0.22, 0.7, 0.3, 1);
+  }
+  .pcols :global(h2) {
+    margin-top: 0;
+    break-after: avoid;
+  }
+  .pcols :global(.chapnav) {
+    break-inside: avoid;
+    margin: 30px 0 10px;
+  }
+  .autobar {
+    position: absolute;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: rgba(30, 30, 30, 0.82);
+    color: #eee;
+    border-radius: 12px;
+    padding: 6px 10px;
+    font-size: 12.5px;
+    font-family: var(--mp-font);
+    box-shadow: 0 8px 30px #0005;
+    z-index: 5;
+  }
+  .autobar button {
+    background: #ffffff18;
+    border: 1px solid #ffffff2a;
+    color: inherit;
+    border-radius: 8px;
+    padding: 3px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .autobar span {
+    min-width: 5em;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .pinfo {
+    position: absolute;
+    right: 16px;
+    bottom: 10px;
+    font-size: 12px;
+    opacity: 0.6;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+  .nhelp {
+    position: absolute;
+    top: 60px;
+    right: 20px;
+    width: min(440px, calc(100% - 40px));
+    max-height: calc(100% - 80px);
+    overflow: auto;
+    background: #1b1b22f2;
+    color: #eee;
+    border: 1px solid #ffffff22;
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: 0 14px 40px #000a;
+    z-index: 25;
+    font-size: 12.5px;
+    font-family: var(--mp-font);
+  }
+  .nhelp-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .nhelp-head button {
+    background: #ffffff14;
+    border: 1px solid #ffffff26;
+    color: inherit;
+    border-radius: 8px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .nhelp p {
+    margin: 12px 0 0;
+    opacity: 0.75;
+    line-height: 1.6;
+  }
+  .nkv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 12px;
+    align-items: center;
+  }
+  .nkv kbd {
+    font: inherit;
+    font-size: 11.5px;
+    background: #ffffff14;
+    border: 1px solid #ffffff26;
+    border-radius: 6px;
+    padding: 1px 7px;
+    white-space: nowrap;
+    justify-self: start;
+  }
   .toc {
     width: 0;
     flex: none;

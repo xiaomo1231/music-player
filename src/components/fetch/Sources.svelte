@@ -4,7 +4,7 @@
   import Icon from '../../lib/Icon.svelte';
   import { listen, inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, KIND_TEXT, type Source, type SourceStep } from '../../lib/fetch';
+  import { fetchApi, KIND_TEXT, MEDIA_TEXT, type ProviderInfo, type Source, type SourceStep } from '../../lib/fetch';
 
   let { onchange }: { onchange?: () => void } = $props();
 
@@ -15,14 +15,18 @@
   let kind = $state('auto');
   let busy = $state(false);
   let steps = $state<SourceStep[]>([]);
+  // 已接入的下载源（默认没有）；已经添加过的不再列出
+  let providers = $state<ProviderInfo[]>([]);
+  let addable = $derived(providers.filter(p => !list.some(s => s.kind === 'provider' && s.url === `provider://${p.id}`)));
 
-  const ICON: Record<string, string> = { rss: 'list', ytdlp: 'video', dir: 'folder', web: 'search' };
+  const ICON: Record<string, string> = { rss: 'list', ytdlp: 'video', dir: 'folder', web: 'search', provider: 'download' };
   const BADGE: Record<string, string> = { rules: '规则已生成', ai_direct: 'AI 直接读取' };
 
   async function load() {
     if (!inTauri) return;
     try {
       list = await fetchApi.sources();
+      providers = await fetchApi.providers();
     } catch (err) {
       toast(String(err));
     }
@@ -54,6 +58,21 @@
       name = '';
       template = '';
       toast(`已添加来源：${s.name}`);
+      onchange?.();
+    } catch (err) {
+      toast(String(err));
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function addProvider(p: ProviderInfo) {
+    if (busy) return;
+    busy = true;
+    try {
+      const s = await fetchApi.addSource('provider', `provider://${p.id}`, p.name);
+      list = [...list, s];
+      toast(`已添加下载源：${s.name}`);
       onchange?.();
     } catch (err) {
       toast(String(err));
@@ -120,6 +139,14 @@
   <input class="tin" style="flex:1" placeholder="粘贴网站地址或订阅链接" autocomplete="off" bind:value={url} onkeydown={e => e.key === 'Enter' && add()} />
   <button class="mp-btn" onclick={add} disabled={busy}>添加</button>
 </div>
+{#if addable.length > 0}
+  <div class="frow" style="margin-top:10px">
+    <span>可添加的下载源</span>
+    {#each addable as p (p.id)}
+      <button class="mp-btn ghost" title={p.note || p.media_kinds.map(k => MEDIA_TEXT[k] ?? k).join('、')} onclick={() => addProvider(p)} disabled={busy}>{p.name}</button>
+    {/each}
+  </div>
+{/if}
 <details class="adv">
   <summary>高级选项</summary>
   <div class="frow" style="margin-top:8px">

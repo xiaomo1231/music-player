@@ -1,7 +1,13 @@
 //! 在线歌词：各歌词源查候选 → 打分挑最合适的一份 → 存 SQLite 缓存。
 //! 本地同名 .lrc 和内嵌歌词优先（metadata::lyrics_for），这里只在本地没有时才用。
-//! 子模块：lrclib（LRCLIB 开放歌词库）。以后的网易云 / QQ / 酷狗 / AMLL 也按同样的形状加进 `Source`。
+//! 子模块：各歌词源（lrclib / qq / kugou / netease）、crypto（平台歌词加解密）、formats（YRC / QRC / KRC 解析）。
+//! 国内三家用的是客户端的非官方接口，随时可能变；任何一家失败都只是少一个候选，不影响其他源。
+pub mod crypto;
+pub mod formats;
+pub mod kugou;
 pub mod lrclib;
+pub mod netease;
+pub mod qq;
 
 use crate::metadata::LyricLine;
 use crate::{db, library, AppState};
@@ -37,20 +43,48 @@ pub fn init(conn: &Connection) -> Result<()> {
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     Lrclib,
+    Qq,
+    Kugou,
+    Netease,
 }
 
 impl Source {
+    pub const ALL: [Source; 4] = [Source::Qq, Source::Netease, Source::Kugou, Source::Lrclib];
+
     pub fn parse(s: &str) -> Option<Source> {
-        match s {
-            "lrclib" => Some(Source::Lrclib),
-            _ => None,
-        }
+        Source::ALL.into_iter().find(|x| x.name() == s)
     }
     pub fn name(self) -> &'static str {
         match self {
             Source::Lrclib => "lrclib",
+            Source::Qq => "qq",
+            Source::Kugou => "kugou",
+            Source::Netease => "netease",
         }
     }
+}
+
+/// 平台搜索结果里的一首歌（还没取歌词）
+#[derive(Debug, Clone, Default)]
+pub struct Cand {
+    pub id: String,
+    /// 各平台取歌词时要的额外字段（酷狗的 accesskey、QQ 的专辑名）
+    pub extra: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    /// 秒
+    pub duration: Option<f64>,
+}
+
+/// 搜索结果按匹配分数排序，取前 n 个值得去取歌词的
+pub fn top_cands(q: &Query, cands: Vec<Cand>, n: usize) -> Vec<Cand> {
+    let mut scored: Vec<(Cand, f64)> = cands
+        .into_iter()
+        .filter_map(|c| score(q, &c.title, &c.artist, c.duration).map(|s| (c, s)))
+        .collect();
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+    scored.into_iter().take(n).map(|(c, _)| c).collect()
 }
 
 /// 同步级别：越大越好
@@ -88,8 +122,22 @@ impl Query {
         }
     }
 
-    pub fn cache_key(&self) -> String {
-        format!("{}|{}|{}", norm(&self.title), norm(&self.artist), self.duration.round() as i64)
+    /// 换了歌词源组合时缓存自然失效
+    pub fn cache_key(&self, sources: &[Source]) -> String {
+        let mut names: Vec<&str> = sources.iter().map(|s| s.name()).collect();
+        names.sort_unstable();
+        format!(
+            "{}|{}|{}|{}",
+            names.join(","),
+            norm(&self.title),
+            norm(&self.artist),
+            self.duration.round() as i64
+        )
+    }
+
+    /// 平台搜索用的关键词
+    pub fn keyword(&self) -> String {
+        format!("{} {}", self.title, self.artist).trim().to_string()
     }
 }
 
@@ -104,6 +152,10 @@ pub struct Found {
 }
 
 impl Found {
+    pub fn has_translation(&self) -> bool {
+        self.lines.iter().any(|l| l.tr.is_some())
+    }
+
     pub fn sync(&self) -> Sync {
         if self.lines.iter().any(|l| !l.words.is_empty()) {
             Sync::Word
@@ -213,7 +265,8 @@ pub fn score(q: &Query, title: &str, artist: &str, duration: Option<f64>) -> Opt
     (s >= MIN_SCORE).then_some(s)
 }
 
-/// 从所有候选里挑一份：先比同步级别（逐字 > 逐行 > 纯文本），再比分数，再按歌词源顺序
+/// 从所有候选里挑一份：先比同步级别（逐字 > 逐行 > 纯文本），再比分数（按 0.05 分档，差不多算一样），
+/// 再看有没有译文，最后按歌词源顺序
 pub fn pick(q: &Query, found: Vec<Found>, order: &[Source]) -> Option<Found> {
     let rank = |s: Source| order.iter().position(|x| *x == s).unwrap_or(usize::MAX);
     found
@@ -221,9 +274,11 @@ pub fn pick(q: &Query, found: Vec<Found>, order: &[Source]) -> Option<Found> {
         .filter(|f| !f.lines.is_empty())
         .filter_map(|f| score(q, &f.title, &f.artist, f.duration).map(|s| (f, s)))
         .max_by(|(a, sa), (b, sb)| {
+            let bucket = |s: f64| (s * 20.0).floor() as i64;
             a.sync()
                 .cmp(&b.sync())
-                .then(sa.partial_cmp(sb).unwrap_or(std::cmp::Ordering::Equal))
+                .then(bucket(*sa).cmp(&bucket(*sb)))
+                .then(a.has_translation().cmp(&b.has_translation()))
                 .then(rank(b.source).cmp(&rank(a.source)))
         })
         .map(|(f, _)| f)
@@ -243,7 +298,7 @@ impl Default for OnlineCfg {
     fn default() -> Self {
         OnlineCfg {
             enabled: true,
-            sources: vec!["lrclib".into()],
+            sources: Source::ALL.iter().map(|s| s.name().to_string()).collect(),
         }
     }
 }
@@ -305,6 +360,9 @@ static HTTP: Lazy<reqwest::Client> = Lazy::new(|| {
 async fn search_source(src: Source, q: &Query) -> Result<Vec<Found>> {
     match src {
         Source::Lrclib => lrclib::find(&HTTP, q).await,
+        Source::Qq => qq::find(&HTTP, q).await,
+        Source::Kugou => kugou::find(&HTTP, q).await,
+        Source::Netease => netease::find(&HTTP, q).await,
     }
 }
 
@@ -332,21 +390,22 @@ pub async fn lyrics_online(
     if q.title.is_empty() {
         return Ok(None);
     }
-    let key = q.cache_key();
-    let cfg = {
+    let (sources, key) = {
         let conn = st.db.lock();
         let cfg = OnlineCfg::load(&conn);
-        if !cfg.enabled {
+        let sources = cfg.source_list();
+        if !cfg.enabled || sources.is_empty() {
             return Ok(None);
         }
+        let key = q.cache_key(&sources);
         if !refresh.unwrap_or(false) {
             if let Some(hit) = cache_get(&conn, &key, db::now()).map_err(|e| e.to_string())? {
                 return Ok(hit);
             }
         }
-        cfg
+        (sources, key)
     };
-    let got = find(&q, &cfg.source_list()).await;
+    let got = find(&q, &sources).await;
     cache_put(&st.db.lock(), &key, got.as_ref(), db::now()).map_err(|e| e.to_string())?;
     Ok(got)
 }
@@ -433,10 +492,10 @@ mod tests {
         let c = crate::db::open_memory().unwrap();
         let cfg = OnlineCfg::load(&c);
         assert!(cfg.enabled);
-        assert_eq!(cfg.source_list(), vec![Source::Lrclib]);
+        assert_eq!(cfg.source_list(), Source::ALL.to_vec());
         library::set_setting(&c, "lyrics_online", &serde_json::json!({"enabled": false})).unwrap();
         let cfg = OnlineCfg::load(&c);
         assert!(!cfg.enabled);
-        assert_eq!(cfg.source_list(), vec![Source::Lrclib]);
+        assert_eq!(cfg.source_list(), Source::ALL.to_vec());
     }
 }

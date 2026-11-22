@@ -1,8 +1,11 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import Icon from '../../lib/Icon.svelte';
   import MoreButton from '../MoreButton.svelte';
-  import { openMenu, mediaEntries } from '../../lib/items.svelte';
+  import BatchBar from '../BatchBar.svelte';
+  import SelCheck from '../SelCheck.svelte';
+  import { openMenu, mediaEntries, removeMany, deleteMany, subtitleMany, type MenuEntry } from '../../lib/items.svelte';
+  import { Selection, noTextSelect } from '../../lib/select.svelte';
   import { invoke, inTauri, type Series, type Video } from '../../lib/api';
   import { ui, toast } from '../../lib/ui.svelte';
   import { lib } from '../../lib/library.svelte';
@@ -69,7 +72,39 @@
     return eps.filter(e => sOf(e) === s).map(e => e.id);
   }
 
+  // ---------- 多选（按集，当前这一季） ----------
+  const sel = new Selection();
+  const order = $derived(curEps.map(e => e.id));
+  $effect(() => { void curSeason; untrack(() => sel.clear()); });
+  $effect(() => { const o = order; untrack(() => sel.prune(o)); });
+  function clickEp(ev: MouseEvent, e: Video) {
+    if (!sel.click(ev, e.id, order)) play(e);
+  }
+  function batch(): MenuEntry[] {
+    const ids = sel.ids(order);
+    const es = curEps.filter(e => sel.has(e.id));
+    const done = (ok: boolean) => ok && sel.clear();
+    const mark = async (watched: boolean) => {
+      await invoke('set_watched', { ids, watched });
+      toast(watched ? `已标记 ${ids.length} 集为已看` : `已标记 ${ids.length} 集为未看`);
+      await load();
+      onchanged?.();
+    };
+    return [
+      { label: '播放', run: () => ui.openItem(ids[0], kind === 'anime' ? 'anime' : 'video', ids) },
+      ...(es.some(e => !e.watched) ? [{ label: '标记为已看', run: () => mark(true) }] : []),
+      ...(es.some(e => e.watched) ? [{ label: '标记为未看', run: () => mark(false) }] : []),
+      { label: '生成 AI 字幕', run: () => subtitleMany(ids[0], ids.length) },
+      { label: '转换格式…', run: () => { ui.convertPaths = es.map(e => e.path); ui.go('convert'); } },
+      { label: '整理文件…', run: () => ui.go('org') },
+      'sep',
+      { label: '从媒体库移除…', run: async () => done(await removeMany('video', ids)) },
+      { label: '删除文件…', danger: true, run: async () => done(await deleteMany('video', ids)) },
+    ];
+  }
+
   function epMenu(ev: MouseEvent, e: Video) {
+    if (sel.has(e.id) && sel.size > 1) return openMenu(ev, `已选 ${sel.size} 集`, batch());
     openMenu(ev, e.title, mediaEntries('video', e.id, e.title, [
       { label: '播放', run: () => play(e) },
       { label: e.watched ? '标记为未看' : '标记为已看', run: async () => { await invoke('set_watched', { ids: [e.id], watched: !e.watched }); lib.refresh(); } },
@@ -115,7 +150,9 @@
   }
 </script>
 
-<div class="series-detail" bind:this={root}>
+<svelte:window onkeydown={e => sel.keys(e, () => order)} />
+
+<div class="series-detail" class:multi={sel.on} bind:this={root}>
   <button class="mp-chip" onclick={onback}>← 返回{kind === 'anime' ? '番剧' : '电视剧'}列表</button>
 
   <div class="banner" style:margin-top="12px" style:background-image={posterBg(series.poster, series.thumb, series.title)}>
@@ -142,7 +179,14 @@
         <button class="mp-chip" class:on={s === curSeason} onclick={() => (season = s)}>{s === 0 ? '特别篇' : `第 ${s} 季`}</button>
       {/each}
       <span class="badge2">本季 {curEps.length} 集 · 已看 {curEps.filter(e => e.watched).length} 集</span>
+      {#if curEps.length}
+        <button class="mp-chip msel" class:on={sel.on} onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}><Icon name="check" /> {sel.on ? '退出多选' : '多选'}</button>
+      {/if}
     </div>
+  {/if}
+
+  {#if sel.on}
+    <BatchBar {sel} unit="集" total={order.length} onall={() => sel.selectAll(order)} entries={batch()} />
   {/if}
 
   {#if !loaded}
@@ -155,14 +199,17 @@
         {@const b = subBadge(e.subs)}
         <div
           class="ep"
+          class:picked={sel.has(e.id)}
           role="button"
           tabindex="0"
-          onclick={() => play(e)}
+          onclick={ev => clickEp(ev, e)}
+          onmousedown={noTextSelect}
           onkeydown={ev => ev.key === 'Enter' && play(e)}
           oncontextmenu={ev => epMenu(ev, e)}
           use:lazyThumb={{ id: e.id, thumb: e.thumb, onthumb: n => (thumbs[e.id] = n) }}
         >
           <div class="th" style:background-image={epBg(e)}>
+            <SelCheck card checked={sel.has(e.id)} onclick={ev => (ev.shiftKey ? sel.range(order, e.id, true) : sel.toggle(e.id))} />
             <b>{fmtEp(e.episode)}</b>
             <em><Icon name="play" /></em>
             <u>{fmtT(e.duration)}</u>
@@ -189,6 +236,7 @@
 </div>
 
 <style>
+  .msel { display: inline-flex; align-items: center; gap: 5px; }
   .ep-more { position: absolute; right: 6px; top: 6px; z-index: 3; background: rgba(0,0,0,.55); border-radius: 7px; opacity: 0; transition: opacity .15s; }
   .ep:hover .ep-more { opacity: 1; }
 </style>

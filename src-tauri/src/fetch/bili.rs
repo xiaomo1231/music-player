@@ -1,8 +1,9 @@
 //! B 站：扫码登录（Cookie 只存在 Windows 凭据管理器里）、账号状态、解析链接列出分 P / 剧集、给 yt-dlp 的 Cookie 文件和参数。
 //! 只用用户自己的登录状态访问其本来就能看的内容；大会员专享、付费且未购买、带 DRM 的内容由 yt-dlp 报错，不做绕过。
-use super::{source, FetchSettings};
+use super::{provider, source, FetchSettings};
 use crate::tools;
 use anyhow::{anyhow, bail, Context, Result};
+use futures_util::future::BoxFuture;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -15,6 +16,7 @@ const KEYRING_SERVICE: &str = "music-player-bili";
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 const QR_GENERATE: &str = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate";
 const QR_POLL: &str = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll";
+const SEARCH: &str = "https://api.bilibili.com/x/web-interface/search/type";
 const NAV: &str = "https://api.bilibili.com/x/web-interface/nav";
 /// 登录后要保存的 Cookie
 const KEEP: &[&str] = &["SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5", "sid"];
@@ -312,6 +314,133 @@ pub fn friendly_error(err: &str) -> String {
     }
 }
 
+// ---------- 下载源（搜索页里搜 B 站） ----------
+
+/// 接到“下载源接口”上的 B 站：在搜索页按关键字搜视频，下载交给 yt-dlp（清晰度、字幕、弹幕按设置）。
+/// 番剧请在 B 站面板粘贴链接（搜索接口只返回普通视频）。
+#[derive(Default)]
+pub struct BiliProvider;
+
+/// 搜索结果标题里的 <em class="keyword"> 高亮和 HTML 实体
+pub fn clean_title(s: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+}
+
+/// “3:45” / “1:02:03” → 秒
+pub fn parse_duration(s: &str) -> Option<f64> {
+    let mut t = 0.0;
+    for part in s.split(':') {
+        t = t * 60.0 + part.trim().parse::<f64>().ok()?;
+    }
+    Some(t)
+}
+
+pub fn search_items(v: &Value, media_kind: &str) -> Vec<provider::Item> {
+    let Some(list) = v["data"]["result"].as_array() else { return vec![] };
+    list.iter()
+        .filter_map(|r| {
+            let bvid = r["bvid"].as_str().filter(|s| !s.is_empty())?;
+            let url = r["arcurl"]
+                .as_str()
+                .filter(|u| u.starts_with("http"))
+                .map(|u| u.replace("http://", "https://"))
+                .unwrap_or_else(|| format!("https://www.bilibili.com/video/{bvid}"));
+            let cover = r["pic"].as_str().unwrap_or("");
+            let cover = if cover.starts_with("//") {
+                format!("https:{cover}")
+            } else {
+                cover.to_string()
+            };
+            Some(provider::Item {
+                id: bvid.to_string(),
+                title: clean_title(r["title"].as_str().unwrap_or(bvid)),
+                artist: r["author"].as_str().unwrap_or("").to_string(),
+                duration: r["duration"].as_str().and_then(parse_duration),
+                cover,
+                media_kind: media_kind.to_string(),
+                extra: serde_json::json!({ "url": url }),
+                ..Default::default()
+            })
+        })
+        .collect()
+}
+
+impl provider::Provider for BiliProvider {
+    fn info(&self) -> provider::ProviderInfo {
+        provider::ProviderInfo {
+            id: "bilibili".into(),
+            name: "B 站".into(),
+            media_kinds: vec!["video".into(), "music".into()],
+            note: "搜 B 站视频，下载交给 yt-dlp；清晰度、弹幕、字幕在设置里调。番剧请在 B 站面板粘贴链接。只下载你的账号能看的内容。".into(),
+        }
+    }
+
+    fn search<'a>(&'a self, query: &'a str, media_kind: &'a str, page: u32) -> BoxFuture<'a, Result<Vec<provider::Item>, String>> {
+        Box::pin(async move {
+            source::throttle(SEARCH).await;
+            // 搜索接口需要 buvid3；已登录时带上登录 Cookie
+            let mut cookie = format!("buvid3={}infoc", uuid_like());
+            if let Some(c) = load_cookies() {
+                cookie = format!("{cookie}; {}", cookie_header(&c));
+            }
+            let page = page.max(1).to_string();
+            let v: Value = client()
+                .get(SEARCH)
+                .header(reqwest::header::COOKIE, cookie)
+                .header(reqwest::header::REFERER, "https://search.bilibili.com/")
+                .query(&[("search_type", "video"), ("keyword", query), ("page", page.as_str())])
+                .send()
+                .await
+                .map_err(|e| format!("连接 B 站失败：{e}"))?
+                .json()
+                .await
+                .map_err(|e| format!("B 站返回的内容无法解析：{e}"))?;
+            match v["code"].as_i64() {
+                Some(0) => Ok(search_items(&v, media_kind)),
+                Some(-412) => Err(friendly_error("412")),
+                _ => Err(format!("B 站搜索失败：{}", v["message"].as_str().unwrap_or("未知错误"))),
+            }
+        })
+    }
+
+    fn resolve<'a>(&'a self, item: &'a provider::Item, _quality: &'a str) -> BoxFuture<'a, Result<provider::Resolved, String>> {
+        Box::pin(async move {
+            let url = item.extra["url"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("https://www.bilibili.com/video/{}", item.id));
+            Ok(provider::Resolved {
+                target: provider::Target::Ytdlp { url },
+                lyric: None,
+            })
+        })
+    }
+}
+
+/// 随机的 buvid3（只要格式像就行，不需要真实设备号）
+fn uuid_like() -> String {
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let h = format!("{:032X}", n.wrapping_mul(6364136223846793005) ^ (std::process::id() as u128));
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+}
+
 // ---------- 给 yt-dlp 的下载参数 ----------
 
 /// 一次 yt-dlp 下载的选项
@@ -481,6 +610,43 @@ mod tests {
         assert!(friendly_error("ERROR: This video is for premium members only").contains("大会员"));
         assert!(friendly_error("HTTP Error 412: Precondition Failed").contains("频繁"));
         assert_eq!(friendly_error("something else"), "something else");
+    }
+
+    #[test]
+    fn provider_search_results() {
+        let v = serde_json::json!({"code":0,"data":{"result":[
+            {"bvid":"BV1ab","title":"<em class=\"keyword\">星屑</em>邮局 &amp; 片头","author":"UP主","arcurl":"http://www.bilibili.com/video/av1","pic":"//i0.hdslb.com/a.jpg","duration":"3:45"},
+            {"bvid":"","title":"没有 bvid 的跳过"}]}});
+        let items = search_items(&v, "music");
+        assert_eq!(items.len(), 1);
+        let it = &items[0];
+        assert_eq!(it.title, "星屑邮局 & 片头");
+        assert_eq!(it.artist, "UP主");
+        assert_eq!(it.cover, "https://i0.hdslb.com/a.jpg");
+        assert_eq!(it.duration, Some(225.0));
+        assert_eq!(it.media_kind, "music");
+        assert_eq!(it.extra["url"], "https://www.bilibili.com/video/av1");
+        assert_eq!(parse_duration("1:02:03"), Some(3723.0));
+        assert_eq!(parse_duration("x"), None);
+        assert_eq!(uuid_like().len(), 36);
+    }
+
+    #[test]
+    fn provider_resolves_to_ytdlp() {
+        use provider::Provider;
+        let p = BiliProvider;
+        assert_eq!(p.info().id, "bilibili");
+        let it = provider::Item {
+            id: "BV1ab".into(),
+            ..Default::default()
+        };
+        let r = futures_util::FutureExt::now_or_never(p.resolve(&it, "")).unwrap().unwrap();
+        assert_eq!(
+            r.target,
+            provider::Target::Ytdlp {
+                url: "https://www.bilibili.com/video/BV1ab".into()
+            }
+        );
     }
 
     fn args_text(o: &YtOpts) -> String {

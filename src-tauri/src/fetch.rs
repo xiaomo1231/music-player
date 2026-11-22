@@ -3,6 +3,7 @@
 pub mod bili;
 pub mod download;
 pub mod organize;
+pub mod provider;
 pub mod source;
 pub mod web;
 pub mod ytdlp;
@@ -371,6 +372,7 @@ pub async fn search(app: &AppHandle, query: &str, media_kind: &str, only_source:
             "dir" => source::search_dir(&row, &q, media_kind).await,
             "ytdlp" => source::search_ytdlp(&row, &q).await,
             "web" => web::search(app, &row, &q, media_kind).await,
+            "provider" => provider::search(&row, &q, media_kind).await,
             other => Err(format!("未知来源类型：{other}")),
         };
         match res {
@@ -378,7 +380,10 @@ pub async fn search(app: &AppHandle, query: &str, media_kind: &str, only_source:
                 for h in hits.iter_mut() {
                     h.source_id = row.id;
                     h.source_name = row.name.clone();
-                    enrich(h);
+                    // 下载源自己给出了作品名（专辑），不用再从标题里猜集数
+                    if h.kind != "provider" {
+                        enrich(h);
+                    }
                 }
                 out.hits.append(&mut hits);
             }
@@ -615,6 +620,13 @@ pub async fn fetch_add_source(app: AppHandle, kind: String, url: String, name: O
             String::new()
         }
         "web" => web::add_rule(&app, &stored_url).await?,
+        "provider" => {
+            let id = provider::provider_id(&url).ok_or("下载源地址应为 provider://<id>")?;
+            if provider::get(id).is_none() {
+                return Err(format!("这个版本的软件里没有下载源“{id}”"));
+            }
+            String::new()
+        }
         other => return Err(format!("未知来源类型：{other}")),
     };
 
@@ -985,4 +997,10 @@ pub fn fetch_remove_task(app: AppHandle, id: i64) -> Result<usize, String> {
         Ok(c.execute("DELETE FROM fetch_tasks WHERE id=?1 AND status NOT IN ('queued','downloading')", [id])?)
     })
     .map_err(e)
+}
+
+/// 已接入的下载源（软件默认没有，见 `fetch/provider.rs`）
+#[tauri::command]
+pub fn fetch_providers() -> Vec<provider::ProviderInfo> {
+    provider::list()
 }

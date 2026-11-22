@@ -20,6 +20,8 @@ fetch::fetch_set_settings,
 fetch::fetch_subscribe,
 fetch::fetch_unsubscribe,
 fetch::fetch_subs,
+fetch::fetch_remove_task,
+fetch::fetch_providers,
 ```
 
 `init` 和 `setup` 已经在 `lib.rs` 的 `init_modules` / `setup_modules` 里调用，不用再改。
@@ -50,8 +52,8 @@ Tauri 权限：没有新增。只用到 `app.emit`（事件）和 `reqwest`。
 
 ## 5. 数据表（`fetch::init` 建表，`IF NOT EXISTS`）
 
-- `fetch_sources(id, kind, name, url, rule_json, created_at, enabled)`：`kind` 为 `rss` / `ytdlp` / `dir` / `web`。网页来源的 `url` 列保存搜索网址模板，`rule_json` 保存 `{mode, template, rules}`。
-- `fetch_tasks(id, source_id, title, kind, url, status, progress, speed, size, save_path, error, created_at, finished_at, media_kind)`：`kind` 为 `http` / `magnet` / `torrent` / `ytdlp` / `file`；`status` 为 `queued` / `downloading` / `paused` / `seeding` / `organizing` / `done` / `manual` / `failed` / `canceled`。`manual` 时 `error` 里是“需要手动整理”的说明。
+- `fetch_sources(id, kind, name, url, rule_json, created_at, enabled)`：`kind` 为 `rss` / `ytdlp` / `dir` / `web` / `provider`（下载源，`url` 为 `provider://<id>`）。网页来源的 `url` 列保存搜索网址模板，`rule_json` 保存 `{mode, template, rules}`。
+- `fetch_tasks(id, source_id, title, kind, url, status, progress, speed, size, save_path, error, created_at, finished_at, media_kind)`：`kind` 为 `http` / `magnet` / `torrent` / `ytdlp` / `file` / `provider`；`status` 为 `queued` / `downloading` / `paused` / `seeding` / `organizing` / `done` / `manual` / `failed` / `canceled`。`manual` 时 `error` 里是“需要手动整理”的说明。
 - `fetch_subs(id, source_id, query, media_kind, last_check, seen_json)`。
 
 ## 6. 命令清单
@@ -72,6 +74,7 @@ Tauri 权限：没有新增。只用到 `app.emit`（事件）和 `reqwest`。
 | `fetch_subscribe` | `source_id`，`query`，`media_kind` | 订阅 id（订阅时把当前结果记为“已见”，只下载之后新出现的集） |
 | `fetch_unsubscribe` | `id` | — |
 | `fetch_subs` | — | `SubView[]` |
+| `fetch_providers` | — | `ProviderInfo[]`：已接入的下载源（默认为空），开发说明见 [下载源接口](../下载源接口.md) |
 
 `FetchSettings`：`download_dir`（默认 `下载\极光播放器`）、`organize_dir`（默认 `视频\极光媒体库`）、`concurrency`（1–8，默认 3）、`speed_kbps`（0 为不限，只作用于 HTTP）、`seed_policy`（`stop` 下完即停 / `ratio` 做种到分享率）、`seed_ratio`（默认 1.0）。
 
@@ -136,6 +139,8 @@ B 站下载不另做下载页：解析出的条目通过 `fetch_download`（`kin
 - `*.danmaku.ass` 不出现在播放器的字幕列表里，由弹幕层单独绘制；按 `D` 或控制栏的“弹”开关，状态记在本机。
 - 报错翻译（`bili::friendly_error`）：需要大会员、需要购买、DRM、需要登录、412/429 限流。软件不绕过这些限制。
 - `kind_of_url`：B 站网址判为 `ytdlp`。
+- 下载源接口：`BiliProvider`（id `bilibili`，支持 video / music）已加进 `provider::builtin()`。在“我的来源”添加“B 站”后，搜索页能直接搜 B 站视频（调用 B 站网页搜索接口，带随机 buvid3，已登录时带上登录 Cookie）；下载时 `resolve` 返回 `Target::Ytdlp`，所以清晰度、字幕、弹幕同样按设置。番剧不在搜索结果里，请在 B 站面板粘贴链接。
+- `provider_download`：yt-dlp 返回文件夹时，对其中每个音视频文件补标签、存歌词。
 - 工具查找顺序改为：环境变量 → `<数据目录>\bin\` → 程序目录 `bin\` → PATH。
 
 **自测**：`cargo test --lib`（新增 bili 9 个、danmaku 7 个、ytdlp 2 个测试）、`cargo clippy --all-targets -- -D warnings`、`pnpm check`、`pnpm build` 通过；界面用浏览器加模拟后端数据截图检查了 B 站面板、扫码弹窗、设置和播放器弹幕层。没有连真实 B 站账号测试登录和下载，需要在真机上扫码试一次。

@@ -6,6 +6,7 @@
   --mp-blur:24px; --mp-shadow:0 20px 60px rgba(0,0,0,.45);
 }
 *{box-sizing:border-box}
+[hidden]{display:none !important}
 html,body{height:100%;margin:0}
 body{font-family:var(--mp-font);color:var(--mp-text);background:var(--mp-bg);overflow:hidden;transition:translate 2.5s ease}
 button{font:inherit;color:inherit;cursor:pointer}
@@ -115,6 +116,14 @@ button{font:inherit;color:inherit;cursor:pointer}
 .mp-vtop{position:absolute;left:0;right:0;top:0;padding:18px 28px 40px;background:linear-gradient(rgba(0,0,0,.7),transparent);display:flex;align-items:center;gap:14px;transition:opacity .4s}
 .mp-over.idle .mp-vbar,.mp-over.idle .mp-vtop{opacity:0}
 .mp-over.idle{cursor:none}
+.mp-osd{position:absolute;left:50%;top:14%;translate:-50% 0;background:rgba(0,0,0,.62);backdrop-filter:blur(10px);padding:9px 20px;border-radius:999px;font-size:15px;opacity:0;transition:opacity .25s;pointer-events:none;white-space:nowrap;font-variant-numeric:tabular-nums}
+.mp-osd.show{opacity:1}
+.mp-vhelp{position:absolute;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);display:none;place-content:center;padding:24px;z-index:5}
+.mp-over.help .mp-vhelp{display:grid}
+.mp-vhelp h4{margin:0 0 14px;font-size:18px}.mp-vhelp>div{display:grid;grid-template-columns:repeat(2,minmax(0,340px));gap:4px 40px}
+.mp-vhelp p{margin:0;font-size:13.5px;line-height:2;color:#ffffffd0}
+.mp-vhelp kbd{border:1px solid #ffffff55;border-radius:5px;padding:1px 7px;font-family:inherit;font-size:12px;margin-right:2px;background:#ffffff14}
+@media(max-width:760px){.mp-vhelp>div{grid-template-columns:1fr}}
 .mp-vrow{display:flex;align-items:center;gap:14px;font-size:13px}
 .mp-vrow button{background:none;border:0;font-size:20px;padding:4px;color:#fff}
 .mp-vrow select{background:rgba(255,255,255,.12);color:#fff;border:0;border-radius:6px;padding:4px 6px;font:inherit;font-size:12px}

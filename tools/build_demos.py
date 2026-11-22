@@ -19,8 +19,6 @@ MACROS = {
 }
 for f in sorted((src / "demos").glob("*.html")):
     html = f.read_text("utf-8")
-    if f.name == "index.html":
-        (out / f.name).write_text(html, "utf-8"); continue
     assert "/*CORE_CSS*/" in html and "/*CORE_JS*/" in html, f.name
     for k, v in MACROS.items():
         html = html.replace(k, v)

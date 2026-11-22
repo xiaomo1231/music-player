@@ -398,13 +398,55 @@ function openVideo(v){
  字幕 <select data-sub><option>中文</option><option>双语</option><option>English</option><option>关闭</option></select>
  音轨 <select><option>日语 FLAC 5.1</option><option>国语 AAC 2.0</option></select>
  速度 <select data-vs><option>0.5</option><option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option><option>2</option></select>
- <button title="截图">◎</button><button title="画中画">${icon('mini')}</button></div></div></div>`;
+ <button title="截图 (S)" data-shot>◎</button><button title="画中画">${icon('mini')}</button><button title="快捷键 (?)" data-help style="font-size:14px">⌨</button></div></div>
+ <div class="mp-osd"></div><div class="mp-vhelp"><h4>视频快捷键与手势</h4><div>
+ <p><kbd>空格</kbd> / 单击画面　播放 / 暂停</p><p><kbd>←</kbd> <kbd>→</kbd> 点按　后退 / 前进 5 秒</p><p><kbd>→</kbd> 长按　3 倍速播放，松开恢复</p><p><kbd>←</kbd> 长按　快速倒退，松开恢复</p>
+ <p>鼠标左键长按画面　2 倍速，松开恢复</p><p><kbd>↑</kbd> <kbd>↓</kbd> / 滚轮　音量 ±5%</p><p><kbd>M</kbd>　静音</p><p><kbd>[</kbd> <kbd>]</kbd>　减速 / 加速，<kbd>\\</kbd> 恢复 1 倍</p>
+ <p><kbd>,</kbd> <kbd>.</kbd>　上一帧 / 下一帧</p><p><kbd>0</kbd>–<kbd>9</kbd>　跳到 0%–90%</p><p><kbd>J</kbd> <kbd>L</kbd>　后退 / 前进 10 秒</p><p><kbd>PgUp</kbd> <kbd>PgDn</kbd>　上一集 / 下一集</p>
+ <p><kbd>C</kbd>　切换字幕，<kbd>V</kbd> 显示 / 隐藏</p><p><kbd>Z</kbd> <kbd>X</kbd>　字幕提前 / 延后 0.1 秒</p><p><kbd>A</kbd>　切换音轨</p><p><kbd>S</kbd>　截图</p>
+ <p><kbd>F</kbd> / 双击画面　全屏</p><p>双击画面左 / 右三分之一　后退 / 前进 10 秒</p><p><kbd>Esc</kbd>　退出</p><p><kbd>?</kbd>　显示 / 隐藏本列表</p></div></div></div>`;
  const cv=$('canvas',o),g=cv.getContext('2d'),sub=$('.mp-sub',o),pr=$('.mp-vprog',o);let t=(v.p||0)*7680,run=true,alive=true,last=performance.now(),idle;
- const close=()=>{alive=false;o.classList.remove('open')};$('.mp-x',o).onclick=close;
- $('[data-pp]',o).onclick=e=>{run=!run;e.currentTarget.innerHTML=icon(run?'pause':'play')};
+ const stage=$('.mp-vstage',o),osdEl=$('.mp-osd',o),vsel=$('[data-vs]',o),ssel=$('[data-sub]',o);let vol=80,muted=false,hold=0,holdT=null,subDelay=0,osdT,lastSub='中文';
+ const osd=m=>{osdEl.textContent=m;osdEl.classList.add('show');clearTimeout(osdT);osdT=setTimeout(()=>osdEl.classList.remove('show'),900)};
+ const seekBy=d=>{t=clamp(t+d,0,7679);osd((d>0?'+':'−')+Math.abs(d)+' 秒')};
+ const setSp=d=>{const o2=[...vsel.options].map(x=>+x.value);let i=o2.indexOf(+vsel.value);i=d===0?o2.indexOf(1):clamp(i+d,0,o2.length-1);vsel.value=o2[i];osd('速度 '+o2[i]+'×')};
+ const setVolV=d=>{vol=clamp(vol+d,0,100);muted=false;osd('音量 '+vol+'%')};
+ const toggleRun=()=>{run=!run;$('[data-pp]',o).innerHTML=icon(run?'pause':'play');osd(run?'播放':'暂停')};
+ const fs=()=>{try{document.fullscreenElement?document.exitFullscreen():o.requestFullscreen&&o.requestFullscreen().catch(()=>{})}catch(e){}};
+ const startHold=sp=>{clearTimeout(holdT);holdT=setTimeout(()=>{hold=sp;osdEl.textContent=sp>0?sp+'× 倍速中，松开恢复':'快速倒退中，松开恢复';osdEl.classList.add('show');clearTimeout(osdT)},320)};
+ const endHold=()=>{clearTimeout(holdT);const was=hold;hold=0;if(was)osdEl.classList.remove('show');return was};
+ const kd=e=>{if(!alive||/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;const k=e.key;let used=true;
+  if(k==='ArrowRight'){if(!e.repeat)startHold(3)}else if(k==='ArrowLeft'){if(!e.repeat)startHold(-1)}
+  else if(e.repeat&&!['ArrowUp','ArrowDown'].includes(k)){}
+  else if(k===' ')toggleRun();else if(k==='ArrowUp')setVolV(5);else if(k==='ArrowDown')setVolV(-5);
+  else if(k==='m'||k==='M'){muted=!muted;osd(muted?'已静音':'音量 '+vol+'%')}
+  else if(k===']')setSp(1);else if(k==='[')setSp(-1);else if(k==='\\')setSp(0);
+  else if(k==='.'){run=false;$('[data-pp]',o).innerHTML=icon('play');t+=1/24;osd('下一帧')}else if(k===','){run=false;$('[data-pp]',o).innerHTML=icon('play');t-=1/24;osd('上一帧')}
+  else if(k==='j'||k==='J')seekBy(-10);else if(k==='l'||k==='L')seekBy(10);
+  else if(/^[0-9]$/.test(k)){t=7680*(+k/10);osd('跳到 '+k+'0%')}
+  else if(k==='c'||k==='C'){ssel.selectedIndex=(ssel.selectedIndex+1)%ssel.options.length;osd('字幕：'+ssel.value)}
+  else if(k==='v'||k==='V'){if(ssel.value!=='关闭'){lastSub=ssel.value;ssel.value='关闭'}else ssel.value=lastSub;osd('字幕：'+ssel.value)}
+  else if(k==='z'||k==='Z'||k==='x'||k==='X'){subDelay=Math.round((subDelay+(/z/i.test(k)?-.1:.1))*10)/10;osd('字幕延迟 '+(subDelay>0?'+':'')+subDelay.toFixed(1)+' 秒')}
+  else if(k==='a'||k==='A')osd('音轨：国语 AAC 2.0');else if(k==='s'||k==='S')osd('已截图到 图片\\Screenshots');
+  else if(k==='PageDown')osd('下一集');else if(k==='PageUp')osd('上一集');
+  else if(k==='f'||k==='F')fs();else if(k==='?'||k==='/')o.classList.toggle('help');else if(k==='Escape'){if(o.classList.contains('help'))o.classList.remove('help');else close()}
+  else used=false;
+  if(used){e.preventDefault();e.stopPropagation()}};
+ const ku=e=>{if(!alive)return;if(e.key==='ArrowRight'){if(!endHold())seekBy(5);e.stopPropagation()}else if(e.key==='ArrowLeft'){if(!endHold())seekBy(-5);e.stopPropagation()}};
+ window.addEventListener('keydown',kd,true);window.addEventListener('keyup',ku,true);
+ const close=()=>{alive=false;endHold();window.removeEventListener('keydown',kd,true);window.removeEventListener('keyup',ku,true);if(document.fullscreenElement===o)document.exitFullscreen();o.classList.remove('open','help')};$('.mp-x',o).onclick=close;
+ let clickT=null,pressed=false;
+ stage.addEventListener('pointerdown',e=>{if(e.button||e.target.closest('.mp-vbar,.mp-vtop,.mp-vhelp'))return;pressed=true;startHold(2)});
+ stage.addEventListener('pointerup',e=>{if(!pressed)return;pressed=false;if(endHold())return;
+  if(clickT){clearTimeout(clickT);clickT=null;const r=stage.getBoundingClientRect(),x=(e.clientX-r.left)/r.width;x<1/3?seekBy(-10):x>2/3?seekBy(10):fs()}
+  else clickT=setTimeout(()=>{clickT=null;toggleRun()},240)});
+ stage.addEventListener('pointerleave',()=>{pressed=false;endHold()});
+ stage.addEventListener('wheel',e=>{e.preventDefault();setVolV(e.deltaY<0?5:-5)},{passive:false});
+ $('[data-help]',o).onclick=()=>o.classList.toggle('help');$('[data-shot]',o).onclick=()=>osd('已截图到 图片\\Screenshots');vsel.onchange=()=>osd('速度 '+vsel.value+'×');
+ $('[data-pp]',o).onclick=toggleRun;
  pr.onclick=e=>{const r=pr.getBoundingClientRect();t=(e.clientX-r.left)/r.width*7680};
  o.onmousemove=()=>{o.classList.remove('idle');clearTimeout(idle);idle=setTimeout(()=>o.classList.add('idle'),2500)};
- const fr=now=>{if(!alive)return;const dt=(now-last)/1000;last=now;const sp=+$('[data-vs]',o).value;if(run)t=(t+dt*sp*6)%7680;
+ const fr=now=>{if(!alive)return;const dt=(now-last)/1000;last=now;const sp=hold>0?hold:+vsel.value;if(hold<0)t=Math.max(0,t-dt*48);else if(run)t=(t+dt*sp*6)%7680;
   const w=cv.width=cv.clientWidth,h=cv.height=cv.clientHeight,k=t/6;
   const sky=g.createLinearGradient(0,0,0,h);sky.addColorStop(0,`hsl(${v.hue+Math.sin(k*.05)*20} 45% 14%)`);sky.addColorStop(.6,`hsl(${v.hue+40} 55% 34%)`);sky.addColorStop(1,`hsl(${v.hue+70} 60% 20%)`);g.fillStyle=sky;g.fillRect(0,0,w,h);
   g.fillStyle=`hsl(${v.hue+50} 90% 80%/.9)`;g.beginPath();g.arc(w*.68+Math.sin(k*.03)*30,h*.42,h*.09,0,7);g.fill();

@@ -30,20 +30,36 @@ const SMART=[
  ['hot','常听','播放 30 次以上',s=>s.plays>=30,330],['new','最近添加','近两周入库',s=>s.added<=14,200],
  ['fav','我的收藏','标记为喜欢',s=>FAV.has(s.id),350],['hifi','无损音质','FLAC / APE / DSD 等',s=>LOSSLESS.test(s.fmt),160],['cold','很久没听','超过三个月没播放',s=>s.last>=90,40]];
 const M={f:'all',g:'none',q:'',sort:'def'};
+/* 用户自建歌单（保存在浏览器本地） */
+let PLS=MP.store.get('pls',null)||[{id:'p1',name:'通勤路上',ids:[1,3,7,15]},{id:'p2',name:'写代码用',ids:[5,13,9]}];
+const savePl=()=>MP.store.set('pls',PLS),curPl=()=>M.f.startsWith('pl:')?PLS.find(p=>p.id===M.f.slice(3)):null;
+function askName(title,val,cb){const m=MP.modal('mp-pl',`<h3>${title}<button class="mp-x">✕</button></h3><p class="mp-desc">给歌单起个名字。</p><input id="pl-n" class="tin" style="width:100%" maxlength="30" value="${esc(val||'')}" placeholder="例如：深夜循环"><div style="margin-top:14px;display:flex;gap:10px"><button class="mp-btn" id="pl-ok">确定</button><button class="mp-btn ghost mp-x">取消</button></div>`);
+  const i=$('#pl-n',m),ok=()=>{const v=i.value.trim();if(!v)return toast('名字不能为空');m.classList.remove('open');cb(v)};$('#pl-ok',m).onclick=ok;i.onkeydown=e=>{if(e.key==='Enter')ok()};setTimeout(()=>{i.focus();i.select()},80)}
+function newPl(songId){askName('新建歌单','',name=>{const p={id:'p'+Date.now(),name,ids:songId!=null?[songId]:[]};PLS.push(p);savePl();M.f='pl:'+p.id;MP.setView('music');mRender();toast(songId!=null?`已新建「${name}」并加入 1 首`:`已新建歌单「${name}」，在歌曲行上点“加入歌单”来添加`)})}
+const plm=$('#plmenu');
+function plMenu(btn,id){const r=btn.getBoundingClientRect();plm.innerHTML='<h6>加入歌单</h6>'+PLS.map(p=>`<button data-pid="${p.id}">${esc(p.name)}<i>${p.ids.includes(id)?'✓':''}</i></button>`).join('')+'<button data-pid="new">＋ 新建歌单…</button>';
+  plm.classList.add('open');plm.style.left=Math.max(8,Math.min(innerWidth-210,r.right-190))+'px';plm.style.top=Math.min(innerHeight-plm.offsetHeight-8,r.bottom+4)+'px';
+  plm.onclick=e=>{const b=e.target.closest('[data-pid]');if(!b)return;plm.classList.remove('open');if(b.dataset.pid==='new')return newPl(id);const p=PLS.find(x=>x.id===b.dataset.pid),k=p.ids.indexOf(id);
+    if(k>=0){p.ids.splice(k,1);toast(`已从「${p.name}」移除`)}else{p.ids.push(id);toast(`已加入「${p.name}」`)}savePl();mRender()}}
+document.addEventListener('pointerdown',e=>{if(!e.target.closest('#plmenu,[data-pladd]'))plm.classList.remove('open')});
 $('#msort').insertAdjacentHTML('beforebegin','<select class="sel" id="mgrp"><option value="none">不分组</option><option value="a">按艺人分组</option><option value="al">按专辑分组</option><option value="fmt">按格式分组</option></select>');
 function mFiltered(){
-  const sm=SMART.find(x=>x[0]===M.f);let l=MP.songs.filter(s=>(!sm||sm[3](s))&&(!M.q||(s.t+s.a+s.al+s.fmt).toLowerCase().includes(M.q)));
+  const sm=SMART.find(x=>x[0]===M.f),pl=curPl();const hitq=s=>!M.q||(s.t+s.a+s.al+s.fmt).toLowerCase().includes(M.q);
+  if(pl)return pl.ids.map(i=>MP.songs[i]).filter(s=>s&&hitq(s));
+  let l=MP.songs.filter(s=>(!sm||sm[3](s))&&hitq(s));
   if(M.sort==='plays')l.sort((a,b)=>b.plays-a.plays);else if(M.sort==='added')l.sort((a,b)=>a.added-b.added);else if(M.sort==='title')l.sort((a,b)=>a.t.localeCompare(b.t,'zh'));
   else if(M.f==='hot')l.sort((a,b)=>b.plays-a.plays);else if(M.f==='new')l.sort((a,b)=>a.added-b.added);
   return l;
 }
 function mRender(){
   $('#smart').innerHTML=SMART.map(x=>{const n=MP.songs.filter(x[3]).length;return `<div class="sc${M.f===x[0]?' on':''}" data-f="${x[0]}" style="background-image:${coverCSS(x[4],1)}"><b>${x[1]}</b><span>${n} 首 · ${x[2]}</span><button data-play="${x[0]}" title="立即播放">${icon('play')}</button></div>`}).join('');
-  $('#mgroup').innerHTML=[['all','全部歌曲']].concat(SMART).map(x=>`<button class="mp-chip${M.f===x[0]?' on':''}" data-f="${x[0]}">${x[1]}</button>`).join('')+(M.q?`<span class="badge2 ai">搜索：${esc(M.q)}</span>`:'');
+  $('#mgroup').innerHTML=[['all','全部歌曲']].concat(SMART).map(x=>`<button class="mp-chip${M.f===x[0]?' on':''}" data-f="${x[0]}">${x[1]}</button>`).join('')+'<span style="width:1px;height:18px;background:var(--edge);margin:0 4px"></span>'+PLS.map(p=>`<button class="mp-chip${M.f==='pl:'+p.id?' on':''}" data-f="pl:${p.id}">${icon('list')} ${esc(p.name)} · ${p.ids.length}</button>`).join('')+'<button class="mp-chip" data-newpl>＋ 新建歌单</button>'+(M.q?`<span class="badge2 ai">搜索：${esc(M.q)}</span>`:'');
+  const cp=curPl(),bar=$('#plbar');bar.hidden=!cp;if(cp)bar.innerHTML=`<b>${esc(cp.name)}</b><span class="badge2">${cp.ids.length} 首</span><button class="mp-chip" data-plact="play">${icon('play')} 播放</button><button class="mp-chip" data-plact="rename">重命名</button><button class="mp-chip" data-plact="del">删除歌单</button>`;
+  $('#plside').innerHTML=PLS.map(p=>`<button data-plgo="${p.id}" class="${M.f==='pl:'+p.id&&document.body.dataset.view==='music'?'on':''}">${icon('list')}<span>${esc(p.name)}</span><small>${p.ids.length}</small></button>`).join('')+`<button data-plgo="new">${icon('list')}<span style="color:var(--mp-sub)">＋ 新建歌单</span></button>`;
   const l=mFiltered();$('#mcount').textContent=`共 ${MP.songs.length} 首（演示数据），当前显示 ${l.length} 首 · 点卡片上的播放键可以直接播放整组`;
-  const row=(s,n)=>`<div class="mp-row mrow${!MP.state.file&&s.id===MP.state.idx?' on':''}" data-i="${s.id}"><span class="mp-n">${String(n).padStart(2,'0')}</span><span class="mp-cover" style="background-image:${coverCSS(s.hue)}"></span><span class="mp-t">${s.t}<small>${s.a}</small></span><span class="mp-al">${s.al}</span><span class="mp-fmt">${s.fmt}</span><span class="pc">${s.plays?s.plays+' 次':'未播放'}</span><span class="mp-d">${fmtT(s.dur)}</span><span class="ra"><button class="${FAV.has(s.id)?'fav':''}" data-fav="${s.id}" title="收藏">${icon('heart')}</button><button data-cv="${s.id}" title="转换格式">${icon('convert')}</button></span></div>`;
+  const row=(s,n)=>`<div class="mp-row mrow${!MP.state.file&&s.id===MP.state.idx?' on':''}" data-i="${s.id}"><span class="mp-n">${String(n).padStart(2,'0')}</span><span class="mp-cover" style="background-image:${coverCSS(s.hue)}"></span><span class="mp-t">${s.t}<small>${s.a}</small></span><span class="mp-al">${s.al}</span><span class="mp-fmt">${s.fmt}</span><span class="pc">${s.plays?s.plays+' 次':'未播放'}</span><span class="mp-d">${fmtT(s.dur)}</span><span class="ra"><button class="${FAV.has(s.id)?'fav':''}" data-fav="${s.id}" title="收藏">${icon('heart')}</button><button data-pladd="${s.id}" title="${cp?'歌单…':'加入歌单'}">${icon('list')}</button><button data-cv="${s.id}" title="转换格式">${icon('convert')}</button></span></div>`;
   let h='';
-  if(!l.length)h='<div class="empty">没有符合条件的歌曲</div>';
+  if(!l.length)h=`<div class="empty">${cp?'这个歌单还是空的。去“全部歌曲”里，把鼠标移到歌曲上点“加入歌单”。':'没有符合条件的歌曲'}</div>`;
   else if(M.g==='none')h=l.map((s,i)=>row(s,i+1)).join('');
   else{const key=s=>M.g==='fmt'?s.fmt.split(' ')[0]:s[M.g],gs={};l.forEach(s=>(gs[key(s)]=gs[key(s)]||[]).push(s));
     h=Object.keys(gs).sort((a,b)=>a.localeCompare(b,'zh')).map(k=>`<div class="grp">${k} · ${gs[k].length} 首 <button class="mp-chip" data-gplay="${esc(k)}">${icon('play')} 播放</button></div>`+gs[k].map((s,i)=>row(s,i+1)).join('')).join('')}
@@ -51,13 +67,19 @@ function mRender(){
 }
 function playSet(list,name){if(!list.length)return toast('这个分组里还没有歌曲');MP.setTrack(list[0].id,true);toast(`正在播放「${name}」· ${list.length} 首`)}
 $('[data-view="music"]').addEventListener('click',e=>{
-  const b=e.target.closest('[data-play],[data-f],[data-fav],[data-cv],[data-gplay]');if(!b)return;
+  const b=e.target.closest('[data-play],[data-f],[data-fav],[data-cv],[data-gplay],[data-newpl],[data-pladd],[data-plact]');if(!b)return;
+  if(b.hasAttribute('data-newpl'))return newPl();
+  if(b.dataset.pladd){e.stopPropagation();return plMenu(b,+b.dataset.pladd)}
+  if(b.dataset.plact){const p=curPl();if(!p)return;if(b.dataset.plact==='play')return playSet(mFiltered(),p.name);
+    if(b.dataset.plact==='rename')return askName('重命名歌单',p.name,n=>{p.name=n;savePl();mRender()});
+    PLS=PLS.filter(x=>x!==p);savePl();M.f='all';mRender();return toast(`已删除歌单「${p.name}」（歌曲文件不受影响）`)}
   if(b.dataset.play){e.stopPropagation();const x=SMART.find(x=>x[0]===b.dataset.play);const keep=M.f;M.f=x[0];const l=mFiltered();M.f=keep;return playSet(l,x[1])}
   if(b.dataset.gplay!=null){e.stopPropagation();const k=b.dataset.gplay;return playSet(mFiltered().filter(s=>(M.g==='fmt'?s.fmt.split(' ')[0]:s[M.g])===k),k)}
   if(b.dataset.fav){e.stopPropagation();const i=+b.dataset.fav;FAV.has(i)?FAV.delete(i):FAV.add(i);toast(FAV.has(i)?'已加入收藏':'已取消收藏');return mRender()}
   if(b.dataset.cv){e.stopPropagation();return quickConvert(MP.songs[+b.dataset.cv])}
   if(b.dataset.f){M.f=b.dataset.f;mRender()}
 });
+$('#plside').onclick=e=>{const b=e.target.closest('[data-plgo]');if(!b)return;if(b.dataset.plgo==='new')return newPl();M.f='pl:'+b.dataset.plgo;MP.setView('music');mRender()};
 $('#msort').onchange=e=>{M.sort=e.target.value;mRender()};$('#mgrp').onchange=e=>{M.g=e.target.value;mRender()};
 MP.on('track',()=>{const c=MP.cur();if(c.plays!=null){c.plays++;c.last=0}});
 
@@ -291,8 +313,37 @@ window.addEventListener('keydown',e=>{if(!$('#reader').classList.contains('open'
   if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.stopPropagation();e.preventDefault();turn((e.key==='ArrowRight'?1:-1)*(R.rtl?-1:1))}
   else if(e.key==='Escape'){e.stopPropagation();$('#reader').classList.remove('open')}else if(e.key===' '){e.stopPropagation();e.preventDefault();turn(1)}},true);
 
+/* ---------- 9. 自动获取：来源、AI 解析、搜索、下载、归类（全部为示例数据，不联网） ---------- */
+const SRC=[['list','我的番剧订阅','订阅链接 · 每 30 分钟检查一次','正常'],['video','视频网站合集','通过 yt-dlp 支持 · 播放列表整份下载','正常'],['folder','家里的 NAS','WebDAV · \\\\nas\\media','正常']];
+const sRender=()=>$('#srcs').innerHTML=SRC.map(s=>`<div class="src">${icon(s[0])}<b>${esc(s[1])}</b><span class="badge2 ok">${s[3]}</span><small>${esc(s[2])}</small></div>`).join('');
+$('#sadd').onclick=async e=>{const u=$('#surl').value.trim();if(!u)return toast('先粘贴一个网站地址或订阅链接');const b=e.currentTarget;if(b.disabled)return;b.disabled=true;
+  const host=u.replace(/^https?:\/\//,'').split('/')[0]||u,box=$('#gsteps');box.hidden=false;
+  if(/rss|feed|\.xml/i.test(u)){box.innerHTML='<span class="st run">读取订阅内容</span>';await sleep(900);SRC.push(['list',host,'订阅链接 · 自动检查更新','正常'])}
+  else{const st=['打开页面','分析页面结构','生成提取规则','试搜并验证'];box.innerHTML=st.map(x=>`<span class="st">${x}</span>`).join('');
+    for(const el of $$('.st',box)){el.classList.add('run');await sleep(850);el.className='st ok'}
+    SRC.push(['search',host,'AI 生成的规则 · 网站改版时自动重新生成','正常'])}
+  sRender();$('#surl').value='';b.disabled=false;toast('已添加来源：'+host+'（演示，没有真的访问）')};
+let gtype='anime';
+$('#gtype').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;gtype=b.dataset.t;$$('#gtype button').forEach(x=>x.classList.toggle('on',x===b));$('#gq').value=gtype==='anime'?'星屑邮局':'潮汐档案';$('#gres').innerHTML='<div class="empty">点“搜索”</div>';$('#gdl').innerHTML=''};
+$('#gsearch').onclick=async()=>{const q=esc($('#gq').value.trim()||'星屑邮局'),box=$('#gres');$('#gdl').innerHTML='';box.innerHTML='<div class="empty">正在搜索 '+SRC.length+' 个来源，并用 AI 归并同一作品的不同写法…</div>';await sleep(1100);
+  const R=gtype==='anime'?[[`${q} 第 1 季 · 全 12 集合集`,'1080p · HEVC 10bit · 内封简中 · 14.2 GB','来源：我的番剧订阅 · 做种 128',1,12],[`${q} 第 1 季 · 单集 01-12`,'1080p · H.264 · 外挂简繁 · 18.6 GB','来源：我的番剧订阅 · 12 个条目',0,12],[`${q} 第 1 季 · 全 12 集`,'720p · H.264 · 无字幕 · 5.1 GB','来源：视频网站合集',0,12]]
+   :[[`${q}（专辑，10 首）`,'FLAC 24bit / 96kHz · 1.1 GB','来源：家里的 NAS',1,10],[`${q}（专辑，10 首）`,'MP3 320k · 96 MB','来源：视频网站合集',0,10]];
+  box.innerHTML=`<div class="note" style="margin-bottom:10px">按你的偏好（${gtype==='anime'?'简中字幕、1080p、优先合集':'无损优先'}）排序，已合并重复条目。</div>`+R.map((r,i)=>`<div class="rs${r[3]?' on':''}" data-n="${r[4]}"><b>${r[0]}</b>${r[3]?'<span class="badge2 ai">AI 推荐</span>':'<span></span>'}<small>${r[1]}</small><small>${r[2]}</small><div class="acts"><button class="mp-btn" data-get="${i}">${icon('folder')} 下载并整理</button></div></div>`).join('')};
+$('#gres').onclick=async e=>{const b=e.target.closest('[data-get]');if(!b||b.disabled)return;$$('#gres [data-get]').forEach(x=>x.disabled=true);
+  const n=+b.closest('.rs').dataset.n,q=$('#gq').value.trim()||'星屑邮局',an=gtype==='anime',box=$('#gdl');
+  const name=i=>an?`${q} - S01E${String(i+1).padStart(2,'0')}.mkv`:`${String(i+1).padStart(2,'0')} - ${['序','潮声','防波堤','雾港','灯塔','回信','夜航','退潮','码头','终章'][i%10]}.flac`;
+  const dest=i=>an?`D:\\Media\\番剧\\${q}\\Season 01\\${name(i)}`:`D:\\Media\\音乐\\林间信号\\${q} (2024)\\${name(i)}`;
+  box.innerHTML=`<h5 style="margin:16px 0 8px">下载队列 <span class="badge2" id="gstat">内置下载引擎 · 准备中</span></h5>`+[...Array(n).keys()].map(i=>`<div class="dl" style="--p:0"><span>${esc(name(i))}</span><small>等待中</small><div class="mp-pb"><i></i></div><code>→ ${esc(dest(i))}</code></div>`).join('');
+  const rows=$$('.dl',box),p=rows.map(()=>0);let done=0;
+  while(done<n){done=0;rows.forEach((r,i)=>{if(p[i]<1&&(i<4||p[i-4]>=1))p[i]=Math.min(1,p[i]+.02+Math.random()*.05);r.style.setProperty('--p',p[i]);
+      if(p[i]>=1){done++;if(!r.classList.contains('done')){r.classList.add('done');$('small',r).textContent='已整理入库 ✓'}}else if(p[i]>0)$('small',r).textContent=Math.round(p[i]*100)+'% · '+(3+Math.random()*9).toFixed(1)+' MB/s'});
+    $('#gstat').textContent=`内置下载引擎 · 已完成 ${done}/${n}`+(an?` · 连接 ${30+Math.random()*40|0} 个节点`:'');await sleep(110)}
+  $('#gstat').className='badge2 ok';$('#gstat').textContent='全部完成，已按规则重命名并入库';
+  box.insertAdjacentHTML('beforeend',`<div class="acts" style="margin-top:10px"><button class="mp-btn" data-nav="${an?'anime':'music'}">去${an?'番剧':'音乐'}库查看</button>${an?'<button class="mp-btn ghost" data-nav="aisub">缺字幕的交给 AI 字幕</button><span class="badge2">已订阅后续更新</span>':''}</div>`);
+  $$('#gres [data-get]').forEach(x=>x.disabled=false);toast('下载完成，已自动整理到媒体库')};
+
 /* ---------- 初始化 ---------- */
-MP.on('ready',()=>{mRender();aRender();cRender();aiNote()});
+MP.on('ready',()=>{mRender();aRender();cRender();aiNote();sRender()});
 MP.on('track',()=>{if(document.body.dataset.view==='music')mRender()});
 MP.on('view',v=>{if(v==='music')mRender();pop.classList.remove('open')});
 })();

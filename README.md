@@ -5,11 +5,11 @@ Windows 上的综合媒体播放 / 管理软件：音乐、视频、动漫、小
 目前处于方案与界面设计阶段：
 
 - [技术方案](docs/技术方案.md)
-- [界面原型](demos/index.html)：单文件 HTML，下载后双击即可打开，无需联网或安装。默认界面是“极光玻璃”，升级版在 `demos/11-aurora-pro.html`
+- [界面原型](demos/index.html)：单文件 HTML，下载后双击即可打开，无需联网或安装。界面风格定为“极光玻璃”
 
 ## 修改原型
 
-每个 demo 的源文件在 `demos-src/demos/`，公共逻辑（播放模拟、歌词、扫描动画、OLED 防烧屏等）在 `demos-src/core.js` 和 `core.css`，升级版专属的逻辑在 `demos-src/pro.js`。改完后运行：
+原型的页面骨架和样式在 `demos-src/demos/index.html`，基础逻辑（播放模拟、歌词、扫描动画、视频播放器、OLED 防烧屏等）在 `demos-src/core.js` 和 `core.css`，各功能模块（音乐库与歌单、番剧、漫画翻译、AI 字幕、转换、自动获取）在 `demos-src/pro.js`。改完后运行：
 
 ```
 python tools/build_demos.py

@@ -46,17 +46,17 @@ $('#msort').insertAdjacentHTML('beforebegin','<select class="sel" id="mgrp"><opt
 function mFiltered(){
   const sm=SMART.find(x=>x[0]===M.f),pl=curPl();const hitq=s=>!M.q||(s.t+s.a+s.al+s.fmt).toLowerCase().includes(M.q);
   if(pl)return pl.ids.map(i=>MP.songs[i]).filter(s=>s&&hitq(s));
-  let l=MP.songs.filter(s=>(!sm||sm[3](s))&&hitq(s));
+  let l=MP.songs.filter(s=>!s.trial&&s.trial!==0&&(!sm||sm[3](s))&&hitq(s));
   if(M.sort==='plays')l.sort((a,b)=>b.plays-a.plays);else if(M.sort==='added')l.sort((a,b)=>a.added-b.added);else if(M.sort==='title')l.sort((a,b)=>a.t.localeCompare(b.t,'zh'));
   else if(M.f==='hot')l.sort((a,b)=>b.plays-a.plays);else if(M.f==='new')l.sort((a,b)=>a.added-b.added);
   return l;
 }
 function mRender(){
-  $('#smart').innerHTML=SMART.map(x=>{const n=MP.songs.filter(x[3]).length;return `<div class="sc${M.f===x[0]?' on':''}" data-f="${x[0]}" style="background-image:${coverCSS(x[4],1)}"><b>${x[1]}</b><span>${n} 首 · ${x[2]}</span><button data-play="${x[0]}" title="立即播放">${icon('play')}</button></div>`}).join('');
+  $('#smart').innerHTML=SMART.map(x=>{const n=MP.songs.filter(s=>!s.trial&&s.trial!==0&&x[3](s)).length;return `<div class="sc${M.f===x[0]?' on':''}" data-f="${x[0]}" style="background-image:${coverCSS(x[4],1)}"><b>${x[1]}</b><span>${n} 首 · ${x[2]}</span><button data-play="${x[0]}" title="立即播放">${icon('play')}</button></div>`}).join('');
   $('#mgroup').innerHTML=[['all','全部歌曲']].concat(SMART).map(x=>`<button class="mp-chip${M.f===x[0]?' on':''}" data-f="${x[0]}">${x[1]}</button>`).join('')+'<span style="width:1px;height:18px;background:var(--edge);margin:0 4px"></span>'+PLS.map(p=>`<button class="mp-chip${M.f==='pl:'+p.id?' on':''}" data-f="pl:${p.id}">${icon('list')} ${esc(p.name)} · ${p.ids.length}</button>`).join('')+'<button class="mp-chip" data-newpl>＋ 新建歌单</button>'+(M.q?`<span class="badge2 ai">搜索：${esc(M.q)}</span>`:'');
   const cp=curPl(),bar=$('#plbar');bar.hidden=!cp;if(cp)bar.innerHTML=`<b>${esc(cp.name)}</b><span class="badge2">${cp.ids.length} 首</span><button class="mp-chip" data-plact="play">${icon('play')} 播放</button><button class="mp-chip" data-plact="rename">重命名</button><button class="mp-chip" data-plact="del">删除歌单</button>`;
   $('#plside').innerHTML=PLS.map(p=>`<button data-plgo="${p.id}" class="${M.f==='pl:'+p.id&&document.body.dataset.view==='music'?'on':''}">${icon('list')}<span>${esc(p.name)}</span><small>${p.ids.length}</small></button>`).join('')+`<button data-plgo="new">${icon('list')}<span style="color:var(--mp-sub)">＋ 新建歌单</span></button>`;
-  const l=mFiltered();$('#mcount').textContent=`共 ${MP.songs.length} 首（演示数据），当前显示 ${l.length} 首 · 点卡片上的播放键可以直接播放整组`;
+  const l=mFiltered();$('#mcount').textContent=`共 ${MP.songs.filter(s=>!s.trial&&s.trial!==0).length} 首（演示数据），当前显示 ${l.length} 首 · 点卡片上的播放键可以直接播放整组`;
   const row=(s,n)=>`<div class="mp-row mrow${!MP.state.file&&s.id===MP.state.idx?' on':''}" data-i="${s.id}"><span class="mp-n">${String(n).padStart(2,'0')}</span><span class="mp-cover" style="background-image:${coverCSS(s.hue)}"></span><span class="mp-t">${s.t}<small>${s.a}</small></span><span class="mp-al">${s.al}</span><span class="mp-fmt">${s.fmt}</span><span class="pc">${s.plays?s.plays+' 次':'未播放'}</span><span class="mp-d">${fmtT(s.dur)}</span><span class="ra"><button class="${FAV.has(s.id)?'fav':''}" data-fav="${s.id}" title="收藏">${icon('heart')}</button><button data-pladd="${s.id}" title="${cp?'歌单…':'加入歌单'}">${icon('list')}</button><button data-cv="${s.id}" title="转换格式">${icon('convert')}</button></span></div>`;
   let h='';
   if(!l.length)h=`<div class="empty">${cp?'这个歌单还是空的。去“全部歌曲”里，把鼠标移到歌曲上点“加入歌单”。':'没有符合条件的歌曲'}</div>`;
@@ -342,8 +342,148 @@ $('#gres').onclick=async e=>{const b=e.target.closest('[data-get]');if(!b||b.dis
   box.insertAdjacentHTML('beforeend',`<div class="acts" style="margin-top:10px"><button class="mp-btn" data-nav="${an?'anime':'music'}">去${an?'番剧':'音乐'}库查看</button>${an?'<button class="mp-btn ghost" data-nav="aisub">缺字幕的交给 AI 字幕</button><span class="badge2">已订阅后续更新</span>':''}</div>`);
   $$('#gres [data-get]').forEach(x=>x.disabled=false);toast('下载完成，已自动整理到媒体库')};
 
+/* ---------- 10. 小说去广告：AI 扫描、标记后找相似、清理与撤销（示例文本，广告内容均为虚构） ---------- */
+const ADK={wm:['站点水印','以“本书首发”开头并带网址的整句','hi','在 212 章的章首和章尾重复出现'],url:['变形网址','用全角、空格、谐音字伪装的网址','hi','还原后是一个网址'],
+ grp:['拉群推广','句子中间插入的加群、关注类推广','hi','和上下文不连贯'],junk:['防盗乱码','正文里随机插入的无意义字符','hi','不构成任何词语'],vote:['章末求票','章末的求票留言','mid','可能是作者留言，默认不勾选']};
+const ad=(k,t)=>`<span class="ad" data-k="${k}">${t}</span>`,adp=(k,t)=>`<p class="ad adp" data-k="${k}">${t}</p>`;
+MP.on('novel',o=>{
+  const body=$('.mp-rbody',o),ps=$$('p',body).map(p=>p.textContent),cut=(s,r,x)=>{const i=Math.max(1,s.length*r|0);return s.slice(0,i)+x+s.slice(i)};
+  ps[1]=cut(ps[1],.5,ad('grp','（看最新章节请加书友群 000000000）'));ps[3]=cut(ps[3],.6,ad('junk','＃＆＠％'));
+  ps[4]=cut(ps[4],.45,ad('url','ｗ ｗ ｗ 点 某某书屋 点 ｅｘａｍｐｌｅ'));ps[6]=cut(ps[6],.7,ad('grp','【关注公号“某某书屋”，免费看全本】'));
+  ps[8]=cut(ps[8],.5,ad('junk','＠＃＄％＾'));ps[10]=cut(ps[10],.4,ad('url','ｍ．某某书屋．ｅｘａｍｐｌｅ 手机阅读'));
+  const P=ps.map(p=>`<p>${p}</p>`);
+  P.splice(0,0,adp('wm','本书首发某某书屋 ｗｗｗ．某某书屋．ｅｘａｍｐｌｅ，请记住我们的网址！'));
+  P.splice(7,0,adp('wm','本 书 首 发 某 某 书 屋，更新最快，无弹窗。'));
+  P.push(adp('vote','求月票、求推荐票！作者码字不易，各位读者老爷多多支持。'),adp('wm','本书首发某某书屋 ｗｗｗ．某某书屋．ｅｘａｍｐｌｅ，手机用户请到 ｍ 站阅读。'));
+  body.innerHTML='<h2>第三章　等信的人</h2>'+P.join('');
+  const wrap=document.createElement('div');wrap.className='mp-rwrap';body.replaceWith(wrap);wrap.appendChild(body);
+  wrap.insertAdjacentHTML('beforeend','<div class="mp-rside"><div></div></div>');const side=$('.mp-rside>div',o);
+  $('[data-tts]',o).insertAdjacentHTML('afterend','<button data-ad>去广告</button>');
+  let hits=[],rules=[],scanned=false,busy=false,un=0;const st={open:false,raw:false};
+  const cls=()=>{o.classList.toggle('adopen',st.open);o.classList.toggle('showraw',st.raw)};
+  $$('[data-th]',o).forEach(b=>b.addEventListener('click',cls));
+  $('[data-ad]',o).onclick=()=>{st.open=!st.open;cls()};
+  const txt=el=>el.textContent.replace(/\s+/g,' ').slice(0,26),add=(el,conf,why)=>{if(hits.some(h=>h.el===el))return;hits.push({el,conf,why,on:conf==='hi'});el.classList.add('found')};
+  function render(){const live=hits.filter(h=>!h.el.classList.contains('gone')),gone=hits.length-live.length,sel=live.filter(h=>h.on).length;
+    $('[data-ad]',o).textContent=gone?`去广告 · 已清理 ${gone}`:'去广告';
+    side.innerHTML=`<h4>去广告</h4><p>可以让 AI 扫描全书，也可以在正文里选中一段广告，标记后让 AI 找出相似的内容。原文件不会被改动，随时可以撤销。</p>
+     <button class="pri" data-a="scan"${busy?' disabled':''}>${scanned?'重新扫描':'AI 扫描全书'}</button>
+     <div class="mp-adst" id="adst"></div>
+     ${rules.length?'<h4 style="margin-top:8px">识别规则</h4>'+rules.map(r=>`<div class="mp-adrule"><b>命中 ${r[1]} 处</b>${esc(r[0])}</div>`).join(''):''}
+     ${hits.length?`<h4 style="margin-top:14px">本章发现 ${hits.length} 处${scanned?' · 全书 1,284 处':''}</h4>`+hits.map((h,i)=>{const g=h.el.classList.contains('gone');return `<label class="mp-adhit${g?' gone':''}" data-h="${i}"><input type="checkbox"${h.on?' checked':''}${g?' disabled':''}><span>${esc(txt(h.el))}…<span class="mp-adtag ${h.conf}">${h.conf==='hi'?'把握高':'需确认'}</span></span><small>${esc(h.why)}</small></label>`}).join('')
+       +`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="pri" data-a="clean"${sel?'':' disabled'}>清理选中的 ${sel} 处</button><button data-a="undo"${gone?'':' disabled'}>撤销</button><button data-a="raw"${gone?'':' disabled'}>${st.raw?'隐藏已清理内容':'对照原文'}</button></div>`
+       +(gone?`<p style="margin-top:14px">已清理 ${gone} 处。现在只是阅读时隐藏，原文件没有改动。</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button data-a="export">导出干净的副本</button><button data-a="replace">替换原文件</button></div><label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:12.5px"><input type="checkbox" class="mp-sw" checked>同一来源的其他书自动套用这些规则</label>`:''):'<p style="margin-top:10px">还没有发现广告。试试点上面的按钮，或者在正文里选中一段文字。</p>'}`}
+  side.onchange=e=>{const l=e.target.closest('[data-h]');if(l){hits[+l.dataset.h].on=e.target.checked;render()}};
+  side.onmouseover=e=>{const l=e.target.closest('[data-h]');$$('.ad.flash',body).forEach(x=>x.classList.remove('flash'));if(l)hits[+l.dataset.h].el.classList.add('flash')};
+  side.onclick=async e=>{const l=e.target.closest('[data-h]');if(l&&e.target.tagName!=='INPUT')hits[+l.dataset.h].el.scrollIntoView({behavior:'smooth',block:'center'});
+    const b=e.target.closest('[data-a]');if(!b||b.disabled)return;const a=b.dataset.a;
+    if(a==='scan'){busy=true;render();const box=$('#adst',side),names=['本地规则匹配','挑出可疑片段','AI 判断并归纳规则','应用到全书'];box.innerHTML=names.map(n=>`<span>${n}</span>`).join('');
+      for(const el of $$('span',box)){el.className='run';await sleep(700);el.className='ok'}
+      $$('.ad',body).forEach(el=>{const k=ADK[el.dataset.k];if(k)add(el,k[2],k[3])});
+      rules=Object.keys(ADK).map(k=>[ADK[k][1],$$(`.ad[data-k="${k}"]`,body).length]).concat(rules.filter(r=>r[2]));
+      scanned=true;busy=false;render();const box2=$('#adst',side);box2.innerHTML=names.map(n=>`<span class="ok">${n}</span>`).join('');
+      return toast('扫描完成：只把 312 条可疑片段发给了 AI，没有上传整本书（演示）')}
+    if(a==='clean'){hits.filter(h=>h.on).forEach(h=>h.el.classList.add('gone'));render();return toast('已清理。原文件没有改动，可以随时撤销')}
+    if(a==='undo'){hits.forEach(h=>h.el.classList.remove('gone'));st.raw=false;cls();render();return toast('已撤销，恢复为原文')}
+    if(a==='raw'){st.raw=!st.raw;cls();return render()}
+    if(a==='export')return toast('已导出：雾港纪事（净化版）.epub，和原文件放在一起（演示）');
+    if(a==='replace')return toast('已替换原文件，旧文件进了回收站（演示）')};
+  /* 选中文字后的小菜单：标记为广告 / 标记并查找相似 */
+  let pop=$('.mp-selpop');if(!pop){pop=document.createElement('div');pop.className='mp-selpop';pop.innerHTML='<button data-s="one">标记为广告</button><button data-s="sim">标记，并让 AI 找相似的清理全书</button>';document.body.appendChild(pop)}
+  const showPop=(x,y)=>{pop.classList.add('open');pop.style.left=Math.max(8,Math.min(innerWidth-pop.offsetWidth-8,x))+'px';pop.style.top=Math.max(8,y-pop.offsetHeight-8)+'px'};
+  const hasSel=()=>{const s=getSelection();return s&&!s.isCollapsed&&body.contains(s.anchorNode)&&s.toString().trim().length>1};
+  body.addEventListener('mouseup',e=>setTimeout(()=>{if(hasSel())showPop(e.clientX-80,e.clientY-6);else pop.classList.remove('open')},0));
+  body.addEventListener('contextmenu',e=>{if(hasSel()){e.preventDefault();showPop(e.clientX-80,e.clientY-6)}});
+  body.addEventListener('scroll',()=>pop.classList.remove('open'));
+  pop.onmousedown=e=>e.preventDefault();
+  pop.onclick=e=>{const b=e.target.closest('[data-s]');if(!b||!hasSel()||!o.classList.contains('open'))return;const s=getSelection(),r=s.getRangeAt(0);pop.classList.remove('open');
+    const node=n=>n.nodeType===1?n:n.parentElement;let el=node(r.startContainer).closest('.ad')||node(r.endContainer).closest('.ad'),known=!!el;
+    if(!el){try{el=document.createElement('span');el.className='ad';el.dataset.k='u'+(++un);r.surroundContents(el)}catch(err){return toast('请在同一段里选择要标记的文字')}}
+    s.removeAllRanges();st.open=true;cls();add(el,'hi','你手动标记的');hits.find(h=>h.el===el).on=true;
+    if(b.dataset.s==='sim'){const sim=known?$$(`.ad[data-k="${el.dataset.k}"]`,body).filter(x=>x!==el):[];sim.forEach(x=>add(x,'hi','和你标记的内容相似'));
+      rules.push([`你标记的样本：“${txt(el)}…”及其变体`,sim.length+1,1]);toast(sim.length?`找到 ${sim.length} 处相似内容，已列在右边，确认后清理`:'全书没有找到相似内容，只标记了这一处')}
+    else toast('已标记。可以继续标记，或者让 AI 找相似的');
+    render()};
+  render();
+});
+
+/* ---------- 11. 每日推荐（示例数据：播放统计和推荐理由都是预先写好的规则生成） ---------- */
+const DY={seed:3,mode:'local',list:[],fav:new Set(),busy:false};
+const DB={sim:['b-sim','相似'],old:['b-old','旧爱'],nev:['b-nev','没听过'],exp:['b-exp','探索'],neo:['b-new','新歌 · 试听区'],kept:['b-nev','已入库']};
+function dBuild(){let x=DY.seed*9301+49297;const rnd=()=>(x=(x*9301+49297)%233280)/233280,L=MP.songs.filter(s=>!s.trial&&s.trial!==0&&!DY.list.some(r=>r.b==='kept'&&r.s===s)),sh=a=>a.map(s=>[rnd(),s]).sort((a,b)=>a[0]-b[0]).map(v=>v[1]);
+  const top=[...L].sort((a,b)=>b.plays-a.plays).slice(0,3),used=new Set(),take=(arr,n,b,why)=>sh(arr.filter(s=>!used.has(s.id))).slice(0,n).map(s=>(used.add(s.id),{s,b,why:why(s)}));
+  DY.top=top;
+  return [...take(L.filter(s=>top.some(t=>t.a===s.a&&t!==s)||Math.abs(s.bpm-top[0].bpm)<=8&&!top.includes(s)),3,'sim',s=>{const t=top.find(t=>t.a===s.a);return t?`和你最近循环的《${t.t}》是同一位艺人`:`节奏和《${top[0].t}》接近（${s.bpm} BPM）`}),
+   ...take(L.filter(s=>s.plays>=20&&s.last>=90),2,'old',s=>`以前听过 ${s.plays} 次，已经 ${s.last>300?'快一年':s.last+' 天'}没听了`),
+   ...take(L.filter(s=>s.plays<=3),2,'nev',s=>`入库 ${s.added} 天，${s.plays?'只听过 '+s.plays+' 次':'还没听过'}`),
+   ...take(L,1,'exp',s=>`换换口味：${s.bpm>top[0].bpm?'比你平时听的更快':'比你平时听的更慢'}（${s.bpm} BPM）`)]}
+function dRender(){const d=new Date(),neo=DY.mode==='new'?DY.list.filter(r=>r.b==='neo'||r.b==='kept'):[],all=[...neo,...DY.list.filter(r=>r.b!=='neo'&&r.b!=='kept')],t=DY.top;
+  $('#ddate').textContent=`${d.getMonth()+1} 月 ${d.getDate()} 日 · 周${'日一二三四五六'[d.getDay()]}`;
+  $('#dban').style.backgroundImage=coverCSS(all[0]?all[0].s.hue:210,1);$('#dmos').innerHTML=all.slice(0,4).map(r=>`<i style="background-image:${coverCSS(r.s.hue)}"></i>`).join('');
+  $('#dsum').textContent=`昨天你听了 23 首，大多是 70 到 90 BPM 的慢速器乐，《${t[0].t}》循环了 6 次。今天多放了几首同类的，翻出两首很久没听的旧歌，再加一首平时不太听的类型。`;
+  $('#dplay').innerHTML=`${icon('play')} 播放全部 · ${all.length} 首`;
+  $('#dstats').innerHTML=[['23 首','昨日播放 · 1 小时 12 分'],[t[0].a,'最近 7 天最常听'],['70–90 BPM','偏好的节奏'],['深夜 22–24 点','最常听歌的时段'],['3 首','昨天被跳过，已降权']].map(x=>`<div><b>${esc(x[0])}</b>${x[1]}</div>`).join('');
+  $('#dlist').innerHTML=all.map((r,i)=>{const s=r.s,dl=r.b==='neo'&&r.p<1;return `<div class="drow${!MP.state.file&&s.id===MP.state.idx?' on':''}" data-d="${s.id}" style="animation-delay:${i*40}ms${dl?';--p:'+r.p:''}"><span class="mp-cover" style="background-image:${coverCSS(s.hue)}"></span><span><b>${esc(s.t)}</b><small>${esc(s.a)} · ${s.fmt}</small></span><span class="why">${esc(r.why)}</span><span class="badge2 ${DB[r.b][0]}">${dl?'下载中 '+Math.round(r.p*100)+'%':DB[r.b][1]}</span><span class="ra">${r.b==='neo'&&!dl?`<button data-keep="${s.id}">留下</button>`:''}<button class="${DY.fav.has(s.id)?'fav':''}" data-like="${s.id}">喜欢</button><button data-no="${s.id}">不感兴趣</button></span>${dl?'<div class="mp-pb"><i></i></div>':''}</div>`}).join('')||'<div class="empty">今天的推荐都被你划掉了，点“换一批”。</div>';
+  return all}
+const dNew=()=>{DY.list=dBuild().concat(DY.list.filter(r=>r.b==='neo'||r.b==='kept'));dRender()};
+$('#dshuf').onclick=()=>{DY.seed++;dNew();toast('换了一批（新歌保留）')};
+$('#dplay').onclick=()=>{const a=dRender().filter(r=>!(r.b==='neo'&&r.p<1));if(a.length){MP.setTrack(a[0].s.id,true);toast(`正在播放「今日推荐」· ${a.length} 首`)}};
+$('#dsave').onclick=()=>{const d=new Date(),name=`每日推荐 ${d.getMonth()+1}-${d.getDate()}`,ids=dRender().filter(r=>!r.s.trial).map(r=>r.s.id);PLS=PLS.filter(p=>p.name!==name);PLS.push({id:'p'+Date.now(),name,ids});savePl();mRender();toast(`已存为歌单「${name}」，在左侧歌单里`)};
+$('#dlist').onclick=e=>{const row=e.target.closest('[data-d]');if(!row)return;const id=+row.dataset.d,r=DY.list.find(x=>x.s.id===id),b=e.target.closest('button');
+  if(!b){if(r.b==='neo'&&r.p<1)return toast('还在下载，稍等一下');return MP.setTrack(id,true)}
+  if(b.dataset.like){DY.fav.has(id)?DY.fav.delete(id):DY.fav.add(id);b.classList.toggle('fav');return toast(DY.fav.has(id)?'已记下：之后多推这类':'已取消')}
+  if(b.dataset.keep){r.b='kept';r.s.trial=false;r.why='已移入正式库，并补全了标签和封面';dRender();mRender();return toast(`已留下：D:\\Media\\音乐\\${r.s.a}\\${r.s.al}\\${r.s.t}.flac（演示）`)}
+  if(b.dataset.no){row.classList.add('out');setTimeout(()=>{DY.list=DY.list.filter(x=>x!==r);if(r.s.trial)r.s.trial=0;dRender()},300);return toast(r.b==='neo'?'已从试听区删除，之后少推这类':'已记下：之后少推这类')}};
+$('#dmode').onclick=async e=>{const b=e.target.closest('[data-m]');if(!b||DY.busy||b.dataset.m===DY.mode)return;DY.mode=b.dataset.m;$$('#dmode button').forEach(x=>x.classList.toggle('on',x===b));
+  const box=$('#dsteps'),note=$('#dnote');if(DY.mode==='local'){box.hidden=true;note.textContent='不联网也能用';note.className='badge2';return dRender()}
+  if(DY.list.some(r=>r.b==='neo'||r.b==='kept')){box.hidden=false;return dRender()}
+  DY.busy=true;box.hidden=false;const names=['分析口味','查找相似歌曲','核对是否真实存在','在我的来源里搜索','下载到试听区'];box.innerHTML=names.map(n=>`<span class="st">${n}</span>`).join('');const els=$$('.st',box);
+  note.textContent='正在准备新歌…';note.className='badge2 ai';
+  for(let i=0;i<4;i++){els[i].classList.add('run');await sleep(750);els[i].className='st ok'}
+  els[4].classList.add('run');const t=DY.top;
+  const N=[['退潮以后','林间信号','潮汐档案 II','FLAC 24/96',76,200,57,[0,5,3,4],74,`你常听${t[0].a==='林间信号'?'这位艺人':'林间信号'}，这张专辑库里还没有`],['末班渡轮','北纬三十度','站台以北 · B 面','FLAC',82,255,52,[0,3,5,4],92,'和《北站》风格相近（来自相似歌曲数据）'],['静电','Null Meridian','Cold Boot','Opus 160k',70,172,48,[0,4,2,5],120,'AI 提名：氛围接近你深夜常听的那几首']]
+   .map(x=>{const s={t:x[0],a:x[1],al:x[2],fmt:x[3],dur:x[4],hue:x[5],root:x[6],prog:x[7],bpm:x[8],ly:[],lrc:[],id:MP.songs.length,plays:0,added:0,last:999,trial:true};MP.songs.push(s);return {s,b:'neo',why:x[9],p:0}});
+  DY.list=N.concat(DY.list);dRender();
+  while(N.some(r=>r.p<1)){N.forEach((r,i)=>{if(i===0||N[i-1].p>.4)r.p=Math.min(1,r.p+.04+Math.random()*.06)});if(document.body.dataset.view==='daily')dRender();await sleep(140)}
+  els[4].className='st ok';note.textContent='找到 3 首，另有 2 首没找到，已放进“想听清单”';note.className='badge2 ok';DY.busy=false;dRender();toast('3 首新歌已下载到试听区，7 天内没点“留下”会自动清理')};
+
+/* ---------- 12. 整理文件：识别、对照预览、执行、撤销（示例文件名，不读写任何文件） ---------- */
+const OF=[
+ ['v','D:\\下载\\[Hoshi-Sub] Hoshikuzu Yuubinkyoku - 03 [1080p][HEVC].mkv','番剧\\星屑邮局 (2024)\\Season 01\\星屑邮局 - S01E03.mkv','hi','文件名规则','字幕组命名，直接拆出作品名和集数'],
+ ['v','D:\\下载\\[Hoshi-Sub] Hoshikuzu Yuubinkyoku - 03 [1080p][HEVC].sc.ass','番剧\\星屑邮局 (2024)\\Season 01\\星屑邮局 - S01E03.zh.ass','hi','配套文件','外挂字幕跟着视频走，改成对应的名字'],
+ ['v','D:\\下载\\雾港异闻录 07v2.mkv','番剧\\雾港异闻录 (2025)\\Season 01\\雾港异闻录 - S01E07.mkv','hi','资料库','片名和集数与资料库吻合'],
+ ['v','E:\\迅雷下载\\钢之候鸟.Hagane.no.Wataridori.2023.BD1080p.mkv','电影\\钢之候鸟 (2023)\\钢之候鸟 (2023).mkv','hi','资料库','时长 1 小时 52 分，判断为剧场版'],
+ ['m','D:\\下载\\音乐\\01.flac','音乐\\林间信号\\潮汐档案 (2024)\\01 - 潮汐档案 · 序.flac','hi','声音指纹','文件名没有信息，靠声音认出来的；同时补全标签和封面'],
+ ['m','D:\\下载\\track07 (1).mp3','音乐\\北纬三十度\\站台以北 (2022)\\07 - 北站.mp3','hi','声音指纹','同时补全标签和封面'],
+ ['v','D:\\下载\\新建文件夹 (2)\\xxyj_s1_04_final(1).mp4','番剧\\星屑邮局 (2024)\\Season 01\\星屑邮局 - S01E04.mp4','mid','AI','AI 判断“xxyj”是“星屑邮局”的拼音首字母'],
+ ['v','D:\\下载\\wgywl 特典 NCOP.mkv','番剧\\雾港异闻录 (2025)\\Specials\\雾港异闻录 - NCOP.mkv','mid','AI','无字幕片头，放进特典文件夹，不和正片混在一起'],
+ ['v','E:\\迅雷下载\\Bento.Biyori.EP01.720p.mkv','重复待处理\\便当日和 - S01E01 (720p).mkv','mid','重复版本','库里已有 1080p 版本，这个先挪到“重复待处理”，不删除'],
+ ['m','桌面\\lj_fbd.flac','音乐\\林间信号\\潮汐档案 (2024)\\09 - 防波堤.flac','mid','AI','声音指纹没有结果，AI 根据文件名和时长推测'],
+ ['v','D:\\下载\\VID_20240812_193355.mp4','','lo','','看起来是手机拍摄的个人录像，建议不动'],
+ ['m','D:\\下载\\录音 (3).m4a','','lo','','认不出是什么，保持原位']];
+let oRows=[],oBusy=false,oType='all';
+$('#otype').onclick=e=>{const b=e.target.closest('[data-t]');if(!b||oBusy)return;oType=b.dataset.t;$$('#otype button').forEach(x=>x.classList.toggle('on',x===b))};
+const oSync=()=>{const n=$$('#olist input:checked').length,go=$('#oexec');if(go){go.textContent=`执行整理（${n} 项）`;go.disabled=!n}};
+$('#ogo').onclick=async()=>{if(oBusy)return;oBusy=true;const box=$('#osteps'),stat=$('#ostat'),list=$('#olist'),acts=$('#oacts');acts.hidden=true;box.hidden=false;
+  const names=['解析文件名','比对资料库与声音指纹','AI 识别剩下的','生成整理方案'];box.innerHTML=names.map(n=>`<span class="st">${n}</span>`).join('');list.innerHTML='<div class="empty">正在识别…</div>';stat.className='badge2 ai';
+  oRows=OF.filter(f=>oType==='all'||(oType==='video'?f[0]==='v':f[0]==='m'));const els=$$('.st',box);
+  for(let i=0;i<4;i++){els[i].classList.add('run');stat.textContent=names[i]+'…';await sleep(i===2?1100:700);els[i].className='st ok'}
+  const G=[['hi','把握高 · 默认勾选'],['mid','需要你看一眼 · AI 推测或有重复'],['lo','认不出 · 保持原位，不会动']];
+  list.innerHTML=G.map(g=>{const rs=oRows.filter(f=>f[3]===g[0]);return rs.length?`<div class="og">${g[1]} <span class="badge2">${rs.length}</span></div>`+rs.map(f=>{const i=oRows.indexOf(f);return `<label class="orow${f[2]?'':' skip'}" data-o="${i}"><input type="checkbox"${f[3]!=='lo'?' checked':' disabled'}><code class="from">${esc(f[1])}</code><span class="badge2 ${f[3]==='hi'?'ok':f[3]==='mid'?'no':''}">${f[4]||'未识别'}</span><code class="to">${f[2]?esc('D:\\Media\\'+f[2]):'保持原位'}</code><small>${esc(f[5])}</small></label>`}).join(''):''}).join('');
+  const ai=oRows.filter(f=>f[4]==='AI').length;stat.className='badge2 ok';stat.textContent=`识别完成 · ${oRows.length} 个文件，其中 ${ai} 个交给了 AI`;
+  acts.hidden=false;acts.innerHTML='<button class="mp-btn" id="oexec"></button><span class="badge2" id="omodeb"></span>';$('#omodeb').textContent='方式：'+$('#omode').value;oSync();oBusy=false};
+$('#omode').onchange=()=>{const b=$('#omodeb');if(b)b.textContent='方式：'+$('#omode').value};
+$('#olist').onchange=oSync;
+$('#oacts').onclick=async e=>{const b=e.target.closest('button');if(!b||oBusy)return;const stat=$('#ostat'),acts=$('#oacts'),mode=$('#omode').value;
+  if(b.id==='oexec'){oBusy=true;const rows=$$('#olist .orow').filter(r=>$('input',r).checked);$$('#olist input').forEach(i=>i.disabled=true);b.disabled=true;stat.className='badge2 ai';
+    for(let i=0;i<rows.length;i++){rows[i].classList.add('done');stat.textContent=`正在${mode==='仅在媒体库中整理'?'整理':mode}… ${i+1}/${rows.length}`;await sleep(260)}
+    stat.className='badge2 ok';stat.textContent=`完成 · 已整理 ${rows.length} 个文件，没有删除任何文件`;
+    acts.innerHTML=`<button class="mp-btn ghost" id="oundo">撤销这一批</button><button class="mp-btn ghost" data-nav="anime">去番剧库查看</button><span class="badge2">${mode==='硬链接'?'原文件保留，仍可做种':mode==='复制'?'原文件保留':mode==='移动'?'播放进度、歌单、字幕关联都已保留':'硬盘上的文件没有动'}</span>`;oBusy=false;return toast('整理完成，媒体库已更新（演示，没有真的移动文件）')}
+  if(b.id==='oundo'){$$('#olist .orow.done').forEach(r=>r.classList.remove('done'));$$('#olist .orow:not(.skip) input').forEach(i=>i.disabled=false);stat.className='badge2';stat.textContent='已撤销 · 所有文件回到原来的位置和名字';
+    acts.innerHTML='<button class="mp-btn" id="oexec"></button><span class="badge2" id="omodeb"></span>';$('#omodeb').textContent='方式：'+mode;oSync();return toast('已撤销这一批')}};
+
 /* ---------- 初始化 ---------- */
-MP.on('ready',()=>{mRender();aRender();cRender();aiNote();sRender()});
-MP.on('track',()=>{if(document.body.dataset.view==='music')mRender()});
-MP.on('view',v=>{if(v==='music')mRender();pop.classList.remove('open')});
+MP.on('ready',()=>{mRender();aRender();cRender();aiNote();sRender();DY.list=dBuild();dRender()});
+MP.on('track',()=>{const v=document.body.dataset.view;if(v==='music')mRender();if(v==='daily'&&!DY.busy)dRender()});
+MP.on('view',v=>{if(v==='music')mRender();if(v==='daily')dRender();pop.classList.remove('open')});
 })();

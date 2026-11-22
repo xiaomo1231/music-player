@@ -471,6 +471,7 @@ function openNovel(n){
  body.onscroll=()=>$('.mp-rprog i',o).style.width=body.scrollTop/(body.scrollHeight-body.clientHeight)*100+'%';
  $('[data-tts]',o).onclick=e=>{const ps=$$('p',body);if(tts){clearInterval(tts);tts=null;ps.forEach(p=>p.classList.remove('tts'));e.target.textContent='朗读';return}
   let i=0;e.target.textContent='停止朗读';const go=()=>{ps.forEach(p=>p.classList.remove('tts'));if(ps[i]){ps[i].classList.add('tts');ps[i].scrollIntoView({behavior:'smooth',block:'center'})}i=(i+1)%ps.length};go();tts=setInterval(go,2600)};
+ emit('novel',o);
  requestAnimationFrame(()=>o.classList.add('open'));
 }
 

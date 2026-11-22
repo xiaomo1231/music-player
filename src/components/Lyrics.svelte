@@ -130,7 +130,7 @@
   {#if !lines.length}
     <div class="ly-box" data-mp="lyrics">
       <div class="mp-ly-inner">
-        <div class="mp-ly-empty">{player.current ? '纯音乐 / 暂无歌词' : '还没有在播放'}<br /><small style="font-size:.5em;font-weight:400">把同名 .lrc 文件放在歌曲旁边即可显示歌词</small></div>
+        <div class="mp-ly-empty">{player.current ? '纯音乐 / 暂无歌词' : '还没有在播放'}<br /><small style="font-size:.5em;font-weight:400">把同名 .lrc 文件放在歌曲旁边即可显示歌词；也可在设置里开启在线获取</small></div>
       </div>
     </div>
   {:else if mode === 'fade' || mode === 'typewriter'}

@@ -22,7 +22,11 @@
 </script>
 
 <div class="dl">
-  {#if text}<p>{text}</p>{/if}
+  {#if text}
+    {@const [main, sub] = text.split('\n')}
+    <p>{main}</p>
+    {#if sub}<p class="sub">{sub}</p>{/if}
+  {/if}
 </div>
 
 <style>
@@ -30,7 +34,9 @@
     position: fixed;
     inset: 0;
     display: grid;
-    place-items: center;
+    place-content: center;
+    justify-items: center;
+    gap: 2px;
     padding: 0 24px;
     background: transparent;
     pointer-events: none;
@@ -50,5 +56,11 @@
     -webkit-text-stroke: 2px rgba(0, 0, 0, 0.75);
     paint-order: stroke fill;
     text-shadow: 0 2px 14px rgba(0, 0, 0, 0.6);
+  }
+  p.sub {
+    font-size: clamp(15px, 2.6vh, 28px);
+    font-weight: 700;
+    -webkit-text-stroke-width: 1.5px;
+    opacity: 0.9;
   }
 </style>

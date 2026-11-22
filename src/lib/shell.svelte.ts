@@ -4,6 +4,7 @@ import { emit } from '@tauri-apps/api/event';
 import { invoke, inTauri, listen, type Track } from './api';
 import { lib } from './library.svelte';
 import { player } from './player.svelte';
+import { lyricsfx } from './lyricsfx.svelte';
 import { ui, toast } from './ui.svelte';
 
 /** 桌面歌词窗口加载的地址是 index.html#lyrics */
@@ -115,10 +116,12 @@ export async function setWallpaper(on: boolean): Promise<void> {
 let lyricsOn = false;
 let lastLine = '';
 
-/** 当前歌词行（没有歌词时为空） */
+/** 当前歌词行（没有歌词时为空）；有译文且开启“显示翻译”时第二行是译文 */
 function currentLine(): string {
   const i = player.lyricIndex();
-  return i >= 0 ? (player.lyrics[i]?.text ?? '') : '';
+  const l = i >= 0 ? player.lyrics[i] : undefined;
+  if (!l) return '';
+  return lyricsfx.cfg.tr && l.tr ? `${l.text}\n${l.tr}` : l.text;
 }
 
 function pushLine(force = false) {
@@ -207,6 +210,7 @@ export function initShell(): () => void {
   offs.push(listen<string>('shell://cmd', onCmd));
   offs.push(listen<OpenPayload>('shell://open-files', p => openPaths(p.paths, p.addOnly).catch(e => toast(String(e)))));
   offs.push(listen<unknown>('lyrics://ask', () => pushLine(true)));
+  lyricsfx.load();
 
   invoke<OpenPayload | null>('shell_startup_files')
     .then(p => p && openPaths(p.paths, p.addOnly))

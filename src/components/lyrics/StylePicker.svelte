@@ -53,6 +53,14 @@
         <span>模糊非当前行</span>
         <input type="checkbox" class="mp-sw" checked={cfg.blur} onchange={e => lyricsfx.set({ blur: (e.currentTarget as HTMLInputElement).checked })} />
       </label>
+      <label class="ly-fxrow">
+        <span>显示翻译</span>
+        <input type="checkbox" class="mp-sw" checked={cfg.tr} onchange={e => lyricsfx.set({ tr: (e.currentTarget as HTMLInputElement).checked })} />
+      </label>
+      <label class="ly-fxrow">
+        <span>显示罗马音</span>
+        <input type="checkbox" class="mp-sw" checked={cfg.roma} onchange={e => lyricsfx.set({ roma: (e.currentTarget as HTMLInputElement).checked })} />
+      </label>
     </div>
   {/if}
 </div>

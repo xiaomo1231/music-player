@@ -11,6 +11,7 @@ pub mod fetch;
 pub mod indexer;
 pub mod item;
 pub mod library;
+pub mod lyrics;
 pub mod mangatr;
 pub mod media;
 pub mod metadata;
@@ -33,6 +34,7 @@ fn init_modules(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     convert::init(conn)?;
     daily::init(conn)?;
     fetch::init(conn)?;
+    lyrics::init(conn)?;
     mangatr::init(conn)?;
     media::init(conn)?;
     organize::init(conn)?;
@@ -162,6 +164,7 @@ pub fn run() {
             commands::list_comics,
             commands::save_comic_progress,
             commands::lyrics,
+            lyrics::lyrics_online,
             commands::toggle_favorite,
             commands::record_play,
             commands::list_playlists,

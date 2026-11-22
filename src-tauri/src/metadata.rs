@@ -2,7 +2,7 @@
 use crate::parse;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::prelude::{Accessor, ItemKey};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -163,12 +163,18 @@ pub fn dominant_hue(img: &image::DynamicImage) -> i64 {
     ((h + 360.0) % 360.0).round() as i64
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
 pub struct LyricLine {
     pub t: f64,
     pub text: String,
     /// 逐字（增强 LRC）：(开始时间, 字)
     pub words: Vec<(f64, String)>,
+    /// 译文（在线歌词源提供时才有）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tr: Option<String>,
+    /// 罗马音 / 音译
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roma: Option<String>,
 }
 
 fn parse_ts(s: &str) -> Option<f64> {
@@ -229,17 +235,56 @@ pub fn parse_lrc(text: &str) -> Vec<LyricLine> {
                 t: (t - offset).max(0.0),
                 text: plain.trim().to_string(),
                 words: words.clone(),
+                ..Default::default()
             });
         }
     }
+    // sort_by 是稳定排序：同一时间戳的行保持文件里的先后顺序
     out.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
     out.retain(|l| !l.text.is_empty());
+    merge_translations(out)
+}
+
+/// 双语 LRC（网易云 / ESLyric / 163MusicLyrics 等导出的格式）：译文紧跟原文、时间戳相同。
+/// 同一时间戳的第二行并入原文的 `tr`，第三行并入 `roma`，再多的丢掉。
+/// 网易云用 “//” 占位表示这一行没有译文。
+fn merge_translations(lines: Vec<LyricLine>) -> Vec<LyricLine> {
+    let mut out: Vec<LyricLine> = Vec::with_capacity(lines.len());
+    let mut extra = 0;
+    for l in lines {
+        if let Some(prev) = out.last_mut() {
+            if prev.t >= 0.0 && (prev.t - l.t).abs() < 0.001 {
+                extra += 1;
+                let v = (l.text != "//").then_some(l.text);
+                match extra {
+                    1 => prev.tr = v,
+                    2 => prev.roma = v,
+                    _ => {}
+                }
+                continue;
+            }
+        }
+        extra = 0;
+        out.push(l);
+    }
     out
 }
 
 fn read_text_any(p: &Path) -> Option<String> {
     let bytes = std::fs::read(p).ok()?;
     Some(crate::reader::decode_text(&bytes).0)
+}
+
+/// 没有时间轴的纯文本歌词：t = -1
+pub fn plain_lines(text: &str) -> Vec<LyricLine> {
+    text.lines()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| LyricLine {
+            t: -1.0,
+            text: s.trim().into(),
+            ..Default::default()
+        })
+        .collect()
 }
 
 /// 同名 .lrc 优先，其次文件内嵌歌词
@@ -259,15 +304,7 @@ pub fn lyrics_for(path: &Path) -> Vec<LyricLine> {
                     return l;
                 }
                 // 没有时间轴的纯文本歌词
-                return t
-                    .lines()
-                    .filter(|s| !s.trim().is_empty())
-                    .map(|s| LyricLine {
-                        t: -1.0,
-                        text: s.trim().into(),
-                        words: vec![],
-                    })
-                    .collect();
+                return plain_lines(t);
             }
         }
     }
@@ -293,6 +330,20 @@ mod tests {
         assert_eq!(l[0].text, "你好");
         assert_eq!(l[0].words.len(), 2);
         assert_eq!(l[0].words[1].1, "好");
+    }
+
+    #[test]
+    fn lrc_bilingual() {
+        let l = parse_lrc(
+            "[00:01.00]Hello\n[00:01.00]你好\n[00:03.00]こんにちは\n[00:03.00]你好\n[00:03.00]konnichiwa\n[00:05.00]Bye\n[00:05.00]//\n[00:07.00]End",
+        );
+        assert_eq!(l.len(), 4);
+        assert_eq!(l[0].tr.as_deref(), Some("你好"));
+        assert_eq!(l[1].tr.as_deref(), Some("你好"));
+        assert_eq!(l[1].roma.as_deref(), Some("konnichiwa"));
+        assert_eq!(l[2].tr, None);
+        assert_eq!(l[3].text, "End");
+        assert_eq!(l[3].tr, None);
     }
 
     #[test]

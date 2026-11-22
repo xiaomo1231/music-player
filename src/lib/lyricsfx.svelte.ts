@@ -13,6 +13,10 @@ export interface LyricsFxCfg {
   align: LyricAlign;
   /** 是否模糊非当前行 */
   blur: boolean;
+  /** 歌词带译文时在原文下方显示 */
+  tr: boolean;
+  /** 歌词带罗马音时显示 */
+  roma: boolean;
 }
 
 export const LYRIC_STYLES: { id: LyricStyle; name: string; desc: string }[] = [
@@ -30,7 +34,7 @@ export const LYRIC_ALIGNS: { id: LyricAlign; name: string }[] = [
   { id: 'right', name: '右' },
 ];
 
-const DEFAULTS: LyricsFxCfg = { style: 'scroll', size: 1, align: 'left', blur: true };
+const DEFAULTS: LyricsFxCfg = { style: 'scroll', size: 1, align: 'left', blur: true, tr: true, roma: false };
 const KEY = 'lyricsfx';
 
 /** 把保存的值和默认值合并，丢掉不认识的取值 */
@@ -40,7 +44,9 @@ export function mergeCfg(v: unknown): LyricsFxCfg {
   const align = LYRIC_ALIGNS.some(a => a.id === o.align) ? (o.align as LyricAlign) : DEFAULTS.align;
   const size = typeof o.size === 'number' && isFinite(o.size) ? clamp(o.size, 0.7, 1.6) : DEFAULTS.size;
   const blur = typeof o.blur === 'boolean' ? o.blur : DEFAULTS.blur;
-  return { style, size, align, blur };
+  const tr = typeof o.tr === 'boolean' ? o.tr : DEFAULTS.tr;
+  const roma = typeof o.roma === 'boolean' ? o.roma : DEFAULTS.roma;
+  return { style, size, align, blur, tr, roma };
 }
 
 class LyricsFx {
@@ -156,7 +162,7 @@ export function lineProgress(units: Unit[], t: number): number {
 export const DEMO_LINES: LyricLine[] = [
   { t: 0, text: '风从街角慢慢地吹过来', words: [] },
   { t: 3.2, text: '带走一点点犹豫', words: [] },
-  { t: 6, text: 'Let the morning wind carry it', words: [] },
+  { t: 6, text: 'Let the morning wind carry it', words: [], tr: '让晨风把它带走' },
   { t: 9.4, text: '我们沿着河岸一直走', words: [] },
   { t: 12.6, text: '直到影子变得很短很短', words: [] },
 ];

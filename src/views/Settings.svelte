@@ -23,6 +23,7 @@
   import LyricsSettings from '../components/settings/LyricsSettings.svelte';
   import FxSettings from '../components/settings/FxSettings.svelte';
   import ReaderSettings from '../components/settings/ReaderSettings.svelte';
+  import { updater } from '../lib/updater.svelte';
 
   // 设置项的当前值（启动时从 settings 表读取）
   let watch = $state(true);
@@ -40,6 +41,7 @@
   let cache = $state<CacheInfo | null>(null);
   let clearCovers = $state(false);
   let clearing = $state(false);
+  let autoUpdate = $state(true);
 
   const inp = (e: Event) => (e.currentTarget as HTMLInputElement);
 
@@ -54,6 +56,7 @@
 
   onMount(async () => {
     watch = await getSetting('watch', true);
+    autoUpdate = await getSetting('update_auto_check', true);
     metaOnline = await getSetting('metadata_online', false);
     fade = await getSetting('fade', false);
     const dv = await getSetting<number | null>('default_volume', null);
@@ -349,6 +352,35 @@
         <span>版本</span><span>{engine.version || '—'}</span>
         <span>播放引擎</span><span>{engine.mpv ? 'libmpv' : 'WebView2'}</span>
       </div>
+      <div class="mp-opt">
+        <div>
+          检查更新
+          <small>
+            {#if updater.phase === 'checking'}
+              正在检查…
+            {:else if updater.update}
+              有新版本 {updater.version}
+            {:else if updater.phase === 'error'}
+              检查失败，请检查网络后重试
+            {:else if updater.lastChecked}
+              已经是最新版本
+            {:else}
+              从 GitHub 获取最新版本；有新版本时会先询问再更新
+            {/if}
+          </small>
+        </div>
+        {#if updater.update && !updater.busy}
+          <button class="mp-btn" onclick={() => (updater.show = true)}>查看更新</button>
+        {:else}
+          <button class="mp-btn ghost" disabled={!inTauri || updater.busy} onclick={() => updater.check(true)}>
+            {updater.phase === 'checking' ? '检查中…' : '检查更新'}
+          </button>
+        {/if}
+      </div>
+      <label class="mp-opt">
+        <div>启动时自动检查更新<small>只检查，不会自动下载；有新版本时弹窗让你选择</small></div>
+        <input type="checkbox" class="mp-sw" checked={autoUpdate} onchange={flag('update_auto_check', v => (autoUpdate = v))} />
+      </label>
       <p class="note">开源组件：FFmpeg（音视频转换、截取封面，许可取决于构建配置，LGPL 或 GPL）；libmpv（播放引擎，LGPL 2.1 或更高）。使用这些组件时请保留其许可声明。</p>
     </div>
   </div>

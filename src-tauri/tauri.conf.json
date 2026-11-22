@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "极光播放器",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.xiaomo.musicplayer",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -29,7 +29,17 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "publisher": "xiaomo",
+    "shortDescription": "极光播放器",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
-    "windows": { "nsis": { "languages": ["SimpChinese"] } }
+    "windows": { "nsis": { "languages": ["SimpChinese"], "installMode": "currentUser" } }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwM0ZEQTI2Qjk2QzQ2OUQKUldTZFJteTVKdG8vd0QrUkpiK3dQVm0ySmZwUlczaHVEMTltRVV3OWFwcVV6SEEwYlBDL0EzVmQK",
+      "endpoints": ["https://github.com/xiaomo1231/music-player/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
   }
 }

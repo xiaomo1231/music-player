@@ -189,9 +189,9 @@ body.oled-black{background:#000 !important;--mp-bg:#000}
 body.oled-black .mp-bgfx{opacity:0 !important}
 body.oled-static [data-static]{opacity:.5;transition:opacity .6s}
 body.oled-static [data-static]:hover{opacity:1}
-body.oled-drift [data-drift]{animation:mp-drift 97s ease-in-out infinite alternate}
-body.oled-drift [data-drift]:nth-of-type(2n){animation-duration:131s;animation-direction:alternate-reverse}
-@keyframes mp-drift{0%{translate:0 0}20%{translate:10px -6px}40%{translate:-8px 9px}60%{translate:7px 12px}80%{translate:-11px -5px}100%{translate:4px -10px}}
+/* 元素漂移：由脚本每隔十几秒步进 1 像素（不再逐帧动画，高刷新率屏幕上不会持续重绘） */
+body.oled-drift [data-drift]{translate:var(--drift-x,0) var(--drift-y,0)}
+body.oled-drift [data-drift]:nth-of-type(2n){translate:calc(var(--drift-x,0) * -1) var(--drift-y,0)}
 body.immersive.oled-hide.idle [data-autohide]{opacity:0 !important;pointer-events:none;transition:opacity 1.2s}
 [data-autohide]{transition:opacity .4s}
 body.immersive.idle{cursor:none}

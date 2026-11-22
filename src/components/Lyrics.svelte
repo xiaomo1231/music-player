@@ -5,6 +5,7 @@
   import { player } from '../lib/player.svelte';
   import { lyricsfx, lineAt, DEMO_LINES, DEMO_LEN } from '../lib/lyricsfx.svelte';
   import { clamp } from '../lib/util';
+  import { fx } from '../lib/fx.svelte';
   import LineList from './lyrics/LineList.svelte';
   import Focus from './lyrics/Focus.svelte';
   import StylePicker from './lyrics/StylePicker.svelte';
@@ -86,8 +87,15 @@
   $effect(() => {
     if (!running) return;
     const beating = cfg.style === 'bounce';
-    let raf = 0;
+    let raf = 0,
+      last = 0;
     const tick = (perf: number) => {
+      // 高刷新率屏幕上按动效设置限帧（默认 60，省电 20）
+      if (last && perf - last < Math.max(fx.frameMs, 16.6) - 3) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      last = perf;
       now = clock(perf);
       if (beating) {
         const b = bass(now);

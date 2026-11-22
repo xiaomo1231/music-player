@@ -47,7 +47,7 @@
     if (!d || !run) return;
     // 这些变化需要重新画（静态模式下循环可能已经停了）
     void [fx.s.bg, fx.s.intensity, fx.s.speed, fx.s.followCover, fx.s.hue, fx.s.fps, fx.reduced, player.current?.id];
-    return fxLoop((_now, dt) => d.frame(dt), () => fxFrameMs(ui.dimmed));
+    return fxLoop((_now, dt) => d.frame(dt), () => fxFrameMs(ui.dimmed, ui.idle && !player.playing));
   });
 </script>
 

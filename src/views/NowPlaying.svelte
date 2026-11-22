@@ -108,7 +108,7 @@
       }
       if (ring) drawRing(g, dt, false);
       else if (canvas.width) g.clearRect(0, 0, canvas.width, canvas.height);
-    }, () => fxFrameMs(ui.dimmed));
+    }, () => fxFrameMs(ui.dimmed, ui.idle && !player.playing));
   });
 </script>
 <section class="stage on" class:q={ui.queueOpen}>

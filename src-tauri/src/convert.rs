@@ -241,7 +241,20 @@ fn test_encoder(name: &str) -> bool {
         "-",
     ]);
     c.stdout(Stdio::null()).stderr(Stdio::null());
-    c.status().map(|s| s.success()).unwrap_or(false)
+    // 个别驱动下（例如核显的 AMF）试编码会卡住不退出，最多等 8 秒，超时就当不可用并结束进程
+    let Ok(mut child) = c.spawn() else { return false };
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(s)) => return s.success(),
+            Ok(None) if start.elapsed() < std::time::Duration::from_secs(8) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 pub fn detect_hw() -> HwStatus {

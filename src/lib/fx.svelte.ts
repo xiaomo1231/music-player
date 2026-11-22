@@ -143,7 +143,7 @@ export function fxLoop(draw: (now: number, dt: number) => boolean | void, frameM
 }
 
 /** 屏幕自动变暗时降到 20 帧 */
-export const fxFrameMs = (dimmed: boolean) => (dimmed ? Math.max(fx.frameMs, 50) : fx.frameMs);
+export const fxFrameMs = (dimmed: boolean, idlePaused = false) => (idlePaused ? Math.max(fx.frameMs, 100) : dimmed ? Math.max(fx.frameMs, 50) : fx.frameMs);
 
 if (typeof window !== 'undefined') {
   // 开发模式下方便自动化测试切换动效

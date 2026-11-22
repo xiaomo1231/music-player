@@ -81,6 +81,26 @@
     return () => clearInterval(iv);
   });
 
+  // 元素漂移：沿不规则路线每 15 秒移动 1 像素（约 ±12 像素范围），比逐帧动画省得多，防残影效果一样
+  $effect(() => {
+    if (!ui.oled.drift) {
+      document.body.style.removeProperty('--drift-x');
+      document.body.style.removeProperty('--drift-y');
+      return;
+    }
+    const way = [[0, 0], [10, -6], [-8, 9], [7, 12], [-11, -5], [4, -10], [0, 0]];
+    let x = 0, y = 0, k = 1;
+    const iv = setInterval(() => {
+      const [tx, ty] = way[k];
+      x += Math.sign(tx - x);
+      y += Math.sign(ty - y);
+      if (x === tx && y === ty) k = (k + 1) % way.length;
+      document.body.style.setProperty('--drift-x', x + 'px');
+      document.body.style.setProperty('--drift-y', y + 'px');
+    }, 15000);
+    return () => clearInterval(iv);
+  });
+
   // 无操作：隐藏控件 / 变暗
   let idleT: ReturnType<typeof setTimeout> | undefined, dimT: ReturnType<typeof setTimeout> | undefined;
   function wake() {

@@ -111,16 +111,18 @@ class Player {
       console.warn('Web Audio 不可用，均衡器和频谱停用', e);
     }
     this.applyVol();
-    requestAnimationFrame(this.loop);
+    this.ticker = setInterval(this.loop, 100);
   }
 
-  private loop = (now: number) => {
+  private ticker: ReturnType<typeof setInterval> | undefined;
+  // 播放进度和收听时长：10 次 / 秒就够了，不需要跟着屏幕刷新率（175 Hz）跑。暂停时只做一次空判断
+  private loop = () => {
+    const now = performance.now();
     if (this.el && this.playing) {
       if (this.backend === 'web') this.t = this.el.currentTime;
       if (this.lastTick) this.listened += Math.min(0.25, (now - this.lastTick) / 1000) * this.speed;
     }
     this.lastTick = now;
-    requestAnimationFrame(this.loop);
   };
 
   /** 替换队列并从第 i 首开始 */

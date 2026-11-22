@@ -85,11 +85,56 @@ main{position:relative;min-height:0;min-width:0;display:grid;grid-template-rows:
 body.playing .sleeve{transform:translateX(-17%) rotate(-3deg)}body.playing .vinylwrap{transform:translateX(30%)}
 .meta{position:absolute;left:0;right:0;top:calc(100% + 22px);text-align:center}
 .meta b{font-size:21px;display:block}.meta span{color:var(--mp-sub);font-size:13.5px}
-.lyr{height:min(66vh,620px);font-size:clamp(21px,2.4vw,36px);font-weight:800;line-height:1.3}
-.lyr .mp-ly-line{padding:.42em 0;opacity:calc(.5 - var(--d,3)*.08);filter:blur(calc(var(--d,3)*.9px));transform-origin:left center;transform:scale(.94)}
+.lyr{height:min(66vh,620px);font-size:calc(clamp(21px,2.4vw,36px)*var(--ly-size,1));font-weight:800;line-height:1.3;position:relative}
+/* 歌词动效（components/Lyrics.svelte + components/lyrics/*）：只用 transform / opacity / filter 和 CSS 变量 */
+.lyr .ly-box{height:100%}.lyr .ly-box.free{overflow:auto;scrollbar-width:none}.lyr .ly-box.free .mp-ly-inner{padding:14vh 0}
+.lyr .mp-ly-inner{text-align:var(--ly-align,start)}
+.lyr .mp-ly-line{padding:.42em 0;opacity:calc(.5 - var(--d,3)*.08);filter:blur(calc(var(--d,3)*.9px));transform-origin:var(--ly-origin,left) center;transform:scale(.94)}
 .lyr .mp-ly-line.on{opacity:1;filter:none;transform:none}
-.lyr .mp-ly-line.on span{background:linear-gradient(90deg,#fff calc(var(--lp,0)*100%),rgba(255,255,255,.45) calc(var(--lp,0)*100% + 8%));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lyr .m-scroll .mp-ly-line.on>span,.lyr .m-fade .mp-ly-line.on>span{background:linear-gradient(90deg,#fff calc(var(--lp,0)*100%),rgba(255,255,255,.45) calc(var(--lp,0)*100% + 8%));-webkit-background-clip:text;background-clip:text;color:transparent}
 .lyr .mp-ly-line:hover{opacity:.9;filter:none}
+.lyr.noblur .mp-ly-line{filter:none}
+.lyr .mp-ly-line.plain{opacity:.78;filter:none;transform:none}
+/* 无动画逐行高亮（没有时间轴的歌词，或系统要求减少动态效果） */
+.lyr.ly-plain .mp-ly-line{filter:none;transform:none}.lyr.ly-plain .mp-ly-line:not(.on):not(.plain){opacity:.42}
+.lyr.reduced .mp-ly-inner,.lyr.reduced .mp-ly-line,.lyr.reduced .u{transition:none!important;animation:none!important}
+/* 逐字高亮 / 弹性节拍 / 竖排：每个字一段渐变，--p 是这个字唱到哪里 */
+.lyr .u{--p:0;background:linear-gradient(90deg,#fff calc(var(--p)*100%),rgba(255,255,255,.34) calc(var(--p)*100%));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lyr .m-karaoke .mp-ly-line{transform:none;opacity:calc(.56 - var(--d,3)*.07)}
+.lyr .m-karaoke .mp-ly-line.on{opacity:1;filter:drop-shadow(0 0 14px hsl(var(--hue,200) 90% 70% / .45))}
+.lyr .m-karaoke .u.done{background:none;color:#fff}
+.lyr .m-bounce .mp-ly-line.on{transform:scale(calc(1 + var(--beat,0)*.07));transition:opacity .4s,filter .5s,transform .09s ease-out}
+.lyr .m-bounce .u{display:inline-block;white-space:pre}
+.lyr .m-bounce .u.hit{animation:ly-pop .6s cubic-bezier(.3,1.9,.5,1) both}
+@keyframes ly-pop{from{transform:scale(1.42) translateY(-.14em)}to{transform:none}}
+.lyr .m-vertical .mp-ly-inner{position:absolute;top:0;right:0;height:100%;writing-mode:vertical-rl;text-orientation:mixed;transition:transform .75s cubic-bezier(.2,.8,.2,1)}
+.lyr .m-vertical .mp-ly-line{padding:0 .36em;transform-origin:center var(--ly-vorigin,top)}
+.lyr .m-vertical .u{background-image:linear-gradient(180deg,#fff calc(var(--p)*100%),rgba(255,255,255,.34) calc(var(--p)*100%))}
+/* 淡入上浮 / 打字机：只显示附近几行，切行时用 transform / opacity 过渡 */
+.lyr .ly-stack{position:absolute;left:0;right:0;transform:translateY(-50%);text-align:var(--ly-align,start)}
+.lyr .ly-slot{display:grid}.lyr .ly-slot>*{grid-area:1/1}
+.lyr .ly-slot.prev,.lyr .ly-slot.next{position:absolute;left:0;right:0;font-size:.56em;font-weight:700}
+.lyr .ly-slot.prev{bottom:100%}.lyr .ly-slot.next{top:100%}
+.lyr .ly-focus .mp-ly-line{transform:none;filter:none;opacity:1}
+.lyr .ly-focus .prev .mp-ly-line{opacity:.32;filter:blur(1.2px)}.lyr .ly-focus .next .mp-ly-line{opacity:.48;filter:blur(.8px)}
+.lyr.noblur .ly-focus .mp-ly-line{filter:none}
+.lyr .m-typewriter .cur{font-family:"Cascadia Mono",Consolas,ui-monospace,monospace;font-weight:700}
+.lyr .m-typewriter .u{background:none;color:#fff;position:relative;opacity:0;transition:opacity .12s}
+.lyr .m-typewriter .u.hit{opacity:1}
+.lyr .m-typewriter .u.tip::after{content:"";position:absolute;right:-.1em;top:.14em;bottom:.14em;width:.07em;background:var(--mp-accent);animation:ly-caret 1s steps(1) infinite}
+@keyframes ly-caret{50%{opacity:0}}
+/* 快捷切换：悬停歌词区时右上角出现 */
+.ly-fx{position:absolute;top:4px;right:4px;z-index:5;font-size:13px;font-weight:500;line-height:1.4;text-align:left;writing-mode:horizontal-tb}
+.ly-fxbtn{width:32px;height:32px;border-radius:10px;border:1px solid var(--edge);background:var(--glass);backdrop-filter:blur(16px);font-size:12.5px;font-weight:700;opacity:0;transition:opacity .2s,background .2s}
+.ly-fxbtn:hover{background:rgba(255,255,255,.14)}
+.lyr:hover .ly-fxbtn,.ly-fx.open .ly-fxbtn,.ly-fxbtn:focus-visible{opacity:1}
+.ly-fxpop{position:absolute;top:40px;right:0;width:272px;background:var(--mp-panel);backdrop-filter:blur(30px);border:1px solid var(--edge);border-radius:14px;box-shadow:var(--mp-shadow);padding:12px}
+.ly-fxpop h6{margin:0 2px 8px;font-size:12px;color:var(--mp-sub);font-weight:500}
+.ly-fxgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px}
+.ly-fxgrid button{background:var(--glass);border:1px solid var(--edge);border-radius:9px;padding:7px 8px;font-size:12.5px;text-align:center}
+.ly-fxgrid button:hover{background:rgba(255,255,255,.12)}.ly-fxgrid button.on{background:rgba(255,255,255,.18);border-color:var(--mp-accent)}
+.ly-fxrow{display:flex;align-items:center;gap:10px;padding:8px 2px 0;font-size:12.5px}
+.ly-fxrow>span{flex:1;color:var(--mp-sub)}.ly-fxrow input[type=range]{width:110px;accent-color:var(--mp-accent)}.ly-fxrow em{font-style:normal;width:3em;text-align:right;color:var(--mp-sub)}
 .qpanel{display:none;height:min(66vh,620px);background:var(--glass);border:1px solid var(--edge);border-radius:16px;padding:12px;overflow:auto;backdrop-filter:blur(20px)}
 .stage.q .qpanel{display:block}.qpanel h6{margin:2px 6px 8px;font-size:12px;color:var(--mp-sub)}
 .mp-qrow{display:grid;grid-template-columns:36px 1fr auto;gap:10px;align-items:center;padding:6px;border-radius:9px;cursor:pointer;font-size:13px}
@@ -216,6 +261,6 @@ body.immersive footer{position:fixed;left:50%;bottom:16px;translate:-50% 0;width
 body.immersive .deck{width:min(100%,56vh,520px)}body.immersive .stage{padding:4vh 7vw}
 body.oled-black .sleeve,body.oled-black .vinyl{box-shadow:none}
 @media(max-width:980px){body{grid-template-columns:58px minmax(0,1fr)}aside button span,aside button em,aside h6,aside h1,aside .back{display:none}aside{padding:10px 6px}
- .stage,.stage.q{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.qpanel{display:none !important}.deck{width:min(56vw,28vh)}.meta{display:none}.lyr{height:32vh;font-size:21px;text-align:center}
+ .stage,.stage.q{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.qpanel{display:none !important}.deck{width:min(56vw,28vh)}.meta{display:none}.lyr{height:32vh;font-size:calc(21px*var(--ly-size,1));text-align:center}
  footer{grid-template-columns:1fr}.np,.right{display:none}.mid{width:100%}.ai,.rbody{grid-template-columns:1fr}.rside{display:none}.banner{grid-template-columns:1fr}.banner .pst{display:none}.get{grid-template-columns:minmax(0,1fr)}.lib{padding-inline:14px}
  .mrow{grid-template-columns:2.2em 2.6em minmax(0,1fr) 4.6em}.mrow .mp-al,.mrow .mp-fmt,.mrow .pc,.mrow .mp-n{display:none}.search kbd{display:none}}

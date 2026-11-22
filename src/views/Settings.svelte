@@ -18,6 +18,7 @@
     type CacheInfo,
   } from '../lib/shell.svelte';
   import HotkeyList from '../components/settings/HotkeyList.svelte';
+  import LyricsSettings from '../components/settings/LyricsSettings.svelte';
 
   // 设置项的当前值（启动时从 settings 表读取）
   let watch = $state(true);
@@ -258,6 +259,8 @@
         <input type="checkbox" class="mp-sw" checked={closeToTray} onchange={flag('close_to_tray', v => (closeToTray = v))} />
       </label>
     </div>
+
+    <LyricsSettings />
 
     <!-- 快捷键 -->
     <div class="card card-wide">

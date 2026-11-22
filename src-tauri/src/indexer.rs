@@ -52,7 +52,9 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
         .unwrap_or(0);
     let p = path.to_string_lossy().to_string();
     let existing: Option<(i64, i64, i64, i64)> = conn
-        .query_row("SELECT id,size,mtime,missing FROM files WHERE path=?1", [&p], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .query_row("SELECT id,size,mtime,missing FROM files WHERE path=?1", [&p], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
         .optional()?;
     if let Some((id, s, m, missing)) = existing {
         if s == size && m == mtime {
@@ -78,7 +80,10 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
         conn.execute("UPDATE files SET path=?1, missing=0 WHERE id=?2", params![p, id])?;
         return Ok(Outcome::Updated);
     } else if let Some((id, ..)) = existing {
-        conn.execute("UPDATE files SET size=?1, mtime=?2, missing=0, kind=?3 WHERE id=?4", params![size, mtime, kind, id])?;
+        conn.execute(
+            "UPDATE files SET size=?1, mtime=?2, missing=0, kind=?3 WHERE id=?4",
+            params![size, mtime, kind, id],
+        )?;
         id
     } else {
         conn.execute(
@@ -107,20 +112,54 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
                 conn.execute("INSERT OR IGNORE INTO series(title,kind) VALUES(?1,?2)", params![info.title, skind])?;
                 let sid: i64 = conn.query_row("SELECT id FROM series WHERE title=?1 AND kind=?2", params![info.title, skind], |r| r.get(0))?;
                 if let Some(img) = metadata::folder_cover(path) {
-                    conn.execute("UPDATE series SET poster=?1 WHERE id=?2 AND poster IS NULL", params![img.to_string_lossy(), sid])?;
+                    conn.execute(
+                        "UPDATE series SET poster=?1 WHERE id=?2 AND poster IS NULL",
+                        params![img.to_string_lossy(), sid],
+                    )?;
                 }
                 Some(sid)
             } else {
                 None
             };
-            let subs = if has_external_subs(path) { "external" } else if parse::ext(path) == "mkv" { "embedded?" } else { "none" };
-            let title = if info.episode.is_some() { path.file_stem().unwrap().to_string_lossy().to_string() } else { info.title.clone() };
+            let subs = if has_external_subs(path) {
+                "external"
+            } else if parse::ext(path) == "mkv" {
+                "embedded?"
+            } else {
+                "none"
+            };
+            let title = if info.episode.is_some() {
+                path.file_stem().unwrap().to_string_lossy().to_string()
+            } else {
+                info.title.clone()
+            };
             conn.execute(
                 "INSERT INTO videos(file_id,title,series_id,season,episode,release_group,resolution,subs) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
                  ON CONFLICT(file_id) DO UPDATE SET title=excluded.title,series_id=excluded.series_id,season=excluded.season,episode=excluded.episode,
                  release_group=excluded.release_group,resolution=excluded.resolution,subs=excluded.subs",
-                params![file_id, title, series_id, info.season.or(series_id.map(|_| 1)), info.episode, info.group, info.resolution, subs],
+                params![
+                    file_id,
+                    title,
+                    series_id,
+                    info.season.or(series_id.map(|_| 1)),
+                    info.episode,
+                    info.group,
+                    info.resolution,
+                    subs
+                ],
             )?;
+            // 时长、分辨率、编码（ffprobe 不在时跳过，播放器打开时还会再读）
+            if let Ok(v) = crate::tools::probe(path) {
+                let dur: f64 = v["format"]["duration"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                let vs = v["streams"]
+                    .as_array()
+                    .and_then(|a| a.iter().find(|s| s["codec_type"] == "video").cloned())
+                    .unwrap_or_default();
+                conn.execute(
+                    "UPDATE videos SET duration=?1, width=?2, height=?3, codec=?4 WHERE file_id=?5",
+                    params![dur, vs["width"].as_i64(), vs["height"].as_i64(), vs["codec_name"].as_str(), file_id],
+                )?;
+            }
             set_search(conn, file_id, kind, &info.title, &title)?;
         }
         "novel" => {

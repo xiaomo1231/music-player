@@ -4,8 +4,7 @@ use regex::Regex;
 use std::path::Path;
 
 pub const AUDIO: &[&str] = &[
-    "mp3", "flac", "m4a", "aac", "alac", "wav", "ape", "wv", "ogg", "oga", "opus", "wma", "aif", "aiff",
-    "dsf", "dff", "tta", "tak", "ac3", "dts", "mka",
+    "mp3", "flac", "m4a", "aac", "alac", "wav", "ape", "wv", "ogg", "oga", "opus", "wma", "aif", "aiff", "dsf", "dff", "tta", "tak", "ac3", "dts", "mka",
 ];
 pub const ENCRYPTED: &[&str] = &["qmc0", "qmc3", "qmcflac", "qmcogg", "mgg", "mgg1", "mflac", "mflac0", "kgm", "vpr", "ncm"];
 pub const VIDEO: &[&str] = &[
@@ -63,8 +62,7 @@ pub fn is_lossless(ext: &str) -> bool {
 
 static RE_BRACKET_GROUP: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*[\[【]([^\]】]+)[\]】]").unwrap());
 static RE_SXXEXX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bS(\d{1,2})\s*E(\d{1,3}(?:\.\d)?)\b").unwrap());
-static RE_SEASON: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)(?:\bS(\d{1,2})\b|Season\s*(\d{1,2})|第([一二三四五六七八九十\d]{1,3})季)").unwrap());
+static RE_SEASON: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)(?:\bS(\d{1,2})\b|Season\s*(\d{1,2})|第([一二三四五六七八九十\d]{1,3})季)").unwrap());
 static RE_EP_CN: Lazy<Regex> = Lazy::new(|| Regex::new(r"第\s*(\d{1,4})\s*[话話集]").unwrap());
 static RE_EP_BRACKET: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\[【(（]\s*(\d{1,4}(?:\.\d)?)\s*(?:v\d)?\s*(?:END|完)?\s*[\]】)）]").unwrap());
 static RE_EP_DASH: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s[-–]\s*(\d{1,4}(?:\.\d)?)(?:v\d)?(?:\s|$|\[|\()").unwrap());
@@ -159,7 +157,11 @@ pub fn parse_episode(path: &Path) -> EpisodeInfo {
     let mut title = rest[..cut].to_string();
     title = RE_TAGS.replace_all(&title, " ").to_string();
     title = RE_SPECIAL.replace_all(&title, " ").to_string();
-    let title = title.trim_matches(|c: char| c.is_whitespace() || "-–_.·|".contains(c)).split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = title
+        .trim_matches(|c: char| c.is_whitespace() || "-–_.·|".contains(c))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     info.title = if title.is_empty() {
         // 文件名里没有名字时用所在文件夹名（去掉 Season 字样）
         let parent = path.parent().and_then(|p| {

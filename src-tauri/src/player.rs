@@ -64,7 +64,11 @@ fn audio(app: &AppHandle) -> R<Arc<Mpv>> {
             let ev = mpv.clone();
             let app2 = app.clone();
             std::thread::spawn(move || {
-                let mut s = MpvState { paused: true, idle: true, ..Default::default() };
+                let mut s = MpvState {
+                    paused: true,
+                    idle: true,
+                    ..Default::default()
+                };
                 let mut last = std::time::Instant::now();
                 loop {
                     match ev.wait_event(0.25) {
@@ -163,7 +167,10 @@ pub fn mpv_play_video(app: AppHandle, st: State<AppState>, id: i64, start: Optio
     if let Some(a) = AUDIO.get() {
         let _ = a.set_property("pause", true);
     }
-    let title = std::path::Path::new(&path).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let title = std::path::Path::new(&path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
     std::thread::spawn(move || {
         let run = || -> Result<(f64, f64), String> {
             let mpv = Mpv::with_initializer(|i| {
@@ -192,8 +199,16 @@ pub fn mpv_play_video(app: AppHandle, st: State<AppState>, id: i64, start: Optio
             let (mut t, mut d) = (0.0, 0.0);
             loop {
                 match mpv.wait_event(1.0) {
-                    Some(Ok(Event::PropertyChange { name: "time-pos", change: PropertyData::Double(v), .. })) => t = v,
-                    Some(Ok(Event::PropertyChange { name: "duration", change: PropertyData::Double(v), .. })) => d = v,
+                    Some(Ok(Event::PropertyChange {
+                        name: "time-pos",
+                        change: PropertyData::Double(v),
+                        ..
+                    })) => t = v,
+                    Some(Ok(Event::PropertyChange {
+                        name: "duration",
+                        change: PropertyData::Double(v),
+                        ..
+                    })) => d = v,
                     Some(Ok(Event::Shutdown)) => break,
                     _ => {}
                 }

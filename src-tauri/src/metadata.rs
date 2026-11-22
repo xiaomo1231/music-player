@@ -64,7 +64,12 @@ pub fn read_track(path: &Path, cover_dir: &Path) -> TrackMeta {
             m.track_no = tag.track();
             m.disc_no = tag.disk();
             m.year = tag.date().map(|d| d.year as u32);
-            if let Some(pic) = tag.pictures().iter().find(|p| p.pic_type() == lofty::picture::PictureType::CoverFront).or(tag.pictures().first()) {
+            if let Some(pic) = tag
+                .pictures()
+                .iter()
+                .find(|p| p.pic_type() == lofty::picture::PictureType::CoverFront)
+                .or(tag.pictures().first())
+            {
                 if let Some((name, hue)) = save_cover(pic.data(), cover_dir) {
                     m.cover = Some(name);
                     m.hue = Some(hue);
@@ -220,7 +225,11 @@ pub fn parse_lrc(text: &str) -> Vec<LyricLine> {
             plain = line.to_string();
         }
         for t in stamps {
-            out.push(LyricLine { t: (t - offset).max(0.0), text: plain.trim().to_string(), words: words.clone() });
+            out.push(LyricLine {
+                t: (t - offset).max(0.0),
+                text: plain.trim().to_string(),
+                words: words.clone(),
+            });
         }
     }
     out.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
@@ -250,7 +259,15 @@ pub fn lyrics_for(path: &Path) -> Vec<LyricLine> {
                     return l;
                 }
                 // 没有时间轴的纯文本歌词
-                return t.lines().filter(|s| !s.trim().is_empty()).map(|s| LyricLine { t: -1.0, text: s.trim().into(), words: vec![] }).collect();
+                return t
+                    .lines()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| LyricLine {
+                        t: -1.0,
+                        text: s.trim().into(),
+                        words: vec![],
+                    })
+                    .collect();
             }
         }
     }

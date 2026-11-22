@@ -8,9 +8,7 @@ const SCHEMA_VERSION: i64 = 1;
 pub fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
     conn.busy_timeout(std::time::Duration::from_secs(10))?;
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY;",
-    )?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY;")?;
     migrate(&conn)?;
     Ok(conn)
 }
@@ -225,9 +223,7 @@ mod tests {
     #[test]
     fn schema_creates() {
         let c = super::open_memory().unwrap();
-        let n: i64 = c
-            .query_row("SELECT count(*) FROM sqlite_master WHERE type='table'", [], |r| r.get(0))
-            .unwrap();
+        let n: i64 = c.query_row("SELECT count(*) FROM sqlite_master WHERE type='table'", [], |r| r.get(0)).unwrap();
         assert!(n > 10);
     }
 }

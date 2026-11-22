@@ -181,7 +181,9 @@ pub fn series(conn: &Connection, kind: &str) -> Result<Vec<Series>> {
 }
 
 pub fn ep_label(season: Option<i64>, ep: Option<f64>) -> String {
-    let e = ep.map(|e| if e.fract() == 0.0 { format!("{:02}", e as i64) } else { format!("{e}") }).unwrap_or_else(|| "?".into());
+    let e = ep
+        .map(|e| if e.fract() == 0.0 { format!("{:02}", e as i64) } else { format!("{e}") })
+        .unwrap_or_else(|| "?".into());
     match season {
         Some(0) => format!("特别篇 {e}"),
         Some(s) => format!("S{s:02}E{e}"),
@@ -325,7 +327,11 @@ pub fn comics(conn: &Connection) -> Result<Vec<ComicItem>> {
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
-    v.sort_by(|a, b| a.series.cmp(&b.series).then_with(|| crate::comic::natural_key(&a.title).cmp(&crate::comic::natural_key(&b.title))));
+    v.sort_by(|a, b| {
+        a.series
+            .cmp(&b.series)
+            .then_with(|| crate::comic::natural_key(&a.title).cmp(&crate::comic::natural_key(&b.title)))
+    });
     Ok(v)
 }
 
@@ -353,7 +359,10 @@ pub fn record_play(conn: &Connection, id: i64, listened: f64, duration: f64, sou
         params![id, db::now(), listened, duration, skipped as i64, source],
     )?;
     if full {
-        conn.execute("UPDATE tracks SET play_count=play_count+1, last_played=?1 WHERE file_id=?2", params![db::now(), id])?;
+        conn.execute(
+            "UPDATE tracks SET play_count=play_count+1, last_played=?1 WHERE file_id=?2",
+            params![db::now(), id],
+        )?;
     } else if skipped {
         conn.execute("UPDATE tracks SET skip_count=skip_count+1 WHERE file_id=?1", [id])?;
     }
@@ -373,7 +382,14 @@ pub struct Playlist {
 pub fn playlists(conn: &Connection) -> Result<Vec<Playlist>> {
     let mut st = conn.prepare("SELECT p.id,p.name,(SELECT count(*) FROM playlist_items i WHERE i.playlist_id=p.id) FROM playlists p ORDER BY p.sort, p.id")?;
     let mut v: Vec<Playlist> = st
-        .query_map([], |r| Ok(Playlist { id: r.get(0)?, name: r.get(1)?, count: r.get(2)?, covers: vec![] }))?
+        .query_map([], |r| {
+            Ok(Playlist {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                count: r.get(2)?,
+                covers: vec![],
+            })
+        })?
         .collect::<rusqlite::Result<_>>()?;
     for p in &mut v {
         p.covers = conn
@@ -405,7 +421,10 @@ pub fn playlist_add(conn: &Connection, id: i64, files: &[i64]) -> Result<usize> 
     let mut n = 0;
     for f in files {
         pos += 1;
-        n += conn.execute("INSERT OR IGNORE INTO playlist_items(playlist_id,file_id,pos) VALUES(?1,?2,?3)", params![id, f, pos])?;
+        n += conn.execute(
+            "INSERT OR IGNORE INTO playlist_items(playlist_id,file_id,pos) VALUES(?1,?2,?3)",
+            params![id, f, pos],
+        )?;
     }
     Ok(n)
 }
@@ -499,9 +518,11 @@ pub fn search(conn: &Connection, q: &str, limit: i64) -> Result<Vec<Hit>> {
         // trigram 至少要三个字，短关键词用 LIKE
         let like = format!("%{}%", q.replace(['%', '_'], ""));
         let ini = format!("{}%", q.to_lowercase());
-        conn.prepare("SELECT file_id,kind,title,sub FROM search_idx WHERE title LIKE ?1 OR sub LIKE ?1 OR initials LIKE ?2 OR initials LIKE '% ' || ?2 LIMIT ?3")?
-            .query_map(params![like, ini, limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-            .collect::<rusqlite::Result<_>>()?
+        conn.prepare(
+            "SELECT file_id,kind,title,sub FROM search_idx WHERE title LIKE ?1 OR sub LIKE ?1 OR initials LIKE ?2 OR initials LIKE '% ' || ?2 LIMIT ?3",
+        )?
+        .query_map(params![like, ini, limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<rusqlite::Result<_>>()?
     };
     let mut out = vec![];
     let mut seen_series = std::collections::HashSet::new();
@@ -511,10 +532,24 @@ pub fn search(conn: &Connection, q: &str, limit: i64) -> Result<Vec<Hit>> {
             continue;
         }
         let (cover, series_id) = match kind.as_str() {
-            "music" => (conn.query_row("SELECT cover FROM tracks WHERE file_id=?1", [id], |r| r.get(0)).ok().flatten(), None),
-            "novel" => (conn.query_row("SELECT cover FROM books WHERE file_id=?1", [id], |r| r.get(0)).ok().flatten(), None),
-            "manga" => (conn.query_row("SELECT cover FROM comics WHERE file_id=?1", [id], |r| r.get(0)).ok().flatten(), None),
-            _ => (None, conn.query_row("SELECT series_id FROM videos WHERE file_id=?1", [id], |r| r.get(0)).ok().flatten()),
+            "music" => (
+                conn.query_row("SELECT cover FROM tracks WHERE file_id=?1", [id], |r| r.get(0)).ok().flatten(),
+                None,
+            ),
+            "novel" => (
+                conn.query_row("SELECT cover FROM books WHERE file_id=?1", [id], |r| r.get(0)).ok().flatten(),
+                None,
+            ),
+            "manga" => (
+                conn.query_row("SELECT cover FROM comics WHERE file_id=?1", [id], |r| r.get(0)).ok().flatten(),
+                None,
+            ),
+            _ => (
+                None,
+                conn.query_row("SELECT series_id FROM videos WHERE file_id=?1", [id], |r| r.get(0))
+                    .ok()
+                    .flatten(),
+            ),
         };
         // 同一部番剧只出一条
         if let Some(s) = series_id {
@@ -522,7 +557,14 @@ pub fn search(conn: &Connection, q: &str, limit: i64) -> Result<Vec<Hit>> {
                 continue;
             }
         }
-        out.push(Hit { id, kind, title, sub, cover, series_id });
+        out.push(Hit {
+            id,
+            kind,
+            title,
+            sub,
+            cover,
+            series_id,
+        });
     }
     Ok(out)
 }
@@ -535,7 +577,10 @@ pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<serde_json::Va
 }
 
 pub fn set_setting(conn: &Connection, key: &str, value: &serde_json::Value) -> Result<()> {
-    conn.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, value.to_string()])?;
+    conn.execute(
+        "INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![key, value.to_string()],
+    )?;
     Ok(())
 }
 
@@ -549,12 +594,21 @@ pub struct Root {
 pub fn roots(conn: &Connection) -> Result<Vec<Root>> {
     Ok(conn
         .prepare("SELECT id,path,watch FROM scan_roots ORDER BY path")?
-        .query_map([], |r| Ok(Root { id: r.get(0)?, path: r.get(1)?, watch: r.get::<_, i64>(2)? != 0 }))?
+        .query_map([], |r| {
+            Ok(Root {
+                id: r.get(0)?,
+                path: r.get(1)?,
+                watch: r.get::<_, i64>(2)? != 0,
+            })
+        })?
         .collect::<rusqlite::Result<_>>()?)
 }
 
 pub fn add_root(conn: &Connection, path: &str, watch: bool) -> Result<()> {
-    conn.execute("INSERT INTO scan_roots(path,watch) VALUES(?1,?2) ON CONFLICT(path) DO UPDATE SET watch=excluded.watch", params![path, watch as i64])?;
+    conn.execute(
+        "INSERT INTO scan_roots(path,watch) VALUES(?1,?2) ON CONFLICT(path) DO UPDATE SET watch=excluded.watch",
+        params![path, watch as i64],
+    )?;
     Ok(())
 }
 
@@ -573,8 +627,17 @@ pub struct Stats {
 }
 
 pub fn stats(conn: &Connection) -> Result<Stats> {
-    let c = |k: &str| conn.query_row("SELECT count(*) FROM files WHERE kind=?1 AND missing=0", [k], |r| r.get::<_, i64>(0)).unwrap_or(0);
-    Ok(Stats { music: c("music"), video: c("video"), anime: c("anime"), manga: c("manga"), novel: c("novel") })
+    let c = |k: &str| {
+        conn.query_row("SELECT count(*) FROM files WHERE kind=?1 AND missing=0", [k], |r| r.get::<_, i64>(0))
+            .unwrap_or(0)
+    };
+    Ok(Stats {
+        music: c("music"),
+        video: c("video"),
+        anime: c("anime"),
+        manga: c("manga"),
+        novel: c("novel"),
+    })
 }
 
 #[cfg(test)]
@@ -582,10 +645,19 @@ mod tests {
     use super::*;
 
     fn seed(conn: &Connection) -> i64 {
-        conn.execute("INSERT INTO files(path,kind,size,mtime,added_at) VALUES('C:\\a.flac','music',1,1,1)", []).unwrap();
+        conn.execute("INSERT INTO files(path,kind,size,mtime,added_at) VALUES('C:\\a.flac','music',1,1,1)", [])
+            .unwrap();
         let id = conn.last_insert_rowid();
-        conn.execute("INSERT INTO tracks(file_id,title,artist,album,duration,format,lossless) VALUES(?1,'雾港','林间信号','潮汐档案',200,'FLAC',1)", [id]).unwrap();
-        conn.execute("INSERT INTO search_idx(file_id,kind,title,sub,initials) VALUES(?1,'music','雾港','林间信号 潮汐档案','wg ljxh cxda')", [id]).unwrap();
+        conn.execute(
+            "INSERT INTO tracks(file_id,title,artist,album,duration,format,lossless) VALUES(?1,'雾港','林间信号','潮汐档案',200,'FLAC',1)",
+            [id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO search_idx(file_id,kind,title,sub,initials) VALUES(?1,'music','雾港','林间信号 潮汐档案','wg ljxh cxda')",
+            [id],
+        )
+        .unwrap();
         id
     }
 

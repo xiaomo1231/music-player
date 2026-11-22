@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop, clippy::too_many_arguments)]
+
 pub mod adclean;
 pub mod ai;
 pub mod comic;
@@ -115,6 +117,10 @@ fn comic_protocol(app: &tauri::AppHandle, req: &tauri::http::Request<Vec<u8>>) -
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例必须第一个注册
+        .plugin(tauri_plugin_single_instance::init(shell::on_second_instance))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::Builder::new().args(["--minimized"]).build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .register_uri_scheme_protocol("mpc", |ctx, req| comic_protocol(ctx.app_handle(), &req))
@@ -179,7 +185,99 @@ pub fn run() {
             player::mpv_eq,
             player::mpv_set_option,
             player::mpv_play_video,
-            // ↓ 各功能模块的命令（集成时加在这里）
+            // 各功能模块
+            media::media_probe,
+            media::media_thumb,
+            media::media_thumb_dir,
+            media::media_subtitles,
+            media::media_sub_vtt,
+            media::media_save_screenshot,
+            adclean::adclean_scan,
+            adclean::adclean_find_similar,
+            adclean::adclean_estimate,
+            adclean::adclean_ai_rules,
+            adclean::adclean_apply,
+            adclean::adclean_revert,
+            adclean::adclean_list,
+            adclean::adclean_rules,
+            adclean::adclean_rule_set_enabled,
+            adclean::adclean_rule_delete,
+            adclean::adclean_rules_export,
+            adclean::adclean_rules_import,
+            adclean::adclean_export_clean,
+            convert::convert_presets,
+            convert::convert_hw,
+            convert::convert_get_settings,
+            convert::convert_set_settings,
+            convert::convert_set_plugin,
+            convert::convert_add,
+            convert::convert_list,
+            convert::convert_cancel,
+            convert::convert_clear_done,
+            convert::convert_retry,
+            convert::convert_undo,
+            convert::convert_expand,
+            subtitle::sub_list_videos,
+            subtitle::sub_start,
+            subtitle::sub_batch,
+            subtitle::sub_cancel,
+            subtitle::sub_status,
+            subtitle::sub_result,
+            subtitle::sub_save,
+            subtitle::sub_estimate,
+            subtitle::sub_realign,
+            daily::daily_get,
+            daily::daily_regenerate,
+            daily::daily_feedback,
+            daily::daily_history,
+            daily::daily_save_playlist,
+            daily::daily_ai_enhance,
+            organize::org_scan,
+            organize::org_estimate,
+            organize::org_ai_identify,
+            organize::org_execute,
+            organize::org_undo,
+            organize::org_batches,
+            fetch::fetch_sources,
+            fetch::fetch_add_source,
+            fetch::fetch_remove_source,
+            fetch::fetch_rebuild_rule,
+            fetch::fetch_search,
+            fetch::fetch_ai_pick,
+            fetch::fetch_download,
+            fetch::fetch_tasks,
+            fetch::fetch_pause,
+            fetch::fetch_resume,
+            fetch::fetch_cancel,
+            fetch::fetch_retry,
+            fetch::fetch_get_settings,
+            fetch::fetch_set_settings,
+            fetch::fetch_subscribe,
+            fetch::fetch_unsubscribe,
+            fetch::fetch_subs,
+            mangatr::mangatr_get,
+            mangatr::mangatr_translate_page,
+            mangatr::mangatr_translate_range,
+            mangatr::mangatr_cancel,
+            mangatr::mangatr_estimate,
+            mangatr::mangatr_update_block,
+            mangatr::mangatr_retranslate_block,
+            mangatr::mangatr_glossary_set,
+            mangatr::mangatr_export,
+            shell::shell_hotkeys,
+            shell::shell_set_hotkeys,
+            shell::shell_hotkeys_reset,
+            shell::shell_show_main,
+            shell::shell_tray_tooltip,
+            shell::shell_startup_files,
+            shell::shell_autostart_get,
+            shell::shell_autostart_set,
+            shell::shell_keep_awake,
+            shell::shell_wallpaper,
+            shell::shell_explorer_menu,
+            shell::shell_desktop_lyrics,
+            shell::shell_cache_size,
+            shell::shell_cache_clear,
         ])
         .run(tauri::generate_context!())
         .expect("启动失败");

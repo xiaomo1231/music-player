@@ -36,7 +36,11 @@ fn is_image(name: &str) -> bool {
 pub fn zip_pages(path: &Path) -> Result<Vec<String>> {
     let f = std::fs::File::open(path)?;
     let z = zip::ZipArchive::new(f)?;
-    let mut names: Vec<String> = z.file_names().filter(|n| is_image(n) && !n.starts_with("__MACOSX")).map(|s| s.to_string()).collect();
+    let mut names: Vec<String> = z
+        .file_names()
+        .filter(|n| is_image(n) && !n.starts_with("__MACOSX"))
+        .map(|s| s.to_string())
+        .collect();
     names.sort_by_key(|n| natural_key(n));
     Ok(names)
 }
@@ -72,15 +76,17 @@ pub fn pdf_page_count(path: &Path) -> i64 {
 }
 
 pub fn read_page(path: &Path, idx: usize) -> Result<(Vec<u8>, String)> {
-    let mime = |n: &str| match n.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
-        "png" => "image/png",
-        "webp" => "image/webp",
-        "gif" => "image/gif",
-        "bmp" => "image/bmp",
-        "avif" => "image/avif",
-        _ => "image/jpeg",
-    }
-    .to_string();
+    let mime = |n: &str| {
+        match n.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
+            "png" => "image/png",
+            "webp" => "image/webp",
+            "gif" => "image/gif",
+            "bmp" => "image/bmp",
+            "avif" => "image/avif",
+            _ => "image/jpeg",
+        }
+        .to_string()
+    };
     if path.is_dir() {
         let pages = folder_pages(path)?;
         let p = pages.get(idx).ok_or_else(|| anyhow!("没有第 {idx} 页"))?;
@@ -98,10 +104,16 @@ pub fn read_page(path: &Path, idx: usize) -> Result<(Vec<u8>, String)> {
 static RE_VOL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)(?:第\s*\d+\s*[卷话話册]|vol\.?\s*\d+|v\d+|\s\d{1,3}$)").unwrap());
 
 pub fn inspect(path: &Path, cover_dir: &Path) -> ComicInfo {
-    let stem = if path.is_dir() { path.file_name() } else { path.file_stem() }.map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let stem = if path.is_dir() { path.file_name() } else { path.file_stem() }
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
     let series = {
         let s = RE_VOL.replace_all(&stem, "").trim().to_string();
-        let parent = path.parent().and_then(|p| p.file_name()).map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let parent = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
         // 卷号文件放在作品文件夹里时，系列名用文件夹名
         if s.is_empty() || RE_VOL.is_match(&stem) && !parent.is_empty() && !["漫画", "comic", "comics", "manga"].contains(&parent.to_lowercase().as_str()) {
             parent
@@ -113,12 +125,22 @@ pub fn inspect(path: &Path, cover_dir: &Path) -> ComicInfo {
     let (pages, cover) = match format.as_str() {
         "pdf" => (pdf_page_count(path), None),
         _ => {
-            let n = if path.is_dir() { folder_pages(path).map(|v| v.len()).unwrap_or(0) } else { zip_pages(path).map(|v| v.len()).unwrap_or(0) };
+            let n = if path.is_dir() {
+                folder_pages(path).map(|v| v.len()).unwrap_or(0)
+            } else {
+                zip_pages(path).map(|v| v.len()).unwrap_or(0)
+            };
             let cover = read_page(path, 0).ok().and_then(|(b, _)| metadata::save_cover(&b, cover_dir)).map(|c| c.0);
             (n as i64, cover)
         }
     };
-    ComicInfo { title: stem, series, format, pages, cover }
+    ComicInfo {
+        title: stem,
+        series,
+        format,
+        pages,
+        cover,
+    }
 }
 
 #[cfg(test)]

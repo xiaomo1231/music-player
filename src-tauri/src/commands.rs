@@ -110,7 +110,9 @@ pub fn save_comic_progress(st: State<AppState>, id: i64, page: i64) -> R<()> {
 
 #[tauri::command]
 pub async fn lyrics(path: String) -> R<Vec<metadata::LyricLine>> {
-    tauri::async_runtime::spawn_blocking(move || metadata::lyrics_for(Path::new(&path))).await.map_err(e)
+    tauri::async_runtime::spawn_blocking(move || metadata::lyrics_for(Path::new(&path)))
+        .await
+        .map_err(e)
 }
 
 #[tauri::command]
@@ -184,8 +186,12 @@ pub fn get_setting(st: State<AppState>, key: String) -> R<Option<serde_json::Val
 }
 
 #[tauri::command]
-pub fn set_setting(st: State<AppState>, key: String, value: serde_json::Value) -> R<()> {
-    library::set_setting(&st.db.lock(), &key, &value).map_err(e)
+pub fn set_setting(app: AppHandle, st: State<AppState>, key: String, value: serde_json::Value) -> R<()> {
+    library::set_setting(&st.db.lock(), &key, &value).map_err(e)?;
+    if key == "watch" {
+        restart_watcher(&app);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -214,14 +220,22 @@ pub fn list_drives() -> Vec<scanner::Drive> {
 
 pub fn restart_watcher(app: &AppHandle) {
     let st = app.state::<AppState>();
-    let enabled = library::get_setting(&st.db.lock(), "watch").ok().flatten().and_then(|v| v.as_bool()).unwrap_or(true);
+    let enabled = library::get_setting(&st.db.lock(), "watch")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     let roots: Vec<PathBuf> = library::roots(&st.db.lock())
         .unwrap_or_default()
         .into_iter()
         .filter(|r| r.watch)
         .map(|r| PathBuf::from(r.path))
         .collect();
-    let w = if enabled { scanner::start_watch(app.clone(), st.db_path.clone(), st.dirs.clone(), roots).ok() } else { None };
+    let w = if enabled {
+        scanner::start_watch(app.clone(), st.db_path.clone(), st.dirs.clone(), roots).ok()
+    } else {
+        None
+    };
     *st.watcher.lock() = w;
 }
 

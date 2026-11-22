@@ -26,6 +26,9 @@ jobs:
         run: pnpm check
       - name: 前端构建
         run: pnpm build
+      - name: Rust 格式
+        working-directory: src-tauri
+        run: cargo fmt --check
       - name: Rust 单元测试
         working-directory: src-tauri
         run: cargo test --lib

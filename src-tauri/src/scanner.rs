@@ -11,8 +11,22 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 const SKIP_DIRS: &[&str] = &[
-    "windows", "program files", "program files (x86)", "programdata", "$recycle.bin", "system volume information",
-    "node_modules", ".git", "appdata", "steamapps", "epic games", "wpsystem", "windowsapps", "msocache", "$windows.~bt", "recovery",
+    "windows",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "$recycle.bin",
+    "system volume information",
+    "node_modules",
+    ".git",
+    "appdata",
+    "steamapps",
+    "epic games",
+    "wpsystem",
+    "windowsapps",
+    "msocache",
+    "$windows.~bt",
+    "recovery",
 ];
 
 pub fn skip_dir(name: &str) -> bool {
@@ -52,13 +66,16 @@ pub struct ScanState {
 
 /// 枚举一个根目录下所有媒体文件（只看扩展名，不打开文件）
 pub fn enumerate(root: &Path, cancel: &AtomicBool, mut on: impl FnMut(&Path, &'static str)) {
-    let walker = jwalk::WalkDir::new(root).skip_hidden(false).follow_links(false).process_read_dir(|_, _, _, children| {
-        children.retain(|e| match e {
-            Ok(e) if e.file_type().is_dir() => !skip_dir(&e.file_name().to_string_lossy()),
-            Ok(_) => true,
-            Err(_) => false,
+    let walker = jwalk::WalkDir::new(root)
+        .skip_hidden(false)
+        .follow_links(false)
+        .process_read_dir(|_, _, _, children| {
+            children.retain(|e| match e {
+                Ok(e) if e.file_type().is_dir() => !skip_dir(&e.file_name().to_string_lossy()),
+                Ok(_) => true,
+                Err(_) => false,
+            });
         });
-    });
     for e in walker.into_iter().flatten() {
         if cancel.load(Ordering::Relaxed) {
             return;
@@ -79,7 +96,10 @@ pub fn enumerate(root: &Path, cancel: &AtomicBool, mut on: impl FnMut(&Path, &'s
 
 pub fn run_scan(app: AppHandle, db_path: PathBuf, dirs: Arc<Dirs>, roots: Vec<PathBuf>, state: Arc<ScanState>) -> Result<Progress> {
     let conn = db::open(&db_path)?;
-    let mut pr = Progress { phase: "enum".into(), ..Default::default() };
+    let mut pr = Progress {
+        phase: "enum".into(),
+        ..Default::default()
+    };
     let mut items: Vec<(PathBuf, &'static str)> = vec![];
     let mut last_emit = std::time::Instant::now();
     for root in &roots {
@@ -108,7 +128,8 @@ pub fn run_scan(app: AppHandle, db_path: PathBuf, dirs: Arc<Dirs>, roots: Vec<Pa
             match indexer::index_file(&conn, p, k, &dirs) {
                 Ok(Outcome::Added) => {
                     pr.added += 1;
-                    pr.recent.insert(0, (k.to_string(), p.file_name().unwrap_or_default().to_string_lossy().to_string()));
+                    pr.recent
+                        .insert(0, (k.to_string(), p.file_name().unwrap_or_default().to_string_lossy().to_string()));
                     pr.recent.truncate(8);
                 }
                 Ok(Outcome::Updated) => pr.updated += 1,
@@ -231,7 +252,12 @@ pub fn drives() -> Vec<Drive> {
             continue;
         }
         let (total, free) = disk_space(&root).unwrap_or((0, 0));
-        v.push(Drive { label: volume_label(&root).unwrap_or_default(), root, total, free });
+        v.push(Drive {
+            label: volume_label(&root).unwrap_or_default(),
+            root,
+            total,
+            free,
+        });
     }
     v
 }
@@ -262,7 +288,18 @@ fn volume_label(root: &str) -> Option<String> {
     }
     let w = wide(root);
     let mut buf = [0u16; 261];
-    let ok = unsafe { GetVolumeInformationW(w.as_ptr(), buf.as_mut_ptr(), 261, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0) };
+    let ok = unsafe {
+        GetVolumeInformationW(
+            w.as_ptr(),
+            buf.as_mut_ptr(),
+            261,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        )
+    };
     if ok == 0 {
         return None;
     }

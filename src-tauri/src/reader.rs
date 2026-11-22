@@ -60,7 +60,10 @@ pub fn merge_broken_lines(lines: Vec<String>) -> Vec<String> {
             let end = prev.chars().last().unwrap_or('。');
             // 上一行没有句末标点且很短的续行，合并
             let ends_sentence = "。！？!?…”」』\"'）)】:：".contains(end);
-            if !ends_sentence && !RE_CHAPTER.is_match(prev) && !RE_CHAPTER.is_match(&t) && prev.chars().count() < 200 {
+            // 下一行有段首缩进、或以引号开头，就是新段落，不合并
+            let indented = l.starts_with([' ', '\u{3000}', '\t']);
+            let opens_quote = t.starts_with(['“', '「', '『', '"', '（', '(']);
+            if !ends_sentence && !indented && !opens_quote && !RE_CHAPTER.is_match(prev) && !RE_CHAPTER.is_match(&t) && prev.chars().count() < 200 {
                 prev.push_str(&t);
                 continue;
             }
@@ -72,7 +75,10 @@ pub fn merge_broken_lines(lines: Vec<String>) -> Vec<String> {
 
 pub fn split_txt(text: &str) -> Vec<Chapter> {
     let mut chapters: Vec<Chapter> = vec![];
-    let mut cur = Chapter { title: "开始".into(), paras: vec![] };
+    let mut cur = Chapter {
+        title: "开始".into(),
+        paras: vec![],
+    };
     let mut buf: Vec<String> = vec![];
     for line in text.lines() {
         if RE_CHAPTER.is_match(line) && line.trim().chars().count() <= 40 {
@@ -80,7 +86,10 @@ pub fn split_txt(text: &str) -> Vec<Chapter> {
             if !cur.paras.is_empty() || !chapters.is_empty() {
                 chapters.push(cur);
             }
-            cur = Chapter { title: line.trim().to_string(), paras: vec![] };
+            cur = Chapter {
+                title: line.trim().to_string(),
+                paras: vec![],
+            };
         } else {
             buf.push(line.to_string());
         }
@@ -94,14 +103,23 @@ pub fn split_txt(text: &str) -> Vec<Chapter> {
     if chapters.len() == 1 && chapters[0].paras.iter().map(|p| p.len()).sum::<usize>() > 30000 {
         let all = std::mem::take(&mut chapters[0].paras);
         chapters.clear();
-        let mut c = Chapter { title: "第 1 部分".into(), paras: vec![] };
+        let mut c = Chapter {
+            title: "第 1 部分".into(),
+            paras: vec![],
+        };
         let mut n = 0usize;
         for p in all {
             n += p.chars().count();
             c.paras.push(p);
             if n > 3000 {
                 let k = chapters.len() + 2;
-                chapters.push(std::mem::replace(&mut c, Chapter { title: format!("第 {k} 部分"), paras: vec![] }));
+                chapters.push(std::mem::replace(
+                    &mut c,
+                    Chapter {
+                        title: format!("第 {k} 部分"),
+                        paras: vec![],
+                    },
+                ));
                 n = 0;
             }
         }
@@ -117,7 +135,12 @@ pub fn open_txt(path: &Path) -> Result<Book> {
     let (text, enc) = decode_text(&bytes);
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
     let (title, author) = split_title_author(&stem);
-    Ok(Book { title, author, encoding: enc.into(), chapters: split_txt(&text) })
+    Ok(Book {
+        title,
+        author,
+        encoding: enc.into(),
+        chapters: split_txt(&text),
+    })
 }
 
 /// 《书名》作者：xxx / 书名 - 作者
@@ -138,7 +161,13 @@ static RE_HEAD: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<(script|style|head
 static RE_H: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<h[1-3][^>]*>(.*?)</h[1-3]>").unwrap());
 
 pub fn unescape(s: &str) -> String {
-    s.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'").replace("&amp;", "&")
+    s.replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 fn html_to_paras(html: &str) -> (Option<String>, Vec<String>) {
@@ -185,10 +214,13 @@ pub fn open_epub(path: &Path) -> Result<Book> {
     let f = std::fs::File::open(path)?;
     let mut z = zip::ZipArchive::new(f)?;
     let container = zip_read(&mut z, "META-INF/container.xml")?;
-    let opf_path = container.find("full-path=\"").and_then(|i| {
-        let s = &container[i + 11..];
-        s.find('"').map(|j| s[..j].to_string())
-    }).ok_or_else(|| anyhow!("EPUB 缺少 OPF"))?;
+    let opf_path = container
+        .find("full-path=\"")
+        .and_then(|i| {
+            let s = &container[i + 11..];
+            s.find('"').map(|j| s[..j].to_string())
+        })
+        .ok_or_else(|| anyhow!("EPUB 缺少 OPF"))?;
     let opf = zip_read(&mut z, &opf_path)?;
     static RE_ITEM: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)<(?:opf:)?item\s[^>]*>").unwrap());
     static RE_REF: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)<(?:opf:)?itemref\s[^>]*>").unwrap());
@@ -212,9 +244,17 @@ pub fn open_epub(path: &Path) -> Result<Book> {
         let title = h.unwrap_or_else(|| paras[0].chars().take(30).collect());
         chapters.push(Chapter { title, paras });
     }
-    let title = RE_TITLE.captures(&opf).map(|c| unescape(c[1].trim())).unwrap_or_else(|| path.file_stem().unwrap().to_string_lossy().into());
+    let title = RE_TITLE
+        .captures(&opf)
+        .map(|c| unescape(c[1].trim()))
+        .unwrap_or_else(|| path.file_stem().unwrap().to_string_lossy().into());
     let author = RE_CREATOR.captures(&opf).map(|c| unescape(c[1].trim())).unwrap_or_default();
-    Ok(Book { title, author, encoding: "UTF-8".into(), chapters })
+    Ok(Book {
+        title,
+        author,
+        encoding: "UTF-8".into(),
+        chapters,
+    })
 }
 
 /// EPUB 封面图片字节
@@ -257,6 +297,17 @@ mod tests {
         assert_eq!(c.len(), 3);
         assert_eq!(c[1].title, "第一章 开始");
         assert_eq!(c[1].paras, vec!["他走了进来。"]);
+    }
+
+    #[test]
+    fn indented_lines_not_merged() {
+        let v = merge_broken_lines(vec![
+            "本书首发网址".into(),
+            "\u{3000}\u{3000}“没有。”他说".into(),
+            "\u{3000}\u{3000}他走了".into(),
+            "进来。".into(),
+        ]);
+        assert_eq!(v, vec!["本书首发网址", "“没有。”他说", "他走了进来。"]);
     }
 
     #[test]

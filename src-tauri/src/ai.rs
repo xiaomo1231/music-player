@@ -49,11 +49,19 @@ pub struct Usage {
 }
 
 pub fn load_config(conn: &rusqlite::Connection) -> AiConfig {
-    library::get_setting(conn, "ai").ok().flatten().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+    library::get_setting(conn, "ai")
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
 }
 
 pub fn api_key() -> Option<String> {
-    keyring::Entry::new(KEYRING_SERVICE, "default").ok()?.get_password().ok().filter(|s| !s.is_empty())
+    keyring::Entry::new(KEYRING_SERVICE, "default")
+        .ok()?
+        .get_password()
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 pub fn set_api_key(key: &str) -> Result<()> {
@@ -89,9 +97,16 @@ fn this_month() -> String {
 }
 
 pub fn usage(conn: &rusqlite::Connection) -> Usage {
-    let u: Usage = library::get_setting(conn, "ai_usage").ok().flatten().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+    let u: Usage = library::get_setting(conn, "ai_usage")
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
     if u.month != this_month() {
-        Usage { month: this_month(), ..Default::default() }
+        Usage {
+            month: this_month(),
+            ..Default::default()
+        }
     } else {
         u
     }
@@ -120,7 +135,10 @@ pub fn ready(app: &AppHandle) -> Result<(AiConfig, String)> {
 }
 
 fn client() -> reqwest::Client {
-    reqwest::Client::builder().timeout(std::time::Duration::from_secs(300)).build().unwrap_or_default()
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .unwrap_or_default()
 }
 
 fn endpoint(cfg: &AiConfig, path: &str) -> String {
@@ -136,10 +154,16 @@ pub struct Msg {
 
 impl Msg {
     pub fn system(s: &str) -> Self {
-        Msg { role: "system".into(), content: json!(s) }
+        Msg {
+            role: "system".into(),
+            content: json!(s),
+        }
     }
     pub fn user(s: &str) -> Self {
-        Msg { role: "user".into(), content: json!(s) }
+        Msg {
+            role: "user".into(),
+            content: json!(s),
+        }
     }
     /// 一段文字 + 一张图片（jpeg / png 字节）
     pub fn user_image(text: &str, image: &[u8], mime: &str) -> Self {
@@ -287,7 +311,11 @@ pub struct AiState {
 #[tauri::command]
 pub fn ai_get_config(st: State<AppState>) -> AiState {
     let conn = st.db.lock();
-    AiState { config: load_config(&conn), has_key: api_key().is_some(), usage: usage(&conn) }
+    AiState {
+        config: load_config(&conn),
+        has_key: api_key().is_some(),
+        usage: usage(&conn),
+    }
 }
 
 /// key 为 None 时保留原密钥；空字符串表示删除
@@ -303,7 +331,9 @@ pub fn ai_save_config(st: State<AppState>, config: AiConfig, key: Option<String>
 /// 测试连接：让文本模型回一句话
 #[tauri::command]
 pub async fn ai_test(app: AppHandle) -> Result<String, String> {
-    chat_simple(&app, "你是连接测试助手。", "只回复“连接正常”四个字。", false).await.map_err(|e| e.to_string())
+    chat_simple(&app, "你是连接测试助手。", "只回复“连接正常”四个字。", false)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

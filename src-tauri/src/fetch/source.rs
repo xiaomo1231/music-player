@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub const LOGIN_MSG: &str = "需要登录或验证码：请在浏览器里打开这个网站，自己完成登录或验证后再来搜索。软件不会绕过登录或验证码。";
-pub const YTDLP_MISSING: &str = "没有找到 yt-dlp.exe。请把 yt-dlp.exe 放到程序目录的 bin 文件夹，或加入系统 PATH 后重试。";
+pub const YTDLP_MISSING: &str = "没有找到 yt-dlp.exe。请在“自动获取 → B 站”里点“安装 yt-dlp”，或把 yt-dlp.exe 放到程序目录的 bin 文件夹 / 系统 PATH 后重试。";
 const USER_AGENT: &str = "MediaPlayerFetch/1.0";
 const ONE_SEC: Duration = Duration::from_secs(1);
 const PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><getcontentlength/><resourcetype/></prop></propfind>"#;
@@ -158,6 +158,10 @@ pub fn kind_of_url(url: &str) -> &'static str {
     }
     if is_local_path(url) {
         return "file";
+    }
+    // B 站页面不是直链，交给 yt-dlp
+    if super::bili::is_bili_url(url) {
+        return "ytdlp";
     }
     "http"
 }

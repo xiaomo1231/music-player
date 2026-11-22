@@ -52,4 +52,6 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 scraper = "0.24"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+sha2 = "0.10"
 librqbit = { version = "9", default-features = false, features = ["default-tls"] }

@@ -1,5 +1,5 @@
 //! 视频信息、缩略图、字幕提取（ffprobe / ffmpeg）
-use crate::{library, reader, tools, AppState};
+use crate::{danmaku, library, reader, tools, AppState};
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use rusqlite::params;
@@ -216,7 +216,7 @@ pub struct SubItem {
 pub fn external_sub_tag(video_stem: &str, file_name: &str) -> Option<(String, String)> {
     let p = Path::new(file_name);
     let ext = p.extension()?.to_str()?.to_ascii_lowercase();
-    if !matches!(ext.as_str(), "srt" | "ass" | "ssa" | "vtt") {
+    if !matches!(ext.as_str(), "srt" | "ass" | "ssa" | "vtt") || crate::danmaku::is_danmaku_name(file_name) {
         return None;
     }
     let stem = p.file_stem()?.to_str()?;
@@ -285,6 +285,17 @@ pub async fn media_subtitles(st: State<'_, AppState>, id: i64) -> Result<Vec<Sub
             }
         }
         Ok(out)
+    })
+    .await
+}
+
+/// 视频旁边的弹幕（`<视频名>.danmaku.ass`），没有就返回空列表
+#[tauri::command]
+pub async fn media_danmaku(st: State<'_, AppState>, id: i64) -> Result<Vec<danmaku::Item>, String> {
+    let path = path_of(&st, id)?;
+    blocking(move || {
+        let Some(p) = danmaku::sidecar(Path::new(&path)) else { return Ok(vec![]) };
+        Ok(danmaku::parse_ass(&read_text(&p)?))
     })
     .await
 }
@@ -409,6 +420,8 @@ mod tests {
         // 视频本身或其他扩展名不算字幕
         assert_eq!(external_sub_tag("Show - 01", "Show - 01.mkv"), None);
         assert_eq!(external_sub_tag("Show - 01", "Other.srt"), None);
+        // 弹幕文件不出现在字幕列表里（播放器单独绘制）
+        assert_eq!(external_sub_tag("Show - 01", "Show - 01.danmaku.ass"), None);
     }
 
     #[test]

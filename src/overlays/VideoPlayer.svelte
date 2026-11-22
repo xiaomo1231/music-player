@@ -5,6 +5,7 @@
   import { invoke, inTauri, fileUrl, type Video } from '../lib/api';
   import { clamp, fmtT, fmtSize, typing } from '../lib/util';
   import { parseVtt, pickSub, type Cue, type MediaInfo, type SubItem } from '../lib/media.svelte';
+  import Danmaku, { type DmItem } from '../components/media/Danmaku.svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { engine } from '../lib/engine.svelte';
   import { toast } from '../lib/ui.svelte';
@@ -14,6 +15,13 @@
   const SKIP = 85; // Ctrl + → 跳过片头的秒数
   const VOL_KEY = 'mp.videoVol';
 
+  function loadDmOn(): boolean {
+    try {
+      return localStorage.getItem('mp.video.danmaku') !== '0';
+    } catch {
+      return true;
+    }
+  }
   const loadVol = () => {
     try {
       const v = Number(localStorage.getItem(VOL_KEY));
@@ -43,6 +51,10 @@
   let subOffset = $state(0); // 正数 = 字幕提前显示
   let subScale = $state(1);
   let cues = $state<Cue[]>([]);
+  // 弹幕（视频旁边有 .danmaku.ass 时才有），开关记在本机
+  const DM_KEY = 'mp.video.danmaku';
+  let dm = $state<DmItem[]>([]);
+  let dmOn = $state(loadDmOn());
   let idle = $state(false);
   let helpOpen = $state(false);
   let infoOpen = $state(false);
@@ -265,6 +277,11 @@
         if (no === loadNo) info = r;
       })
       .catch(() => {});
+    invoke<DmItem[]>('media_danmaku', { id })
+      .then(list => {
+        if (no === loadNo) dm = list;
+      })
+      .catch(() => {});
     invoke<SubItem[]>('media_subtitles', { id })
       .then(list => {
         if (no !== loadNo) return;
@@ -284,6 +301,7 @@
     info = null;
     subs = [];
     cues = [];
+    dm = [];
     err = '';
     helpOpen = false;
     infoOpen = false;
@@ -402,6 +420,20 @@
         osdMsg('这条字幕无法显示（可能是图形字幕，如 PGS / VobSub）');
       }
     }
+  }
+
+  function toggleDanmaku() {
+    if (!dm.length) {
+      osdMsg('这个视频没有弹幕');
+      return;
+    }
+    dmOn = !dmOn;
+    try {
+      localStorage.setItem(DM_KEY, dmOn ? '1' : '0');
+    } catch {
+      // 存不了就只在本次生效
+    }
+    osdMsg(dmOn ? '弹幕：开' : '弹幕：关');
   }
 
   function cycleSub() {
@@ -707,6 +739,9 @@
       case 'c':
         cycleSub();
         break;
+      case 'd':
+        toggleDanmaku();
+        break;
       case 'v':
         subVisible = !subVisible;
         osdMsg(subVisible ? '字幕已显示' : '字幕已隐藏');
@@ -822,6 +857,8 @@
       onerror={onError}
     ></video>
 
+    <Danmaku {video} items={dm} on={dmOn} />
+
     <div class="mp-sub" style:font-size={`calc(clamp(16px, 2.4vw, 30px) * ${subScale})`}>
       {#each activeCues as c, i (i)}
         <div>{c.text}</div>
@@ -895,6 +932,9 @@
             {#each RATES as r (r)}<option value={String(r)}>{r}</option>{/each}
           </select>
         </label>
+        {#if dm.length}
+          <button class="dmb" class:on={dmOn} onclick={toggleDanmaku} title="弹幕开关 (D)">弹</button>
+        {/if}
         <label class="sel">字幕
           <select value={String(subIdx)} onchange={e => void selectSub(Number(e.currentTarget.value))}>
             <option value="-1">关闭</option>
@@ -952,6 +992,7 @@
       <p><kbd>PgUp</kbd> <kbd>PgDn</kbd>　上一集 / 下一集</p>
       <p><kbd>Ctrl</kbd>+<kbd>→</kbd>　跳过片头（85 秒）</p>
       <p><kbd>C</kbd>　切换字幕，<kbd>V</kbd> 显示 / 隐藏</p>
+      <p><kbd>D</kbd>　弹幕开关（有弹幕的视频）</p>
       <p><kbd>Z</kbd> <kbd>X</kbd>　字幕提前 / 延后 0.1 秒</p>
       <p><kbd>Ctrl</kbd>+<kbd>+</kbd> <kbd>-</kbd>　字幕放大 / 缩小</p>
       <p><kbd>S</kbd>　截图，<kbd>Ctrl</kbd>+<kbd>S</kbd> 带字幕截图</p>
@@ -966,6 +1007,15 @@
 </div>
 
 <style>
+  .dmb {
+    font-size: 13px;
+    font-weight: 700;
+    opacity: 0.55;
+  }
+  .dmb.on {
+    opacity: 1;
+    color: var(--mp-accent);
+  }
   .mp-vid {
     position: absolute;
     inset: 0;

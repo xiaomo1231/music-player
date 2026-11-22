@@ -106,3 +106,36 @@ Tauri 权限：没有新增。只用到 `app.emit`（事件）和 `reqwest`。
 - **整理后的 BT 文件夹**：整理移动完成后会删除变空的子文件夹；非媒体文件（如压缩包）留在下载目录，不会移动，也不会自动删除。
 - **ratio 做种**：达到分享率后从会话移除，之后整理移动文件。整理阶段没有用复制代替移动。
 - 下载、订阅、整理都没有在真实环境里跑过，需要用户在真机上测试一遍（建议先用一个本地目录来源和一个 HTTP 直链验证）。
+
+
+## 10. B 站（扫码登录、清晰度、字幕弹幕、番剧归档）
+
+B 站下载不另做下载页：解析出的条目通过 `fetch_download`（`kind='ytdlp'`）进同一个任务队列和下载列表，完成后同样由 `organize::finish` 整理入库。
+
+**文件**：`src-tauri/src/fetch/bili.rs`（登录、账号、解析、yt-dlp 参数）、`src-tauri/src/fetch/ytdlp.rs`（安装 / 更新 yt-dlp）、`src-tauri/src/danmaku.rs`（弹幕 XML ↔ ASS）、`src/components/fetch/Bili.svelte`（面板）、`src/components/media/Danmaku.svelte`（播放器弹幕层）。
+
+**新依赖**：`qrcode 0.14`（只开 `svg`，生成登录二维码）、`sha2 0.10`（校验 yt-dlp）。
+
+| 命令 | 参数 | 返回 |
+| --- | --- | --- |
+| `fetch_bili_account` | — | `{ logged_in, expired, name, vip, vip_label }` |
+| `fetch_bili_qr_start` | — | `{ key, url, svg }` |
+| `fetch_bili_qr_poll` | `key` | `waiting` / `scanned` / `expired` / `ok`（ok 时已保存 Cookie） |
+| `fetch_bili_logout` | — | 删除本机保存的 Cookie |
+| `fetch_bili_parse` | `url` | `{ title, kind: bangumi/video/list, media_kind: anime/video, entries: [{title,url}] }` |
+| `fetch_ytdlp_status` | — | `{ installed, version, path, managed }` |
+| `fetch_ytdlp_install` | — | 从 yt-dlp 官方发布页下载 `yt-dlp.exe`，按 `SHA2-256SUMS` 校验后放到 `<数据目录>\bin\`；也用于更新 |
+| `media_danmaku` | `id`（视频 id） | 视频旁 `<名>.danmaku.ass` 里的弹幕 `[{start,end,mode,y,color,scale,text}]`，没有就是空数组 |
+
+**行为**
+
+- 登录：B 站官方网页扫码接口；Cookie（`SESSDATA`、`bili_jct`、`DedeUserID` 等）存在 Windows 凭据管理器（`keyring`，服务名 `music-player-bili`），不写数据库和日志。每次调用 yt-dlp 时写一份临时 `cookies.txt` 到下载目录，进程结束即删除。
+- 设置（`FetchSettings`，都有默认值，旧设置可直接读）：`bili_quality`（画面高度上限，0 = 账号能拿到的最高）、`bili_danmaku`、`bili_subs`。
+- yt-dlp 参数（`bili::ytdlp_args`，有单元测试）：B 站加 `--sleep-requests 1`、`-S res[:N],codec:h264`（同清晰度优先 H.264，内置播放器兼容最好）、`--merge-output-format mp4`、`--write-subs --sub-langs all|all,-danmaku|danmaku`；番剧输出名 `作品 - S01E03 [ep…].mp4`，整理时进番剧库；`mediaKind=music`（任何网站）只下音频 `-f ba/b`，有 ffmpeg 时写入标题、UP 主（作艺人）和封面。找到 ffmpeg 时传 `--ffmpeg-location`。
+- yt-dlp 任务完成后返回整个 `yt-<id>` 文件夹交给整理，字幕、弹幕跟着同名视频移动。弹幕 XML 先转成 ASS（滚动弹幕按轨道排布，太密时丢弃多余的，高级 / 代码弹幕不转换）。
+- `*.danmaku.ass` 不出现在播放器的字幕列表里，由弹幕层单独绘制；按 `D` 或控制栏的“弹”开关，状态记在本机。
+- 报错翻译（`bili::friendly_error`）：需要大会员、需要购买、DRM、需要登录、412/429 限流。软件不绕过这些限制。
+- `kind_of_url`：B 站网址判为 `ytdlp`。
+- 工具查找顺序改为：环境变量 → `<数据目录>\bin\` → 程序目录 `bin\` → PATH。
+
+**自测**：`cargo test --lib`（新增 bili 9 个、danmaku 7 个、ytdlp 2 个测试）、`cargo clippy --all-targets -- -D warnings`、`pnpm check`、`pnpm build` 通过；界面用浏览器加模拟后端数据截图检查了 B 站面板、扫码弹窗、设置和播放器弹幕层。没有连真实 B 站账号测试登录和下载，需要在真机上扫码试一次。

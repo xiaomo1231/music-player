@@ -6,6 +6,7 @@ pub mod comic;
 pub mod commands;
 pub mod convert;
 pub mod daily;
+pub mod danmaku;
 pub mod db;
 pub mod fetch;
 pub mod indexer;
@@ -44,6 +45,10 @@ fn init_modules(conn: &rusqlite::Connection) -> anyhow::Result<()> {
 }
 
 fn setup_modules(app: &tauri::AppHandle) {
+    {
+        use tauri::Manager;
+        tools::set_data_bin(app.state::<AppState>().dirs.data.join("bin"));
+    }
     convert::setup(app);
     daily::setup(app);
     fetch::setup(app);
@@ -217,6 +222,7 @@ pub fn run() {
             media::media_subtitles,
             media::media_sub_vtt,
             media::media_save_screenshot,
+            media::media_danmaku,
             adclean::adclean_scan,
             adclean::adclean_find_similar,
             adclean::adclean_estimate,
@@ -282,6 +288,13 @@ pub fn run() {
             fetch::fetch_unsubscribe,
             fetch::fetch_subs,
             fetch::fetch_remove_task,
+            fetch::fetch_bili_account,
+            fetch::fetch_bili_qr_start,
+            fetch::fetch_bili_qr_poll,
+            fetch::fetch_bili_logout,
+            fetch::fetch_bili_parse,
+            fetch::fetch_ytdlp_status,
+            fetch::fetch_ytdlp_install,
             mangatr::mangatr_get,
             mangatr::mangatr_translate_page,
             mangatr::mangatr_translate_range,

@@ -1,7 +1,9 @@
 //! 下载引擎：统一队列（同时下载数、暂停 / 继续 / 取消 / 重试），三种后端：
 //! HTTP（断点续传 + 失败重试 3 次 + 限速）、BT / 磁力（librqbit，下完即停或做种到分享率）、yt-dlp（子进程，解析进度行）。
 //! 下载完成后交给 organize 删除可执行文件、识别、重命名、移入整理目录并入库。
-use super::{emit_task, load_settings, load_task, organize, remove_task_files, provider, set_task_progress, set_task_status, source, with_db, FetchSettings, TaskView};
+use super::{
+    emit_task, load_settings, load_task, organize, provider, remove_task_files, set_task_progress, set_task_status, source, with_db, FetchSettings, TaskView,
+};
 use crate::{db, tools};
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::StreamExt;

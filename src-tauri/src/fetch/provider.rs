@@ -144,7 +144,10 @@ pub fn provider_id(url: &str) -> Option<&str> {
 /// 整个搜索结果都带上，重启后继续下载时也能重新取下载地址
 pub fn task_url(provider: &str, item: &Item, quality: &str) -> String {
     let json = serde_json::to_string(item).unwrap_or_default();
-    let qs: String = url::form_urlencoded::Serializer::new(String::new()).append_pair("q", quality).append_pair("d", &json).finish();
+    let qs: String = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("q", quality)
+        .append_pair("d", &json)
+        .finish();
     format!("{SCHEME}{provider}/item?{qs}")
 }
 
@@ -267,7 +270,12 @@ pub mod tests {
 
     impl Provider for Mock {
         fn info(&self) -> ProviderInfo {
-            ProviderInfo { id: "mock".into(), name: "测试源".into(), media_kinds: vec!["music".into()], note: String::new() }
+            ProviderInfo {
+                id: "mock".into(),
+                name: "测试源".into(),
+                media_kinds: vec!["music".into()],
+                note: String::new(),
+            }
         }
         fn search<'a>(&'a self, query: &'a str, _mk: &'a str, _page: u32) -> BoxFuture<'a, Result<Vec<Item>, String>> {
             Box::pin(async move { Ok(vec![sample(query)]) })
@@ -275,7 +283,10 @@ pub mod tests {
         fn resolve<'a>(&'a self, item: &'a Item, quality: &'a str) -> BoxFuture<'a, Result<Resolved, String>> {
             Box::pin(async move {
                 Ok(Resolved {
-                    target: Target::Http { url: format!("https://example.invalid/{}.{quality}", item.id), ext: quality.into() },
+                    target: Target::Http {
+                        url: format!("https://example.invalid/{}.{quality}", item.id),
+                        ext: quality.into(),
+                    },
                     lyric: Some("[00:00.00]测试".into()),
                 })
             })
@@ -291,8 +302,20 @@ pub mod tests {
             track: Some(3),
             media_kind: "music".into(),
             qualities: vec![
-                Quality { key: "flac".into(), label: "无损".into(), format: "flac".into(), bitrate: None, size: Some(30_000_000) },
-                Quality { key: "mp3".into(), label: "320K".into(), format: "mp3".into(), bitrate: Some(320), size: None },
+                Quality {
+                    key: "flac".into(),
+                    label: "无损".into(),
+                    format: "flac".into(),
+                    bitrate: None,
+                    size: Some(30_000_000),
+                },
+                Quality {
+                    key: "mp3".into(),
+                    label: "320K".into(),
+                    format: "mp3".into(),
+                    bitrate: Some(320),
+                    size: None,
+                },
             ],
             extra: serde_json::json!({ "sign": "a&b=c 中文" }),
             ..Default::default()
@@ -347,7 +370,13 @@ pub mod tests {
         let p = get("mock").unwrap();
         let items = tauri::async_runtime::block_on(p.search("防波堤", "music", 1)).unwrap();
         let r = tauri::async_runtime::block_on(p.resolve(&items[0], "flac")).unwrap();
-        assert_eq!(r.target, Target::Http { url: "https://example.invalid/42.flac".into(), ext: "flac".into() });
+        assert_eq!(
+            r.target,
+            Target::Http {
+                url: "https://example.invalid/42.flac".into(),
+                ext: "flac".into()
+            }
+        );
     }
 
     #[test]

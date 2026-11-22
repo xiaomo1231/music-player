@@ -195,7 +195,7 @@ async fn run(app: &AppHandle, id: i64, ctl: &Arc<Ctl>) -> Result<Option<organize
         "http" => http_download(app, &task, ctl, &dl_dir, &settings).await?,
         "file" => local_copy(app, &task, &dl_dir).await?,
         "magnet" | "torrent" => bt_download(app, &task, ctl, &dl_dir, &settings).await?,
-        "ytdlp" => ytdlp_download(app, &task, ctl, &dl_dir).await?,
+        "ytdlp" => ytdlp_download(app, &task, ctl, &dl_dir, None).await?,
         "provider" => provider_download(app, &task, ctl, &dl_dir, &settings).await?,
         other => bail!("不支持的下载类型：{other}"),
     };
@@ -443,13 +443,17 @@ async fn bt_download(app: &AppHandle, task: &TaskView, ctl: &Ctl, dl_dir: &Path,
 
 /// yt-dlp 子进程：解析 [download] 进度行。成功后返回任务自己的输出文件夹（视频和同名的字幕、弹幕、封面一起整理入库）。
 /// B 站网址会带上登录 Cookie（临时文件，用完即删）、清晰度、字幕和弹幕参数，见 bili::ytdlp_args
-async fn ytdlp_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_dir: &Path) -> Result<Option<PathBuf>> {
+/// `quality`：清晰度上限（画面高度），给下载源在搜索页选的档位用；None 时按设置
+async fn ytdlp_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_dir: &Path, quality: Option<u32>) -> Result<Option<PathBuf>> {
     let exe = source::ytdlp_path().ok_or_else(|| anyhow!(source::YTDLP_MISSING))?;
     let out_dir = dl_dir.join(format!("yt-{}", task.id));
     tokio::fs::create_dir_all(&out_dir).await?;
     source::throttle(&task.url).await;
     let settings = with_db(app, |c| Ok(load_settings(c)))?;
-    let opts = bili::YtOpts::new(&task.url, &task.media_kind, &settings);
+    let mut opts = bili::YtOpts::new(&task.url, &task.media_kind, &settings);
+    if let Some(q) = quality {
+        opts.quality = q;
+    }
     let (app2, ctl2) = (app.clone(), ctl.clone());
     let (id, url, dl) = (task.id, task.url.clone(), dl_dir.to_path_buf());
     tokio::task::spawn_blocking(move || ytdlp_blocking(&app2, id, &ctl2, &exe, &url, &out_dir, &dl, opts)).await?
@@ -582,7 +586,8 @@ async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_
         }
         provider::Target::Ytdlp { url } => {
             t.url = url.clone();
-            ytdlp_download(app, &t, ctl, dl_dir).await?
+            // 档位是数字时当作清晰度上限（B 站下载源的档位就是画面高度，“0”为最高，空串按设置）
+            ytdlp_download(app, &t, ctl, dl_dir, quality.parse::<u32>().ok()).await?
         }
     };
     let Some(path) = got else { return Ok(None) };

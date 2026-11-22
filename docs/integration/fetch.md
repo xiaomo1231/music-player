@@ -139,7 +139,7 @@ B 站下载不另做下载页：解析出的条目通过 `fetch_download`（`kin
 - `*.danmaku.ass` 不出现在播放器的字幕列表里，由弹幕层单独绘制；按 `D` 或控制栏的“弹”开关，状态记在本机。
 - 报错翻译（`bili::friendly_error`）：需要大会员、需要购买、DRM、需要登录、412/429 限流。软件不绕过这些限制。
 - `kind_of_url`：B 站网址判为 `ytdlp`。
-- 下载源接口：`BiliProvider`（id `bilibili`，支持 video / music）已加进 `provider::builtin()`。在“我的来源”添加“B 站”后，搜索页能直接搜 B 站视频（调用 B 站网页搜索接口，带随机 buvid3，已登录时带上登录 Cookie）；下载时 `resolve` 返回 `Target::Ytdlp`，所以清晰度、字幕、弹幕同样按设置。番剧不在搜索结果里，请在 B 站面板粘贴链接。
+- 下载源接口：`BiliProvider`（id `bilibili`，支持 video / music）已加进 `provider::builtin()`。在“我的来源”添加“B 站”后，搜索页能直接搜 B 站视频（调用 B 站网页搜索接口，带随机 buvid3，已登录时带上登录 Cookie）；下载时 `resolve` 返回 `Target::Ytdlp`，字幕、弹幕按设置；搜索页的档位下拉框是清晰度上限（按设置 / 最高 / 1080P / 720P / 480P），`provider_download` 把数字档位传给 `ytdlp_download`。结果按 UP 主分组（`Item.album`）。番剧不在搜索结果里，请在 B 站面板粘贴链接。
 - `provider_download`：yt-dlp 返回文件夹时，对其中每个音视频文件补标签、存歌词。
 - 工具查找顺序改为：环境变量 → `<数据目录>\bin\` → 程序目录 `bin\` → PATH。
 

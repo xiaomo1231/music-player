@@ -365,16 +365,41 @@ pub fn search_items(v: &Value, media_kind: &str) -> Vec<provider::Item> {
             } else {
                 cover.to_string()
             };
+            let author = r["author"].as_str().unwrap_or("").to_string();
             Some(provider::Item {
                 id: bvid.to_string(),
                 title: clean_title(r["title"].as_str().unwrap_or(bvid)),
-                artist: r["author"].as_str().unwrap_or("").to_string(),
+                // 搜索页按 album 分组：同一个 UP 主的视频放在一起
+                album: author.clone(),
+                artist: author,
                 duration: r["duration"].as_str().and_then(parse_duration),
                 cover,
                 media_kind: media_kind.to_string(),
+                qualities: qualities(media_kind),
                 extra: serde_json::json!({ "url": url }),
                 ..Default::default()
             })
+        })
+        .collect()
+}
+
+/// 搜索页的档位下拉框。key 是清晰度上限（画面高度），“0”为账号能拿到的最高，空串按设置；只要音频时不分档位
+pub fn qualities(media_kind: &str) -> Vec<provider::Quality> {
+    if media_kind == "music" {
+        return vec![provider::Quality {
+            key: "0".into(),
+            label: "音频".into(),
+            format: "m4a".into(),
+            ..Default::default()
+        }];
+    }
+    [("", "按设置"), ("0", "最高"), ("1080", "1080P"), ("720", "720P"), ("480", "480P")]
+        .into_iter()
+        .map(|(k, l)| provider::Quality {
+            key: k.into(),
+            label: l.into(),
+            format: "mp4".into(),
+            ..Default::default()
         })
         .collect()
 }
@@ -622,6 +647,12 @@ mod tests {
         let it = &items[0];
         assert_eq!(it.title, "星屑邮局 & 片头");
         assert_eq!(it.artist, "UP主");
+        assert_eq!(it.album, "UP主");
+        assert_eq!(it.qualities.len(), 1, "只要音频时不分档位");
+        assert_eq!(
+            qualities("video").iter().map(|q| q.key.as_str()).collect::<Vec<_>>(),
+            ["", "0", "1080", "720", "480"]
+        );
         assert_eq!(it.cover, "https://i0.hdslb.com/a.jpg");
         assert_eq!(it.duration, Some(225.0));
         assert_eq!(it.media_kind, "music");

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>04 经典机架 · 界面 demo</title>
+<style>/*CORE_CSS*/
+/* ===== 04 经典机架：参考 foobar2000 / Winamp 的高密度分栏与 LCD 仪表 ===== */
+:root{--mp-accent:#7dffb0;--mp-accent2:#ffc857;--mp-bg:#1b1d21;--mp-panel:#23262b;--mp-radius:3px;--mp-font:"Cascadia Mono","Consolas","Microsoft YaHei UI",monospace;--mp-line:#3a3f47;--mp-sub:#8b929c}
+body{background:#1b1d21;font-size:12.5px;display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:4px;padding:4px}
+.tb{display:flex;align-items:center;gap:2px;background:linear-gradient(#34383f,#272a30);border:1px solid #454a53;padding:3px 6px}
+.tb b{margin-right:10px;color:var(--mp-accent2);letter-spacing:.1em}
+.tb button{background:linear-gradient(#3c4149,#2b2e34);border:1px solid #50565f;border-bottom-color:#16181b;padding:4px 9px;font-size:12px;display:flex;gap:5px;align-items:center}
+.tb button:active,.tb button.on{background:#17191c;color:var(--mp-accent);border-color:#111 #444 #444 #111}
+.tb .sep{width:1px;height:20px;background:#555;margin:0 6px}.tb .sp{flex:1}
+.tb .tools button span{display:none}.tb .tools{display:flex;gap:2px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:4px;min-height:0}
+.pn{background:#23262b;border:1px solid #3a3f47;min-height:0;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.pn>h6{margin:0;padding:3px 8px;font-size:11px;background:#2d3137;border-bottom:1px solid #3a3f47;color:var(--mp-sub);font-weight:400;letter-spacing:.08em;flex:none}
+.lcd{background:#0a120d;color:var(--mp-accent);padding:10px 12px;display:grid;grid-template-columns:1fr auto;gap:2px 12px;border-bottom:1px solid #3a3f47;text-shadow:0 0 8px #7dffb080}
+.lcd .t{font-size:17px;white-space:nowrap;overflow:hidden}.lcd .t span{display:inline-block;animation:mq 16s linear infinite}
+@keyframes mq{from{transform:translateX(40%)}to{transform:translateX(-100%)}}
+.lcd .time{font-size:30px;grid-row:span 2;align-self:center;font-variant-numeric:tabular-nums;letter-spacing:.04em}
+.lcd small{color:#4f9e73;font-size:11px}
+.left{display:grid;grid-template-rows:minmax(0,1fr);min-height:0}
+.left .pn>div.body{flex:1;min-height:0;overflow:auto}
+.mp-row{grid-template-columns:2.4em 1.3fr 1fr 7em 3.5em;padding:3px 8px;border-radius:0;font-size:12.5px;gap:10px}
+.mp-row:nth-child(odd){background:#262a2f}.mp-row .mp-cover{display:none}.mp-row .mp-t small{display:inline;margin-left:10px}
+.mp-row.on{background:#143524;color:var(--mp-accent)}.mp-row:hover{background:#30353c}
+.mp-fmt{border-radius:0;border-color:#444;font-size:10px;padding:0 4px}
+.right{display:grid;grid-template-rows:auto 150px 120px minmax(0,1fr);gap:4px;min-height:0}
+canvas{width:100%;height:100%;display:block;background:#0a120d}
+.vu{display:grid;grid-template-columns:1fr 1fr;gap:1px;flex:1;min-height:0;background:#3a3f47}
+.lyr{flex:1;min-height:0;padding:0 10px;font-size:13.5px;line-height:1.5;text-align:center}
+.mp-ly-line{padding:3px 0;color:#6b727c}.mp-ly-line.on{color:var(--mp-accent2);font-size:15.5px}
+.tp{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;background:linear-gradient(#34383f,#272a30);border:1px solid #454a53;padding:5px 8px}
+.tp .ctrl{display:flex;gap:2px}.tp .ctrl button{background:linear-gradient(#3c4149,#2b2e34);border:1px solid #50565f;border-bottom-color:#16181b;width:34px;height:26px;display:grid;place-items:center;font-size:13px}
+.tp .ctrl button.on{color:var(--mp-accent)}.tp .ctrl button:active{background:#17191c}
+.seek{height:14px;background:#0a120d;border:1px solid #111;position:relative}
+.seek:before{content:"";position:absolute;inset:2px auto 2px 2px;width:calc(var(--p,0)*(100% - 4px));background:repeating-linear-gradient(90deg,var(--mp-accent) 0 3px,transparent 3px 5px)}
+.seek.v{width:110px}.seek.v:before{background:repeating-linear-gradient(90deg,var(--mp-accent2) 0 3px,transparent 3px 5px)}
+.st{color:var(--mp-sub);font-size:11.5px;white-space:nowrap}
+main>.lib{grid-column:1/-1;background:#23262b;border:1px solid #3a3f47;padding:16px 20px}.lib>header h2{font-size:18px;color:var(--mp-accent2)}
+main:has(>.lib.on)>.left,main:has(>.lib.on)>.right{display:none}
+body.immersive .tb{display:none}body.immersive{grid-template-rows:minmax(0,1fr) auto}
+body.immersive main{grid-template-columns:minmax(0,1fr)}body.immersive .left{display:none}
+body.immersive .right{grid-template-rows:auto 30vh 22vh minmax(0,1fr)}body.immersive .lyr{font-size:22px}body.immersive .mp-ly-line.on{font-size:30px}
+body.immersive .lcd .t{font-size:28px}body.immersive .lcd .time{font-size:56px}
+body.oled-black .pn,body.oled-black .tb,body.oled-black .tp{background:#000;border-color:#1c1c1c}body.oled-black .mp-row:nth-child(odd){background:#050505}
+@media(max-width:900px){main{grid-template-columns:1fr}.left{display:none}.tb button span{display:none}}
+</style></head><body>
+<div class="tb" data-static><b>MEDIA·RACK</b><!--NAV--><span class="sep"></span><div class="tools"><!--TOOLS--></div><span class="sp"></span><a class="back" href="index.html">全部风格</a></div>
+<main>
+  <section data-view="now" class="left on"><div class="pn"><h6>播放列表 — 默认 [8 项 | 12:08]</h6><div class="body" data-mp="list-music"></div></div></section>
+  <div class="right" id="rk">
+    <div class="pn" data-drift><div class="lcd"><div class="t"><span><span data-mp="artist"></span> — <span data-mp="title"></span> ［<span data-mp="album"></span>］ ***</span></div><div class="time" data-mp="cur">0:00</div><small><span data-mp="fmt"></span> · 立体声 · WASAPI 独占</small></div></div>
+    <div class="pn"><h6>频谱分析</h6><canvas id="sp"></canvas></div>
+    <div class="pn"><h6>示波器 ｜ VU 表</h6><div class="vu"><canvas id="osc"></canvas><canvas id="vu"></canvas></div></div>
+    <div class="pn"><h6>歌词</h6><div class="lyr" data-mp="lyrics" data-pos=".45"></div></div>
+  </div>
+  <!--VIEWS-->
+</main>
+<div class="tp" data-autohide><div class="ctrl"><!--CTRL--></div><div class="seek" data-mp="progress"></div><div class="seek v" data-mp="vol" title="音量"></div><span class="st"><span data-mp="cur"></span> / <span data-mp="dur"></span> ｜ 3,862 首 ｜ 库已同步</span></div>
+<script>/*CORE_JS*/</script>
+<script>
+// 让右侧机架在任何“正在播放”以外的视图里隐藏由 CSS :has 处理
+const peaks=[];
+MP.canvas(document.getElementById('sp'),(g,w,h)=>{const n=40,s=MP.spectrum(n),bw=w/n,seg=5;g.clearRect(0,0,w,h);
+  for(let i=0;i<n;i++){const v=s[i]*h*.95;peaks[i]=Math.max((peaks[i]||0)-.6,v);
+    for(let y=0;y<v;y+=seg){const r=y/h;g.fillStyle=r>.8?'#ff5d5d':r>.55?'#ffc857':'#7dffb0';g.fillRect(i*bw+1,h-y-seg+1,bw-2,seg-1)}
+    g.fillStyle='#e8fff0';g.fillRect(i*bw+1,h-peaks[i]-2,bw-2,2)}});
+MP.canvas(document.getElementById('osc'),(g,w,h)=>{const d=MP.waveform(160);g.clearRect(0,0,w,h);g.strokeStyle='#143524';g.lineWidth=1;g.beginPath();for(let x=0;x<w;x+=20){g.moveTo(x,0);g.lineTo(x,h)}g.moveTo(0,h/2);g.lineTo(w,h/2);g.stroke();
+  g.strokeStyle='#7dffb0';g.shadowColor='#7dffb0';g.shadowBlur=6;g.lineWidth=1.5;g.beginPath();d.forEach((v,i)=>{const x=i/(d.length-1)*w,y=h/2+MP.clamp(v,-1,1)*h*.42;i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke();g.shadowBlur=0});
+let nd=[0,0];
+MP.canvas(document.getElementById('vu'),(g,w,h)=>{const s=MP.spectrum(16);const lv=[(s[1]+s[3]+s[5]+s[7])/4,(s[2]+s[4]+s[6]+s[8])/4];g.clearRect(0,0,w,h);
+  lv.forEach((v,k)=>{nd[k]+=(Math.min(1,v*1.5)-nd[k])*.18;const cx=w*(k?.75:.25),cy=h*.92,r=Math.min(w*.2,h*.7);
+    g.strokeStyle='#4f9e73';g.lineWidth=1;g.beginPath();g.arc(cx,cy,r,Math.PI*1.2,Math.PI*1.68);g.stroke();g.strokeStyle='#ff5d5d';g.beginPath();g.arc(cx,cy,r,Math.PI*1.68,Math.PI*1.8);g.stroke();
+    const a=Math.PI*(1.2+nd[k]*.6);g.strokeStyle='#ffc857';g.lineWidth=2;g.beginPath();g.moveTo(cx,cy);g.lineTo(cx+Math.cos(a)*r*1.05,cy+Math.sin(a)*r*1.05);g.stroke();
+    g.fillStyle='#4f9e73';g.font='10px Consolas';g.fillText(k?'R':'L',cx-3,cy-r*.35)})});
+</script></body></html>

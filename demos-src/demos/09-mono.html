@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>09 极简黑白 · 界面 demo</title>
+<style>/*CORE_CSS*/
+/* ===== 09 极简黑白：原创瑞士字体排印风格，天生适合 OLED ===== */
+:root{--mp-accent:#ff4b2b;--mp-accent2:#ff4b2b;--mp-bg:#000;--mp-panel:rgba(10,10,10,.97);--mp-radius:0px;--mp-line:rgba(255,255,255,.16);--mp-sub:#8a8a8a;--mp-font:"Helvetica Neue","Arial","Segoe UI","Microsoft YaHei UI",sans-serif}
+body{background:#000;display:grid;grid-template-rows:auto minmax(0,1fr) auto}
+nav{display:flex;gap:26px;align-items:baseline;padding:18px 3vw;border-bottom:1px solid var(--mp-line);font-size:12.5px;letter-spacing:.06em}
+nav h1{margin:0;font-size:12.5px;font-weight:700;letter-spacing:.2em}
+nav button{background:none;border:0;padding:0;color:var(--mp-sub);counter-increment:n;display:flex;gap:6px;transition:.2s}
+nav button .mp-ico{display:none}nav{counter-reset:n}
+nav>button:before{content:"0" counter(n);font-variant-numeric:tabular-nums;opacity:.6}
+nav button:hover{color:#fff}nav button.on{color:#fff}nav button.on span{border-bottom:2px solid var(--mp-accent);padding-bottom:3px}
+nav .sp{flex:1}nav .tools{display:flex;gap:16px}nav .tools button span{display:none}nav .tools button .mp-ico{display:inline-block;font-size:15px}
+main{position:relative;min-height:0}
+.now{position:absolute;inset:0;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto}
+.time{font-size:clamp(90px,19vw,300px);font-weight:700;letter-spacing:-.055em;line-height:.82;padding:3vh 0 0 2.4vw;font-variant-numeric:tabular-nums;white-space:nowrap}
+.time sup{font-size:.16em;letter-spacing:.02em;font-weight:400;color:var(--mp-sub);vertical-align:top;margin-left:.6em;position:relative;top:.6em}
+.dial{justify-self:end;align-self:start;margin:4vh 3vw 0 0;width:min(22vw,34vh);aspect-ratio:1;border-radius:50%;border:1px solid #fff;position:relative;background:repeating-radial-gradient(circle,transparent 0 9px,#ffffff2e 9px 10px)}
+.dial i{position:absolute;left:50%;top:50%;width:50%;height:1px;background:var(--mp-accent);transform-origin:0 50%}
+.dial i:after{content:"";position:absolute;right:-5px;top:-5px;width:11px;height:11px;border-radius:50%;background:var(--mp-accent)}
+.dial b{position:absolute;inset:38%;border-radius:50%;background:#fff}
+canvas#wave{grid-column:1/-1;width:100%;height:100%;display:block;min-height:0}
+.foot{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:3vw;padding:0 3vw 3vh;align-items:end}
+.ly b{display:block;font-size:clamp(26px,4vw,62px);font-weight:700;letter-spacing:-.02em;line-height:1.1;animation:up .6s cubic-bezier(.2,.8,.2,1)}
+.ly span{display:block;color:var(--mp-sub);font-size:clamp(14px,1.5vw,22px);margin-top:.5em}
+@keyframes up{from{opacity:0;transform:translateY(.4em)}}
+.meta{font-size:13px;line-height:1.7;border-top:1px solid #fff;padding-top:10px;display:grid;grid-template-columns:5em 1fr}
+.meta dt{color:var(--mp-sub)}.meta dd{margin:0}
+main>.lib{position:absolute;inset:0;padding:3vh 3vw}.lib>header h2{font-size:clamp(40px,6vw,90px);letter-spacing:-.04em;line-height:.9}
+.mp-poster{border-radius:0;box-shadow:none;filter:grayscale(1) contrast(1.15)}.mp-card:hover .mp-poster{filter:none;transform:none;box-shadow:none}
+.mp-row{border-radius:0;border-top:1px solid var(--mp-line)}.mp-row .mp-cover{filter:grayscale(1);border-radius:0}.mp-btn{color:#000;background:#fff}.mp-chip,.mp-fmt{border-radius:0}
+footer{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto auto;gap:22px;align-items:center;padding:14px 3vw;border-top:1px solid var(--mp-line);font-size:12.5px;font-variant-numeric:tabular-nums}
+.ctrl{display:flex;gap:18px;align-items:center}.ctrl button{background:none;border:0;font-size:16px;color:var(--mp-sub)}.ctrl button:hover,.ctrl button.on{color:#fff}.ctrl .pp{color:#fff;font-size:22px}
+.line{height:1px;background:#fff6;position:relative}.line:before{content:"";position:absolute;left:0;top:-1px;height:3px;width:calc(var(--p,0)*100%);background:#fff}
+.line:after{content:"";position:absolute;left:calc(var(--p,0)*100%);top:-7px;width:1px;height:15px;background:var(--mp-accent)}
+.line.v{width:80px}
+body.immersive nav{display:none}body.immersive{grid-template-rows:minmax(0,1fr) auto}
+@media(max-width:900px){nav{gap:14px;overflow:auto}nav h1,nav .tools{display:none}.dial{display:none}.now,.foot{grid-template-columns:1fr}.meta{display:none}footer{grid-template-columns:auto minmax(0,1fr) auto}footer .line.v,footer>span:first-of-type{display:none}}
+</style></head><body>
+<nav data-static data-autohide><h1>MONO</h1><!--NAV--><span class="sp"></span><div class="tools"><!--TOOLS--></div><a class="back" href="index.html">INDEX</a></nav>
+<main>
+  <section data-view="now" class="now on">
+    <div class="time" data-drift><span data-mp="cur">0:00</span><sup>/ <span data-mp="dur"></span></sup></div>
+    <div class="dial" data-drift><i id="hand"></i><b></b></div>
+    <canvas id="wave"></canvas>
+    <div class="foot"><div class="ly" data-drift><b data-mp="lyric-now" id="ln"></b><span data-mp="lyric-next"></span></div>
+      <dl class="meta" data-drift><dt>曲目</dt><dd data-mp="title"></dd><dt>艺人</dt><dd data-mp="artist"></dd><dt>专辑</dt><dd data-mp="album"></dd><dt>格式</dt><dd data-mp="fmt"></dd></dl></div>
+  </section>
+  <!--VIEWS-->
+</main>
+<footer data-autohide><div class="ctrl"><!--CTRL--></div><span data-mp="cur"></span><div class="line" data-mp="progress"></div><span data-mp="remain"></span><div class="line v" data-mp="vol"></div></footer>
+<script>/*CORE_JS*/</script>
+<script>
+MP.spin(document.getElementById('hand'),6);
+const ln=document.getElementById('ln');MP.on('lyric',()=>{ln.style.animation='none';void ln.offsetWidth;ln.style.animation=''});
+MP.canvas(document.getElementById('wave'),(g,w,h,t)=>{const d=MP.waveform(220),s=MP.spectrum(60);g.clearRect(0,0,w,h);
+  // 细线频谱（上下对称）+ 一条波形线
+  g.strokeStyle='#ffffff40';g.lineWidth=1;g.beginPath();for(let i=0;i<60;i++){const x=(i+.5)/60*w,l=s[i]*h*.44;g.moveTo(x,h/2-l);g.lineTo(x,h/2+l)}g.stroke();
+  g.strokeStyle='#fff';g.lineWidth=1.5;g.beginPath();d.forEach((v,i)=>{const x=i/(d.length-1)*w,y=h/2+MP.clamp(v,-1,1)*h*.36;i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke();
+  const px=MP.state.t/MP.state.dur*w;g.strokeStyle='#ff4b2b';g.beginPath();g.moveTo(px,0);g.lineTo(px,h);g.stroke()});
+</script></body></html>

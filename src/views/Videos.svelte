@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MoreButton from '../components/MoreButton.svelte';
+  import { openMenu, mediaEntries } from '../lib/items.svelte';
   import Poster from '../components/media/Poster.svelte';
   import SeriesDetail from '../components/media/SeriesDetail.svelte';
   import { lib } from '../lib/library.svelte';
@@ -48,6 +50,20 @@
   function playVideo(v: Video) {
     ui.openItem(v.id, 'video', videos.map(x => x.id));
   }
+  function seriesMenu(e: MouseEvent, s: Series) {
+    openMenu(e, s.title, mediaEntries('series', s.id, s.title, [
+      { label: '打开详情', run: () => (openId = s.id) },
+      ...(s.next_id != null ? [{ label: '继续观看', run: () => s.next_id != null && ui.openItem(s.next_id, 'video') }] : []),
+    ]));
+  }
+  function videoMenu(e: MouseEvent, v: Video) {
+    openMenu(e, v.title, mediaEntries('video', v.id, v.title, [
+      { label: '播放', run: () => playVideo(v) },
+      { label: '生成 AI 字幕', run: () => { ui.subVideo = v.id; ui.go('aisub'); } },
+      { label: '转换格式…', run: () => { ui.convertPaths = [v.path]; ui.go('convert'); } },
+      { label: '整理文件…', run: () => ui.go('org') },
+    ]));
+  }
 </script>
 
 <section class="lib on">
@@ -70,11 +86,12 @@
         <div class="grp">电视剧</div>
         <div class="mp-grid">
           {#each shows as s (s.id)}
-            <div class="mp-card" role="button" tabindex="0" onclick={() => (openId = s.id)} onkeydown={e => e.key === 'Enter' && (openId = s.id)}>
+            <div class="mp-card" role="button" tabindex="0" onclick={() => (openId = s.id)} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)}>
               <Poster poster={s.poster} thumb={s.thumb} name={s.title}>
                 <span class="mp-badge">{seriesBadge(s)}</span>
                 <span class="mp-pt">{s.title}</span>
                 <i class="mp-bar" style:width="{pct(s)}%"></i>
+                <MoreButton onopen={e => seriesMenu(e, s)} />
               </Poster>
               <div class="mp-card-t">{s.title}</div>
               <div class="mp-card-s">共 {s.episodes} 集{s.missing_subs ? ` · ${s.missing_subs} 集缺字幕` : ''}</div>
@@ -93,11 +110,13 @@
               tabindex="0"
               onclick={() => playVideo(v)}
               onkeydown={e => e.key === 'Enter' && playVideo(v)}
+              oncontextmenu={e => videoMenu(e, v)}
               use:lazyThumb={{ id: v.id, thumb: v.thumb, onthumb: n => (thumbs[v.id] = n) }}
             >
               <Poster thumb={thumbs[v.id] ?? v.thumb} name={v.title}>
                 <span class="mp-badge">{vBadge(v)}</span>
                 <i class="mp-bar" style:width="{vPct(v)}%"></i>
+                <MoreButton onopen={e => videoMenu(e, v)} />
               </Poster>
               <div class="mp-card-t">{v.title}</div>
               <div class="mp-card-s">{fmtT(v.duration)}{v.resolution ? ` · ${v.resolution}` : ''}</div>

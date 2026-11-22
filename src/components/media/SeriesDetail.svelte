@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '../../lib/Icon.svelte';
+  import MoreButton from '../MoreButton.svelte';
+  import { openMenu, mediaEntries } from '../../lib/items.svelte';
   import { invoke, inTauri, type Series, type Video } from '../../lib/api';
   import { ui, toast } from '../../lib/ui.svelte';
   import { lib } from '../../lib/library.svelte';
@@ -67,6 +69,18 @@
     return eps.filter(e => sOf(e) === s).map(e => e.id);
   }
 
+  function epMenu(ev: MouseEvent, e: Video) {
+    openMenu(ev, e.title, mediaEntries('video', e.id, e.title, [
+      { label: '播放', run: () => play(e) },
+      { label: e.watched ? '标记为未看' : '标记为已看', run: async () => { await invoke('set_watched', { ids: [e.id], watched: !e.watched }); lib.refresh(); } },
+      { label: '生成 AI 字幕', run: () => genSub(e) },
+      { label: '转换格式…', run: () => { ui.convertPaths = [e.path]; ui.go('convert'); } },
+    ]));
+  }
+  function seriesMenu(ev: MouseEvent) {
+    openMenu(ev, series.title, mediaEntries('series', series.id, series.title, [{ label: '整理这一部…', run: () => ui.go('org') }]));
+  }
+
   function play(e: Video) {
     ui.openItem(e.id, kind === 'anime' ? 'anime' : 'video', idsOf(sOf(e)));
   }
@@ -117,6 +131,7 @@
       <div class="acts">
         <button class="mp-btn" onclick={resume} disabled={!eps.length}><Icon name="play" /> {resumeText}</button>
         <button class="mp-btn ghost" onclick={markSeason} disabled={!curEps.length}>标记本季已看完</button>
+        <MoreButton floating={false} title="更多" onopen={seriesMenu} />
       </div>
     </div>
   </div>
@@ -144,6 +159,7 @@
           tabindex="0"
           onclick={() => play(e)}
           onkeydown={ev => ev.key === 'Enter' && play(e)}
+          oncontextmenu={ev => epMenu(ev, e)}
           use:lazyThumb={{ id: e.id, thumb: e.thumb, onthumb: n => (thumbs[e.id] = n) }}
         >
           <div class="th" style:background-image={epBg(e)}>
@@ -151,6 +167,7 @@
             <em><Icon name="play" /></em>
             <u>{fmtT(e.duration)}</u>
             <i style:width="{progress(e)}%"></i>
+            <span class="ep-more"><MoreButton floating={false} onopen={ev => epMenu(ev, e)} /></span>
           </div>
           <p>{epLabel(e)}{e.title && e.title !== series.title ? `　${e.title}` : ''}</p>
           <div class="row">
@@ -170,3 +187,8 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .ep-more { position: absolute; right: 6px; top: 6px; z-index: 3; background: rgba(0,0,0,.55); border-radius: 7px; opacity: 0; transition: opacity .15s; }
+  .ep:hover .ep-more { opacity: 1; }
+</style>

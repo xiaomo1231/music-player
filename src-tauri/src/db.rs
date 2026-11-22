@@ -3,7 +3,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use std::path::Path;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 3;
 
 pub fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
@@ -20,14 +20,44 @@ pub fn open_memory() -> Result<Connection> {
     Ok(conn)
 }
 
+fn add_column(conn: &Connection, table: &str, col: &str, ty: &str) -> Result<()> {
+    let exists: bool = conn
+        .prepare(&format!("PRAGMA table_info({table})"))?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .flatten()
+        .any(|c| c == col);
+    if !exists {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {col} {ty};"))?;
+    }
+    Ok(())
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
     let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if v < 1 {
         conn.execute_batch(SCHEMA_V1)?;
     }
+    if v < 3 {
+        // v2 / v3：加列时先看列在不在，重复执行也安全
+        for (t, c) in [
+            ("files", "custom_title"),
+            ("files", "custom_cover"),
+            ("series", "custom_title"),
+            ("series", "custom_cover"),
+            ("playlists", "cover"),
+        ] {
+            add_column(conn, t, c, "TEXT")?;
+        }
+        conn.execute_batch(SCHEMA_V2)?;
+    }
     conn.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION}"))?;
     Ok(())
 }
+
+/// v2：从媒体库移除的路径（自定义名字、封面的列由 add_column 加）
+const SCHEMA_V2: &str = r#"
+CREATE TABLE IF NOT EXISTS excluded(path TEXT PRIMARY KEY, at INTEGER NOT NULL);
+"#;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS files(
@@ -220,6 +250,14 @@ pub fn now() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn migration_is_repeatable() {
+        let c = super::open_memory().unwrap();
+        c.execute_batch("PRAGMA user_version=2").unwrap();
+        super::migrate(&c).unwrap();
+        super::migrate(&c).unwrap();
+    }
+
     #[test]
     fn schema_creates() {
         let c = super::open_memory().unwrap();

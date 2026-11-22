@@ -7,6 +7,7 @@
     undo: (id: number) => void;
     play: (j: ConvertJob) => void;
     folder: (path: string) => void;
+    remove: (id: number) => void;
   }
 
   let {
@@ -85,6 +86,9 @@
             {/if}
             {#if j.can_undo}
               <button onclick={() => actions.undo(j.id)}>撤销替换</button>
+            {/if}
+            {#if j.status !== 'queued' && j.status !== 'running'}
+              <button title="只删除这条记录，不动任何文件" onclick={() => actions.remove(j.id)}>删除记录</button>
             {/if}
           </span>
         </div>

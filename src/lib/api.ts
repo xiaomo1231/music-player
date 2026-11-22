@@ -20,7 +20,9 @@ let coverDir = '';
 export async function initPaths() {
   if (inTauri) coverDir = await invoke<string>('cover_dir');
 }
-export const coverUrl = (name?: string | null) => (name ? fileUrl(coverDir + '/' + name) : '');
+/** 绝对路径（用户自定义的封面）直接用，否则是封面缓存里的文件名 */
+export const isAbs = (p: string) => /^[a-zA-Z]:[\\/]|^\\\\/.test(p);
+export const coverUrl = (name?: string | null) => (name ? fileUrl(isAbs(name) ? name : coverDir + '/' + name) : '');
 export const comicPage = (id: number, page: number) => (inTauri ? `http://mpc.localhost/${id}/${page}` : '');
 
 export interface Track {
@@ -47,7 +49,7 @@ export interface ComicItem {
   id: number; path: string; title: string; series: string; format: string; pages: number; page: number;
   cover: string | null; last_read: number | null;
 }
-export interface Playlist { id: number; name: string; count: number; covers: string[] }
+export interface Playlist { id: number; name: string; count: number; covers: string[]; cover: string | null }
 export interface Hit { id: number; kind: string; title: string; sub: string; cover: string | null; series_id: number | null }
 export interface LyricLine { t: number; text: string; words: [number, string][] }
 export interface Chapter { title: string; paras: string[] }

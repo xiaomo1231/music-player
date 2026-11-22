@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { AdHit, AdEstimate, AdAct } from '../../lib/reader';
+  import RulesList from './RulesList.svelte';
 
   let {
     hits,
@@ -132,4 +133,5 @@
     <p style="margin-top:10px">还没有发现广告。点上面的“扫描全书”，或者在正文里选中一段文字。</p>
   {/if}
 
+  <RulesList />
 </div>

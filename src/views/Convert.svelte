@@ -214,6 +214,7 @@
       invoke('show_in_folder', { path }).catch(e => toast(String(e)));
     },
     play: (j: ConvertJob) => playJob(j),
+    remove: (id: number) => act(() => invoke('convert_remove', { id }), '已删除记录'),
   };
 
   async function clearDone() {

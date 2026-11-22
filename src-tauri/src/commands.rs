@@ -281,6 +281,8 @@ pub async fn add_files(app: AppHandle, st: State<'_, AppState>, paths: Vec<Strin
     {
         let conn = st.db.lock();
         for p in paths {
+            // 用户主动添加的文件，即使以前“从媒体库移除”过也重新入库
+            let _ = conn.execute("DELETE FROM excluded WHERE path=?1 OR path LIKE ?1 || '%'", [&p]);
             let pb = PathBuf::from(&p);
             let mut files = vec![];
             if pb.is_dir() {

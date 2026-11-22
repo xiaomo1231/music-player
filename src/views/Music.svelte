@@ -1,7 +1,10 @@
 <script lang="ts">
   import Icon from '../lib/Icon.svelte';
   import Cover from '../components/Cover.svelte';
-  import TrackMenu from '../components/TrackMenu.svelte';
+  import MoreButton from '../components/MoreButton.svelte';
+  import { openMenu as popMenu, mediaEntries, ask, confirmDlg, pickImage, RESET } from '../lib/items.svelte';
+  import { openPlaylistMenu, renamePlaylist, exportPlaylist, deletePlaylist } from '../lib/playlists';
+  import { coverUrl } from '../lib/api';
   import { lib } from '../lib/library.svelte';
   import { player } from '../lib/player.svelte';
   import { ui, toast } from '../lib/ui.svelte';
@@ -15,7 +18,6 @@
   let sort = $state<'def' | 'plays' | 'added' | 'title' | 'duration'>('def');
   let q = $state('');
   let plTracks = $state<number[]>([]);
-  let menu = $state<{ x: number; y: number; tracks: Track[] } | null>(null);
   let ruleEdit = $state<SmartDef | null | undefined>(undefined);
 
   // 侧栏点了歌单就切过来
@@ -29,7 +31,8 @@
     if (filter.startsWith('pl:') && inTauri) invoke<number[]>('playlist_items', { id: +filter.slice(3) }).then(v => (plTracks = v));
   });
 
-  const allSmart = $derived([...smartLists, ...customLists.list]);
+  const allSmart = $derived([...smartLists.filter(s => !customLists.hidden.includes(s.key)), ...customLists.list]);
+  const hiddenSmart = $derived(smartLists.filter(s => customLists.hidden.includes(s.key)));
   const curPl = $derived(filter.startsWith('pl:') ? lib.playlists.find(p => p.id === +filter.slice(3)) : null);
 
   const list = $derived.by(() => {
@@ -121,26 +124,50 @@
     toast(`开始播放：${tracks.length} 首`);
   }
   function openMenu(e: MouseEvent, t: Track) {
-    e.preventDefault();
-    menu = { x: e.clientX, y: e.clientY, tracks: [t] };
+    const pl = curPl;
+    popMenu(e, t.title, mediaEntries('track', t.id, t.title, [
+      { label: '播放', run: () => playFrom(t) },
+      { label: '下一首播放', run: () => player.playNext([t]) },
+      { label: '加入播放队列', run: () => player.enqueue([t]) },
+      { label: '加入歌单…', run: () => ui.open('playlist-add', [t.id]) },
+      ...(pl ? [{ label: '从这个歌单移除', run: async () => { await invoke('playlist_remove', { id: pl.id, files: [t.id] }); plTracks = plTracks.filter(x => x !== t.id); lib.refreshPlaylists(); toast('已从歌单移除'); } }] : []),
+      { label: t.favorite ? '取消收藏' : '收藏', run: () => lib.toggleFav(t.id).then(v => toast(v ? '已收藏' : '已取消收藏')) },
+      { label: '转换格式…', run: () => { ui.convertPaths = [t.path]; ui.go('convert'); } },
+      { label: '文件信息', run: () => ui.open('about', t) },
+    ]));
   }
 
-  async function plAct(a: string) {
-    if (!curPl) return;
-    if (a === 'play') playGroup(list);
-    if (a === 'rename') ui.open('playlist-add', { rename: curPl.id, name: curPl.name });
-    if (a === 'del') {
-      if (!confirm(`删除歌单「${curPl.name}」？歌曲文件不会被删除。`)) return;
-      await invoke('delete_playlist', { id: curPl.id });
-      filter = 'all';
-      ui.playlistId = null;
-      await lib.refreshPlaylists();
-      toast('歌单已删除');
+  // 智能列表卡片的“⋯”：内置的只能隐藏；自定义的可以改名、改规则、换封面、删除
+  function smartMenu(e: MouseEvent, s: SmartDef) {
+    const play = { label: '播放', run: () => playGroup(s.pick(lib.tracks)) };
+    if (!s.custom) {
+      popMenu(e, s.name, [play, 'sep', { label: '隐藏这个列表', run: async () => { await customLists.setHidden(s.key, true); if (filter === 'smart:' + s.key) setFilter('all'); toast('已隐藏，可以在“自定义智能列表”卡片里恢复'); } }]);
+      return;
     }
-    if (a === 'export') {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const p = await save({ defaultPath: curPl.name + '.m3u8', filters: [{ name: 'M3U8', extensions: ['m3u8'] }] });
-      if (p) { await invoke('export_playlist', { id: curPl.id, path: p }); toast('已导出'); }
+    const raw = customLists.get(s.key);
+    if (!raw) return;
+    popMenu(e, s.name, [
+      play,
+      'sep',
+      { label: '重命名…', run: async () => { const v = await ask('重命名智能列表', s.name); if (typeof v === 'string' && v.trim()) await customLists.save({ ...raw, name: v.trim() }); } },
+      { label: '编辑规则…', run: () => (ruleEdit = s) },
+      { label: '更换封面…', run: async () => { const p = await pickImage(); if (p) { const c = await invoke<string>('item_save_image', { path: p }); await customLists.save({ ...raw, cover: c }); } } },
+      { label: '恢复默认封面', run: () => customLists.save({ ...raw, cover: null }) },
+      'sep',
+      { label: '删除这个列表…', danger: true, run: async () => { if (await confirmDlg('删除智能列表', `删除「${s.name}」？只删除这个列表的规则，歌曲不受影响。`, { ok: '删除', danger: true })) { await customLists.remove(s.key); if (filter === 'smart:' + s.key) setFilter('all'); toast('已删除'); } } },
+    ]);
+  }
+  void RESET;
+
+  async function plAct(a: string) {
+    const p = curPl;
+    if (!p) return;
+    if (a === 'play') playGroup(list);
+    if (a === 'rename') renamePlaylist(p);
+    if (a === 'export') exportPlaylist(p);
+    if (a === 'del') {
+      await deletePlaylist(p);
+      if (!lib.playlists.some(x => x.id === p.id)) filter = 'all';
     }
   }
 
@@ -184,13 +211,18 @@
         {@const n = s.pick(lib.tracks).length}
         <div class="sc" class:on={filter === 'smart:' + s.key} style:background-image={coverCSS(s.hue, true)} role="button" tabindex="-1"
           onclick={() => setFilter(filter === 'smart:' + s.key ? 'all' : 'smart:' + s.key)} onkeydown={() => {}}
-          oncontextmenu={e => { if (s.custom) { e.preventDefault(); ruleEdit = s; } }}>
+          oncontextmenu={e => smartMenu(e, s)} style:background-size="cover">
+          {#if s.cover}<span class="sc-img" style:background-image={`url("${coverUrl(s.cover)}")`}></span>{/if}
           <b>{s.name}</b><span>{n} 首 · {s.desc}</span>
+          <span class="sc-more"><MoreButton floating={false} title="更多" onopen={e => smartMenu(e, s)} /></span>
           <button title="立即播放" onclick={e => { e.stopPropagation(); playGroup(s.pick(lib.tracks)); }}><Icon name="play" /></button>
         </div>
       {/each}
       <div class="sc" style="display:grid;place-items:center;background:var(--glass)" role="button" tabindex="-1" onclick={() => (ruleEdit = null)} onkeydown={() => {}}>
         <span style="text-align:center"><Icon name="plus" size="20px" /><br />自定义智能列表</span>
+        {#if hiddenSmart.length}
+          <span class="sc-hidden">已隐藏：{#each hiddenSmart as h}<button class="mp-chip" title="恢复显示" onclick={e => { e.stopPropagation(); customLists.setHidden(h.key, false); }}>{h.name} ↺</button>{/each}</span>
+        {/if}
       </div>
     </div>
 
@@ -198,7 +230,7 @@
       <button class="mp-chip" class:on={filter === 'all'} onclick={() => setFilter('all')}>全部歌曲</button>
       {#each allSmart as s (s.key)}<button class="mp-chip" class:on={filter === 'smart:' + s.key} onclick={() => setFilter('smart:' + s.key)}>{s.name}</button>{/each}
       <span style="width:1px;height:18px;background:var(--edge);margin:0 4px"></span>
-      {#each lib.playlists as p (p.id)}<button class="mp-chip" class:on={filter === 'pl:' + p.id} onclick={() => setFilter('pl:' + p.id)}><Icon name="list" /> {p.name} · {p.count}</button>{/each}
+      {#each lib.playlists as p (p.id)}<button class="mp-chip" class:on={filter === 'pl:' + p.id} onclick={() => setFilter('pl:' + p.id)} oncontextmenu={e => openPlaylistMenu(e, p)}><Icon name="list" /> {p.name} · {p.count}</button>{/each}
       <button class="mp-chip" onclick={() => ui.open('playlist-add', [])}>＋ 新建歌单</button>
     </div>
 
@@ -209,6 +241,7 @@
         <button class="mp-chip" onclick={() => plAct('rename')}>重命名</button>
         <button class="mp-chip" onclick={() => plAct('export')}>导出 .m3u8</button>
         <button class="mp-chip" onclick={() => plAct('del')}>删除歌单</button>
+        <MoreButton floating={false} title="更多" onopen={e => openPlaylistMenu(e, curPl!)} />
         <span class="engine-note">拖动歌曲可以调整顺序</span>
       </div>
     {:else if group === 'none'}
@@ -249,5 +282,12 @@
   {/if}
 </section>
 
-{#if menu}<TrackMenu {...menu} onclose={() => (menu = null)} />{/if}
 {#if ruleEdit !== undefined}<SmartRuleModal def={ruleEdit} onclose={() => (ruleEdit = undefined)} />{/if}
+
+<style>
+  .sc .sc-img { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .55; z-index: 0; }
+  .sc > :global(*) { position: relative; }
+  .sc .sc-more { position: absolute; right: 52px; bottom: 12px; z-index: 2; }
+  .sc .sc-hidden { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; font-size: 11.5px; margin-top: 6px; color: var(--mp-sub); align-items: center; }
+  .sc .sc-hidden .mp-chip { padding: 2px 8px; font-size: 11px; }
+</style>

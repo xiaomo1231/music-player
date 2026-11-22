@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MoreButton from '../components/MoreButton.svelte';
+  import { openMenu, mediaEntries } from '../lib/items.svelte';
   import Poster from '../components/media/Poster.svelte';
   import SeriesDetail from '../components/media/SeriesDetail.svelte';
   import { lib } from '../lib/library.svelte';
@@ -65,6 +67,12 @@
       ui.seriesId = null;
     }
   });
+  function seriesMenu(e: MouseEvent, s: Series) {
+    openMenu(e, s.title, mediaEntries('series', s.id, s.title, [
+      { label: '打开详情', run: () => (openId = s.id) },
+      ...(s.next_id != null ? [{ label: '继续观看', run: () => s.next_id != null && ui.openItem(s.next_id, 'anime') }] : []),
+    ]));
+  }
 </script>
 
 <section class="lib on">
@@ -93,11 +101,12 @@
     {:else}
       <div class="mp-grid">
         {#each shown as s (s.id)}
-          <div class="mp-card" role="button" tabindex="0" onclick={() => (openId = s.id)} onkeydown={e => e.key === 'Enter' && (openId = s.id)}>
+          <div class="mp-card" role="button" tabindex="0" onclick={() => (openId = s.id)} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)}>
             <Poster poster={s.poster} thumb={s.thumb} name={s.title}>
               <span class="mp-badge">{seriesBadge(s)}</span>
               <span class="mp-pt">{s.title}</span>
               <i class="mp-bar" style:width="{pct(s)}%"></i>
+              <MoreButton onopen={e => seriesMenu(e, s)} />
             </Poster>
             <div class="mp-card-t">{s.title}</div>
             <div class="mp-card-s">

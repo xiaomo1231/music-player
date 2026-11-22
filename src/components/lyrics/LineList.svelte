@@ -2,7 +2,7 @@
   // 滚动列表类歌词：逐行放大滚动 / 逐字高亮 / 弹性节拍 / 竖排 / 无动画逐行高亮（plain）。
   // 整个列表用 translate 移动，让当前行停在 pos 处；只在切行、尺寸变化时量一次位置，不逐帧触发布局。
   import type { LyricLine } from '../../lib/api';
-  import { lineUnits, unitProgress, lineProgress } from '../../lib/lyricsfx.svelte';
+  import { lyricsfx, lineUnits, unitProgress, lineProgress } from '../../lib/lyricsfx.svelte';
 
   let {
     lines,
@@ -92,6 +92,8 @@
         {:else}
           <span>{l.text}</span>
         {/if}
+        {#if !x && lyricsfx.cfg.roma && l.roma}<small class="ly-sub roma">{l.roma}</small>{/if}
+        {#if !x && lyricsfx.cfg.tr && l.tr}<small class="ly-sub">{l.tr}</small>{/if}
       </div>
     {/each}
   </div>

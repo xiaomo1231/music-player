@@ -51,7 +51,17 @@ export interface ComicItem {
 }
 export interface Playlist { id: number; name: string; count: number; covers: string[]; cover: string | null }
 export interface Hit { id: number; kind: string; title: string; sub: string; cover: string | null; series_id: number | null }
-export interface LyricLine { t: number; text: string; words: [number, string][] }
+export interface LyricLine {
+  t: number;
+  text: string;
+  words: [number, string][];
+  /** 译文 */
+  tr?: string;
+  /** 罗马音 / 音译 */
+  roma?: string;
+}
+/** 在线歌词（本地没有歌词时由 lyrics_online 返回） */
+export interface OnlineLyrics { source: string; lines: LyricLine[] }
 export interface Chapter { title: string; paras: string[] }
 export interface Book { title: string; author: string; encoding: string; chapters: Chapter[] }
 export interface Root { id: number; path: string; watch: boolean }

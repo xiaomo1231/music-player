@@ -95,6 +95,9 @@ body.playing .deck.sq .sleeve{transform:none}
 .lyr .mp-ly-line.on{opacity:1;filter:none;transform:none}
 .lyr .m-scroll .mp-ly-line.on>span,.lyr .m-fade .mp-ly-line.on>span{background:linear-gradient(90deg,#fff calc(var(--lp,0)*100%),rgba(255,255,255,.45) calc(var(--lp,0)*100% + 8%));-webkit-background-clip:text;background-clip:text;color:transparent}
 .lyr .mp-ly-line:hover{opacity:.9;filter:none}
+/* 译文 / 罗马音：原文下方一行小字，不参与逐字填色 */
+.lyr .ly-sub{display:block;font-size:.56em;font-weight:600;line-height:1.35;margin-top:.2em;opacity:.72}
+.lyr .ly-sub.roma{font-size:.5em;font-weight:500;opacity:.6}
 .lyr.noblur .mp-ly-line{filter:none}
 .lyr .mp-ly-line.plain{opacity:.78;filter:none;transform:none}
 /* 无动画逐行高亮（没有时间轴的歌词，或系统要求减少动态效果） */

@@ -1,7 +1,7 @@
 // 音乐播放器状态与引擎。
 // 默认用 WebView2 自带的解码（HTMLAudioElement + Web Audio，支持 MP3/FLAC/WAV/OGG/Opus/AAC/M4A），
 // 10 段均衡器和频谱都在 Web Audio 里实现；装了 libmpv 后 engine 换成 mpv，覆盖 APE/DSD/WMA 等全部格式。
-import { invoke, listen, fileUrl, inTauri, type Track, type LyricLine } from './api';
+import { invoke, listen, fileUrl, inTauri, type Track, type LyricLine, type OnlineLyrics } from './api';
 import { engine } from './engine.svelte';
 import { clamp, shuffleArr } from './util';
 import { toast } from './ui.svelte';
@@ -222,8 +222,18 @@ class Player {
     }
     if (inTauri) {
       invoke<LyricLine[]>('lyrics', { path: c.path })
-        .then(l => {
-          if (this.current?.id === c.id) this.lyrics = l;
+        .then(async l => {
+          if (this.current?.id !== c.id) return;
+          this.lyrics = l;
+          // 本地没有歌词时在线查找（设置里可关闭，后端会直接返回空）
+          if (l.length) return;
+          const o = await invoke<OnlineLyrics | null>('lyrics_online', {
+            title: c.title,
+            artist: c.artist,
+            album: c.album,
+            duration: c.duration,
+          });
+          if (o && this.current?.id === c.id && !this.lyrics.length) this.lyrics = o.lines;
         })
         .catch(() => {});
     }

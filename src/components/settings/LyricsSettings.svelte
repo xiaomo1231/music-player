@@ -1,10 +1,23 @@
 <script lang="ts">
   // 设置页“歌词动效”分组：样式、字号、对齐、模糊，带一个用示例歌词循环播放的小预览
   import Lyrics from '../Lyrics.svelte';
+  import { invoke, inTauri } from '../../lib/api';
   import { lyricsfx, LYRIC_STYLES, LYRIC_ALIGNS } from '../../lib/lyricsfx.svelte';
 
   lyricsfx.load();
   const cfg = $derived(lyricsfx.cfg);
+
+  // 在线歌词开关存在设置键 lyrics_online（后端读取），默认开启
+  let online = $state(true);
+  if (inTauri) {
+    invoke<{ enabled?: boolean } | null>('get_setting', { key: 'lyrics_online' })
+      .then(v => (online = v?.enabled ?? true))
+      .catch(() => {});
+  }
+  function setOnline(on: boolean) {
+    online = on;
+    if (inTauri) invoke('set_setting', { key: 'lyrics_online', value: { enabled: on } }).catch(() => {});
+  }
 </script>
 
 <div class="card ly-set">
@@ -32,6 +45,18 @@
       <label class="mp-opt">
         <div>模糊非当前行<small>关闭后其他行只变淡，不模糊</small></div>
         <input type="checkbox" class="mp-sw" checked={cfg.blur} onchange={e => lyricsfx.set({ blur: (e.currentTarget as HTMLInputElement).checked })} />
+      </label>
+      <label class="mp-opt">
+        <div>显示翻译<small>歌词带译文时显示在原文下方（双语 .lrc 里时间相同的第二行就是译文）</small></div>
+        <input type="checkbox" class="mp-sw" checked={cfg.tr} onchange={e => lyricsfx.set({ tr: (e.currentTarget as HTMLInputElement).checked })} />
+      </label>
+      <label class="mp-opt">
+        <div>显示罗马音<small>日语、韩语歌词带罗马音时显示</small></div>
+        <input type="checkbox" class="mp-sw" checked={cfg.roma} onchange={e => lyricsfx.set({ roma: (e.currentTarget as HTMLInputElement).checked })} />
+      </label>
+      <label class="mp-opt">
+        <div>在线获取歌词<small>本地没有 .lrc 和内嵌歌词时，从 LRCLIB 开放歌词库查找，结果缓存在本地</small></div>
+        <input type="checkbox" class="mp-sw" checked={online} onchange={e => setOnline((e.currentTarget as HTMLInputElement).checked)} />
       </label>
     </div>
     <div class="ly-set-preview" aria-hidden="true">

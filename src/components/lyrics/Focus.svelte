@@ -4,7 +4,7 @@
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import type { LyricLine } from '../../lib/api';
-  import { lineUnits, unitProgress, lineProgress } from '../../lib/lyricsfx.svelte';
+  import { lyricsfx, lineUnits, unitProgress, lineProgress } from '../../lib/lyricsfx.svelte';
 
   let {
     lines,
@@ -58,6 +58,8 @@
             {:else}
               <span>{cur.text}</span>
             {/if}
+            {#if lyricsfx.cfg.roma && cur.roma}<small class="ly-sub roma">{cur.roma}</small>{/if}
+            {#if lyricsfx.cfg.tr && cur.tr}<small class="ly-sub">{cur.tr}</small>{/if}
           </div>
         {/if}
       {/key}

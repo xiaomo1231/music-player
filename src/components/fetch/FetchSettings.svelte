@@ -4,7 +4,7 @@
   import Modal from '../Modal.svelte';
   import { inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, type FetchSettings } from '../../lib/fetch';
+  import { fetchApi, BILI_QUALITY, type FetchSettings } from '../../lib/fetch';
 
   let { onclose, onsaved }: { onclose: () => void; onsaved?: () => void } = $props();
 
@@ -15,6 +15,9 @@
     speed_kbps: 0,
     seed_policy: 'stop',
     seed_ratio: 1,
+    bili_quality: 0,
+    bili_danmaku: true,
+    bili_subs: true,
   });
   let saving = $state(false);
 
@@ -29,7 +32,13 @@
   async function save() {
     saving = true;
     try {
-      s = await fetchApi.setSettings({ ...s, concurrency: Number(s.concurrency), speed_kbps: Number(s.speed_kbps), seed_ratio: Number(s.seed_ratio) });
+      s = await fetchApi.setSettings({
+        ...s,
+        concurrency: Number(s.concurrency),
+        speed_kbps: Number(s.speed_kbps),
+        seed_ratio: Number(s.seed_ratio),
+        bili_quality: Number(s.bili_quality),
+      });
       toast('设置已保存');
       onsaved?.();
       onclose();
@@ -72,6 +81,22 @@
         <input class="tin" type="number" min="0.1" step="0.1" bind:value={s.seed_ratio} />
       </label>
     {/if}
+    <h5 class="sec">B 站</h5>
+    <label>
+      <span>清晰度上限</span>
+      <select class="sel" bind:value={s.bili_quality}>
+        {#each BILI_QUALITY as q (q.value)}<option value={q.value}>{q.label}</option>{/each}
+      </select>
+    </label>
+    <label>
+      <span>弹幕</span>
+      <span class="chk"><input type="checkbox" class="mp-sw" bind:checked={s.bili_danmaku} /> 一起下载，播放时可以开关</span>
+    </label>
+    <label>
+      <span>字幕</span>
+      <span class="chk"><input type="checkbox" class="mp-sw" bind:checked={s.bili_subs} /> 下载 CC / AI 字幕（需要登录）</span>
+    </label>
+    <div class="note">只能拿到你的账号本来就能看的清晰度：1080P 需要登录，1080P 高码率、4K、HDR 需要大会员。有 DRM 加密的付费番剧和影视无法下载。</div>
     <div class="note">下载目录与媒体库分开：文件先下载到下载目录，识别并整理完成后才移入整理目录。可执行文件（exe、bat、msi、ps1 等）会被直接删除。限速和做种策略对新任务生效。</div>
     <div class="acts end">
       <button class="mp-btn ghost" onclick={onclose}>取消</button>
@@ -98,5 +123,13 @@
   }
   .end {
     justify-content: flex-end;
+  }
+  .sec {
+    margin: 6px 0 0;
+  }
+  .chk {
+    display: flex;
+    gap: 8px;
+    align-items: center;
   }
 </style>

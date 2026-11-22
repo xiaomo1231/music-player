@@ -72,6 +72,10 @@ export interface FetchSettings {
   speed_kbps: number;
   seed_policy: 'stop' | 'ratio' | string;
   seed_ratio: number;
+  /** B 站清晰度上限（画面高度），0 = 账号能拿到的最高 */
+  bili_quality: number;
+  bili_danmaku: boolean;
+  bili_subs: boolean;
 }
 
 export interface SubRow {
@@ -237,3 +241,55 @@ export function fmtBytes(n: number | null | undefined): string {
   }
   return `${v.toFixed(i === 0 ? 0 : v >= 100 ? 0 : 1)} ${u[i]}`;
 }
+
+// ---------- B 站 ----------
+
+export interface BiliAccount {
+  logged_in: boolean;
+  /** 保存过登录凭据但已经失效 */
+  expired: boolean;
+  name: string;
+  vip: boolean;
+  vip_label: string;
+}
+
+export interface BiliQr {
+  key: string;
+  url: string;
+  svg: string;
+}
+
+export interface BiliParsed {
+  title: string;
+  /** bangumi / video / list */
+  kind: string;
+  /** anime / video */
+  media_kind: string;
+  entries: { title: string; url: string }[];
+}
+
+export interface YtdlpStatus {
+  installed: boolean;
+  version: string;
+  path: string;
+  managed: boolean;
+}
+
+export const BILI_QUALITY: { value: number; label: string }[] = [
+  { value: 0, label: '最高（4K / HDR 需要大会员）' },
+  { value: 2160, label: '4K' },
+  { value: 1080, label: '1080P' },
+  { value: 720, label: '720P' },
+  { value: 480, label: '480P' },
+];
+
+export const biliApi = {
+  account: () => invoke<BiliAccount>('fetch_bili_account'),
+  qrStart: () => invoke<BiliQr>('fetch_bili_qr_start'),
+  /** waiting / scanned / expired / ok */
+  qrPoll: (key: string) => invoke<string>('fetch_bili_qr_poll', { key }),
+  logout: () => invoke<void>('fetch_bili_logout'),
+  parse: (url: string) => invoke<BiliParsed>('fetch_bili_parse', { url }),
+  ytdlpStatus: () => invoke<YtdlpStatus>('fetch_ytdlp_status'),
+  ytdlpInstall: () => invoke<YtdlpStatus>('fetch_ytdlp_install'),
+};

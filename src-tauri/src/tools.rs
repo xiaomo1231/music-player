@@ -6,13 +6,27 @@ use std::process::{Command, Stdio};
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// 查找顺序：程序目录下的 bin\、设置里指定的路径（MP_FFMPEG 环境变量）、PATH
+/// 软件自己下载 / 更新的工具放在数据目录的 bin\（启动时设置）
+static DATA_BIN: once_cell::sync::OnceCell<PathBuf> = once_cell::sync::OnceCell::new();
+
+pub fn set_data_bin(dir: PathBuf) {
+    let _ = DATA_BIN.set(dir);
+}
+
+pub fn data_bin() -> Option<&'static Path> {
+    DATA_BIN.get().map(|p| p.as_path())
+}
+
+/// 查找顺序：环境变量（MP_FFMPEG 等）、数据目录的 bin\、程序目录下的 bin\、PATH
 fn find(exe: &str, env_key: &str) -> Option<PathBuf> {
     if let Some(p) = std::env::var_os(env_key) {
         let p = PathBuf::from(p);
         if p.exists() {
             return Some(p);
         }
+    }
+    if let Some(p) = data_bin().map(|d| d.join(exe)).filter(|p| p.exists()) {
+        return Some(p);
     }
     if let Ok(me) = std::env::current_exe() {
         if let Some(dir) = me.parent() {

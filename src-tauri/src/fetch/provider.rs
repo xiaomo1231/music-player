@@ -1,6 +1,6 @@
 //! 下载源接口（预留）：把“能搜索、能给出下载地址”的服务接进自动获取。
 //!
-//! 软件本身不带任何下载源，`PROVIDERS` 默认为空。以后有正规渠道时，写一个实现了 [`Provider`] 的结构体，
+//! 目前内置 B 站（`bili::BiliProvider`）。以后有正规渠道时，写一个实现了 [`Provider`] 的结构体，
 //! 在 [`builtin`] 里加一行即可：它会出现在“我的来源 → 添加下载源”里，搜索结果进入同一个搜索页，
 //! 下载走同一个队列（HTTP 断点续传或 yt-dlp），下完自动补标签、存歌词、整理入库。
 //! 完整说明见 `docs/下载源接口.md`。
@@ -102,10 +102,10 @@ pub trait Provider: Send + Sync {
 /// 已注册的下载源
 static PROVIDERS: Lazy<RwLock<Vec<Arc<dyn Provider>>>> = Lazy::new(|| RwLock::new(builtin()));
 
-/// 随软件一起编译进来的下载源。目前为空，接入新的下载源时在这里加一行：
+/// 随软件一起编译进来的下载源。接入新的下载源时在这里加一行，例如
 /// `Arc::new(jamendo::Jamendo::default()),`
 fn builtin() -> Vec<Arc<dyn Provider>> {
-    vec![]
+    vec![Arc::new(super::bili::BiliProvider)]
 }
 
 /// 运行时注册（同 id 会替换旧的）

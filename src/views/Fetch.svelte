@@ -9,6 +9,7 @@
   import Search from '../components/fetch/Search.svelte';
   import Downloads from '../components/fetch/Downloads.svelte';
   import FetchSettings from '../components/fetch/FetchSettings.svelte';
+  import Bili from '../components/fetch/Bili.svelte';
 
   let tasks = $state<TaskRow[]>([]);
   let settingsOpen = $state(false);
@@ -53,6 +54,9 @@
       <Sources onchange={loadTasks} />
     </div>
     <div class="stack">
+      <div class="card">
+        <Bili onqueued={loadTasks} />
+      </div>
       <div class="card">
         <Search onqueued={loadTasks} />
       </div>

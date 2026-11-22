@@ -29,6 +29,8 @@
   import KeysModal from './components/KeysModal.svelte';
   import FileInfoModal from './components/FileInfoModal.svelte';
   import ItemMenu from './components/ItemMenu.svelte';
+  import UpdateModal from './components/UpdateModal.svelte';
+  import { updater } from './lib/updater.svelte';
   import VideoPlayer from './overlays/VideoPlayer.svelte';
   import NovelReader from './overlays/NovelReader.svelte';
   import ComicReader from './overlays/ComicReader.svelte';
@@ -233,6 +235,7 @@
         }),
       );
       offs.push(listen<string>('scan://error', m => toast('扫描出错：' + m)));
+      updater.autoCheck();
       // 首次启动：还没有扫描目录时打开向导
       invoke<{ id: number }[]>('list_roots').then(r => {
         if (!r.length) setTimeout(() => ui.open('scan'), 600);
@@ -347,6 +350,7 @@
 {#if ui.comicId != null}<ComicReader />{/if}
 
 <ItemMenu />
+{#if updater.show}<UpdateModal />{/if}
 
 <div class="mp-dim"></div>
 <div class="mp-refresh" class:run={ui.refreshRun > 0}></div>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>播放器界面十款</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root{color-scheme:dark;--bg:#0c0d11;--card:#15171d;--text:#eef0f5;--sub:#9aa0ad;--line:#ffffff1a;--acc:#7aa2ff}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){color-scheme:light;--bg:#f4f3ef;--card:#fff;--text:#1b1c20;--sub:#62676f;--line:#0000001a;--acc:#2f5fd0}}
+:root[data-theme="light"]{color-scheme:light;--bg:#f4f3ef;--card:#fff;--text:#1b1c20;--sub:#62676f;--line:#0000001a;--acc:#2f5fd0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI Variable","Segoe UI","Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;line-height:1.6}
+.wrap{max-width:1180px;margin:0 auto;padding-block:56px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1{font-size:clamp(30px,5vw,52px);margin:0 0 10px;letter-spacing:-.02em;line-height:1.15;text-wrap:balance}
+.lead{color:var(--sub);max-width:46em;margin:0 0 26px;font-size:16px}
+.how{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:0 0 40px;padding:0;list-style:none}
+.how li{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:13.5px;color:var(--sub)}
+.how b{display:block;color:var(--text);font-size:14.5px;margin-bottom:2px}
+kbd{border:1px solid var(--line);border-radius:4px;padding:0 5px;font-family:inherit;font-size:12px}
+h2{font-size:13px;letter-spacing:.14em;color:var(--sub);margin:34px 0 14px;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(310px,100%),1fr));gap:18px}
+a.c{display:block;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;transition:transform .3s,box-shadow .3s,border-color .3s}
+a.c:hover{transform:translateY(-4px);box-shadow:0 18px 40px #0004;border-color:var(--acc)}
+.pv{aspect-ratio:16/8.4;position:relative;overflow:hidden;display:grid;place-items:center}
+.pv i{display:block;border-radius:50%;animation:sp 9s linear infinite}
+@keyframes sp{to{rotate:360deg}}
+.tx{padding:14px 18px 18px}
+.tx b{font-size:17px;display:flex;align-items:baseline;gap:10px}.tx b small{font-size:12px;color:var(--sub);font-weight:400;font-variant-numeric:tabular-nums}
+.tx p{margin:6px 0 0;color:var(--sub);font-size:13.5px}
+.tag{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:999px;padding:1px 9px;color:var(--sub);margin-top:10px}
+footer{margin-top:44px;color:var(--sub);font-size:13px}
+</style></head><body><div class="wrap">
+<h1>综合媒体播放器<br>10 款界面风格</h1>
+<p class="lead">音乐、视频、动漫、小说和格式转换放在同一个软件里。下面每一款都是可以直接操作的界面原型：点播放会听到实时合成的示例音乐，歌词会跟着滚动，唱片和频谱会跟着动。</p>
+<ul class="how">
+<li><b>先点播放</b>没有用任何真实歌曲，声音由浏览器现场合成。也可以把自己的音频文件（和同名 .lrc）拖进页面真实播放。</li>
+<li><b>沉浸模式 <kbd>F</kbd></b>全屏并隐藏多余控件，适合整天挂在桌面当背景。</li>
+<li><b>OLED 防烧屏 <kbd>O</kbd></b>纯黑背景、像素位移、元素漂移、自动变暗、像素刷新，每项可单独开关。</li>
+<li><b>扫描媒体库 <kbd>S</kbd></b>首次打开会自动弹出，可选全盘或指定磁盘，带进度动画。</li>
+</ul>
+<h2>参考知名软件的风格</h2><div class="grid" id="g1"></div>
+<h2>原创设计</h2><div class="grid" id="g2"></div>
+<footer>所有曲目、歌词、片名、书名均为虚构。参考款只借鉴布局思路，没有使用任何品牌标识或素材。其他快捷键：<kbd>空格</kbd> 播放/暂停，<kbd>←</kbd> <kbd>→</kbd> 快退/快进，<kbd>M</kbd> 迷你播放器，<kbd>E</kbd> 均衡器。</footer>
+</div>
+<script>
+const D=[
+ [1,'01-aurora-glass','极光玻璃','毛玻璃面板、随封面变色的流动背景、从封套里滑出的黑胶、逐字点亮的大字歌词。','参考 Apple Music','background:radial-gradient(circle at 20% 20%,#2aa8e0,transparent 55%),radial-gradient(circle at 80% 90%,#7a2be0,transparent 55%),#0b0b10','width:38%;aspect-ratio:1;background:repeating-radial-gradient(circle,#1b1b1f 0 2px,#0c0c0e 2px 4px);box-shadow:0 0 0 12px #ffffff22'],
+ [1,'02-midnight-green','午夜绿','三栏深色布局、随专辑变色的歌词卡片、整幅频谱柱、右侧播放队列。','参考 Spotify','background:linear-gradient(#1f5a6e,#121212 70%)','width:22%;aspect-ratio:1;background:#3ddc84;animation:none;box-shadow:60px 20px 0 -18px #3ddc8466,-60px 26px 0 -22px #3ddc8444'],
+ [1,'03-cinema','放映厅','顶部导航和海报墙、镭射光盘、歌词像电影字幕一样出现在画面下方。','参考 Plex / Jellyfin','background:linear-gradient(90deg,#0d0f14 10%,#3b2a66)','width:36%;aspect-ratio:1;background:conic-gradient(#d8dde8,#ffd5f3,#c9f3ff,#fff7c7,#d8dde8,#c2ffd9,#e3d2ff,#d8dde8);box-shadow:inset 0 0 0 26px #ffffff55'],
+ [1,'04-rack','经典机架','高密度分栏、LCD 走马灯、分段频谱、示波器和 VU 指针表，信息量拉满。','参考 foobar2000 / Winamp','background:#0a120d','width:34%;aspect-ratio:1;border-radius:0;animation:none;background:repeating-linear-gradient(90deg,#7dffb0 0 6px,transparent 6px 10px);-webkit-mask:linear-gradient(0deg,#000 40%,transparent);height:50%'],
+ [1,'05-fluent','云母','浅色云母材质、带唱臂的转盘（唱臂会随进度走向内圈）、纯黑模式下自动转深色。','参考 Windows 11 Fluent','background:linear-gradient(135deg,#d6ecfb,#f3f3f3 50%,#ece0fa)','width:38%;aspect-ratio:1;background:repeating-radial-gradient(circle,#232323 0 2px,#161616 2px 4px);box-shadow:0 0 0 8px #d9d9d9,0 10px 30px #0003'],
+ [2,'06-cassette','磁带机','两只磁带盘一放一收、转速随余带变化，机械按键、电平表和手写歌词本。','原创 · 复古','background:#e9dfcb','width:30%;aspect-ratio:1;background:conic-gradient(#f5eddc 0 12%,#17171a 0 25%,#f5eddc 0 37%,#17171a 0 50%,#f5eddc 0 62%,#17171a 0 75%,#f5eddc 0 87%,#17171a 0);box-shadow:0 0 0 22px #5a3a26,0 0 0 30px #17171a'],
+ [2,'07-neon','霓虹落日','合成器浪潮：落日、流动的透视网格、环形频谱和霓虹灯管歌词。','原创 · 合成器浪潮','background:linear-gradient(#0a0218,#3a0a5c 62%,#0a0218 62%)','width:34%;aspect-ratio:1;animation:none;background:linear-gradient(#ffe14d,#ff3df0 60%,#7a1cff);box-shadow:0 0 50px #ff3df0'],
+ [2,'08-ink','水墨','一笔画成的墨圈随音乐呼吸旋转，鼓点处滴墨晕开，远山缓移，竖排歌词。','原创 · 东方留白','background:#f1ece0','width:36%;aspect-ratio:1;border:9px solid #1f1c18;border-right-color:transparent;border-bottom-width:3px'],
+ [2,'09-mono','极简黑白','瑞士字体排印：巨大的时间数字、一条波形线、一句歌词，只有一点红。','原创 · 天生适合 OLED','background:#000','width:34%;aspect-ratio:1;border:1px solid #fff;background:repeating-radial-gradient(circle,transparent 0 7px,#ffffff33 7px 8px),linear-gradient(90deg,transparent 50%,#ff4b2b 50% 100%) center/100% 1px no-repeat'],
+ [2,'10-cosmos','星河壁纸','粒子星系跟着音乐转动和闪烁，带时钟和悬浮 Dock，就是一张会唱歌的动态壁纸。','原创 · 桌面常驻','background:radial-gradient(circle at 50% 50%,#3d5cff55,transparent 45%),#000','width:46%;aspect-ratio:2.4;background:radial-gradient(ellipse,#fff 0 4%,#8fa2ff88 12%,transparent 60%);animation-duration:20s'],
+];
+D.forEach(d=>{document.getElementById('g'+d[0]).insertAdjacentHTML('beforeend',`<a class="c" href="${d[1]}.html"><div class="pv" style="${d[5]}"><i style="${d[6]}"></i></div><div class="tx"><b>${d[2]}<small>${d[1].slice(0,2)}</small></b><p>${d[3]}</p><span class="tag">${d[4]}</span></div></a>`)});
+</script></body></html>

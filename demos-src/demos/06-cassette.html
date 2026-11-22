@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>06 磁带机 · 界面 demo</title>
+<style>/*CORE_CSS*/
+/* ===== 06 磁带机：原创复古设计，转动的磁带与机械按键 ===== */
+:root{--mp-accent:#e8552d;--mp-accent2:#f2b632;--mp-bg:#e9dfcb;--mp-panel:rgba(245,238,223,.96);--mp-panel2:rgba(60,40,20,.07);--mp-text:#2c2219;--mp-sub:#7b6a57;--mp-line:rgba(60,40,20,.18);--mp-radius:10px;--mp-font:"Bahnschrift","DIN Alternate","Microsoft YaHei UI",sans-serif;--mp-shadow:0 20px 50px rgba(60,40,20,.3)}
+body{background:#e9dfcb radial-gradient(circle at 20% 0,#f5eddc,transparent 60%);display:grid;grid-template-rows:auto minmax(0,1fr);transition:background .8s,translate 2.5s}
+nav{display:flex;align-items:flex-end;gap:6px;padding:14px 26px 0;border-bottom:3px solid #2c2219}
+nav h1{margin:0 20px 8px 0;font-size:22px;letter-spacing:.04em;font-weight:800}nav h1 sup{font-size:10px;background:var(--mp-accent);color:#fff;padding:2px 5px;border-radius:3px;margin-left:5px;letter-spacing:.1em}
+nav button{background:#d9cdb4;border:2px solid #2c2219;border-bottom:0;border-radius:8px 8px 0 0;padding:7px 14px 6px;font-size:13px;font-weight:600;display:flex;gap:6px;align-items:center;translate:0 3px;transition:.15s}
+nav button.on{background:#2c2219;color:#f5eddc}nav button:hover:not(.on){background:var(--mp-accent2)}
+nav .sp{flex:1}nav .tools{display:flex;gap:4px;margin-bottom:8px}nav .tools button{border:2px solid #2c2219;border-radius:50%;width:34px;height:34px;padding:0;justify-content:center;translate:0;background:#f5eddc}nav .tools button span{display:none}
+nav .back{margin:0 0 14px 10px}
+main{min-height:0;position:relative}
+.now{height:100%;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:3vw;align-items:center;padding:3vh 5vw}
+.dev{justify-self:center;width:min(100%,600px);display:grid;gap:14px}
+.tape{aspect-ratio:1.58;border-radius:16px;background:linear-gradient(#3a3a3e,#232326);border:3px solid #17171a;box-shadow:0 14px 0 -4px #17171a,0 26px 40px rgba(60,40,20,.35);position:relative;padding:5%}
+.label{position:absolute;inset:6% 5% 30%;border-radius:8px;background:#f5eddc;overflow:hidden}
+.label:before{content:"";position:absolute;inset:0 0 auto;height:26%;background:repeating-linear-gradient(90deg,var(--mp-accent) 0 33.4%,var(--mp-accent2) 0 66.7%,hsl(var(--hue) 55% 45%) 0)}
+.label h3{position:absolute;left:5%;right:5%;top:30%;margin:0;font-size:clamp(14px,1.7vw,22px);border-bottom:1.5px solid #2c2219;padding-bottom:2px;white-space:nowrap;overflow:hidden;font-family:"Segoe Print","Kaiti SC","KaiTi",cursive}
+.label small{position:absolute;left:5%;top:9%;font-weight:800;font-size:11px;color:#fff;letter-spacing:.15em;z-index:1}
+.win{position:absolute;left:19%;right:19%;top:50%;height:40%;border-radius:999px;background:#17171a;display:flex;justify-content:space-between;align-items:center;padding:0 3%;overflow:hidden}
+.reel{height:150%;aspect-ratio:1;border-radius:50%;position:relative;flex:none;display:grid;place-items:center}
+.reel:before{content:"";position:absolute;width:var(--sz,60%);aspect-ratio:1;border-radius:50%;background:repeating-radial-gradient(circle,#5a3a26 0 1px,#3f2819 2px 3px)}
+.hub{width:34%;aspect-ratio:1;border-radius:50%;background:#f5eddc;position:relative;z-index:1;background-image:conic-gradient(#f5eddc 0 8%,#17171a 0 16.6%,#f5eddc 0 25%,#17171a 0 33.3%,#f5eddc 0 41.6%,#17171a 0 50%,#f5eddc 0 58.3%,#17171a 0 66.6%,#f5eddc 0 75%,#17171a 0 83.3%,#f5eddc 0 91.6%,#17171a 0);-webkit-mask:radial-gradient(circle,#0000 0 28%,#000 30%);mask:radial-gradient(circle,#0000 0 28%,#000 30%)}
+.tape .ab{position:absolute;left:8%;bottom:9%;font-weight:800;color:#f5eddc;font-size:13px}.tape .ab+.ab{left:auto;right:8%}
+.screws i{position:absolute;width:9px;height:9px;border-radius:50%;background:#77777c;box-shadow:inset 0 0 0 1px #111}
+.screws i:nth-child(1){left:2%;top:3%}.screws i:nth-child(2){right:2%;top:3%}.screws i:nth-child(3){left:2%;bottom:3%}.screws i:nth-child(4){right:2%;bottom:3%}
+.meter{height:38px;background:#17171a;border-radius:8px;padding:6px}.meter canvas{width:100%;height:100%;display:block}
+.keys{display:grid;grid-template-columns:repeat(5,1fr) 1.6fr;gap:8px}
+.keys button{height:54px;border-radius:8px;border:2px solid #17171a;background:linear-gradient(#f5eddc,#d9cdb4);box-shadow:0 6px 0 #17171a;font-size:19px;transition:.08s;display:grid;place-items:center}
+.keys button:active,.keys button.on,body.playing .keys .pp{translate:0 4px;box-shadow:0 2px 0 #17171a}
+.keys .pp{background:linear-gradient(#f0734d,var(--mp-accent));color:#fff}
+.keys .cnt{background:#17171a;color:var(--mp-accent2);border-radius:8px;display:grid;place-items:center;font-size:24px;font-variant-numeric:tabular-nums;letter-spacing:.12em}
+.seek{height:10px;border:2px solid #17171a;border-radius:10px;position:relative;background:#f5eddc}.seek:before{content:"";position:absolute;inset:0 auto 0 0;width:calc(var(--p,0)*100%);background:var(--mp-accent);border-radius:10px}
+.paper{height:min(70vh,560px);background:#f8f2e4;border:2px solid #2c2219;border-radius:6px;box-shadow:8px 8px 0 #2c2219;padding:20px 26px;display:grid;grid-template-rows:auto minmax(0,1fr);rotate:1.2deg;background-image:repeating-linear-gradient(#0000 0 37px,#2c221922 37px 38px)}
+.paper h4{margin:0 0 6px;font-size:13px;letter-spacing:.2em;color:var(--mp-accent)}
+.lyr{font-size:20px;line-height:38px;font-family:"Segoe Print","Kaiti SC","KaiTi","STKaiti",cursive}
+.mp-ly-line{color:#2c221966}.mp-ly-line.past{color:#2c221944;text-decoration:line-through;text-decoration-color:#2c221930}
+.mp-ly-line.on{color:#2c2219}.mp-ly-line.on span{background:linear-gradient(transparent 55%,var(--mp-accent2) 55% 92%,transparent 92%) no-repeat;background-size:calc(var(--lp,0)*100%) 100%}
+main>.lib{position:absolute;inset:0}.lib>header h2{font-weight:800}
+.mp-poster{border:2px solid #2c2219;box-shadow:4px 4px 0 #2c2219}.mp-btn{color:#fff;border:2px solid #17171a;box-shadow:0 3px 0 #17171a}
+body.oled-black{--mp-text:#e9dfcb;--mp-sub:#998a75;--mp-panel:rgba(16,14,12,.96);--mp-panel2:rgba(255,240,220,.07);--mp-line:rgba(255,240,220,.14);color:#e9dfcb}
+body.oled-black nav{border-color:#3a3026}body.oled-black nav button{background:#17130f;border-color:#3a3026;color:#e9dfcb}body.oled-black nav button.on{background:#e9dfcb;color:#17130f}
+body.oled-black .paper{background:#0b0a08;border-color:#3a3026;box-shadow:none;background-image:repeating-linear-gradient(#0000 0 37px,#ffffff10 37px 38px)}
+body.oled-black .mp-ly-line{color:#e9dfcb55}body.oled-black .mp-ly-line.on{color:#e9dfcb}body.oled-black .mp-ly-line.on span{background-image:linear-gradient(transparent 85%,var(--mp-accent) 85% 95%,transparent 95%)}
+body.oled-black .tape{box-shadow:none}body.oled-black .keys button:not(.pp){background:#17130f;color:#e9dfcb;border-color:#3a3026;box-shadow:0 6px 0 #3a3026}body.oled-black .seek{background:#000;border-color:#3a3026}
+body.immersive nav{display:none}body.immersive{grid-template-rows:minmax(0,1fr)}body.immersive .dev{width:min(100%,720px)}body.immersive .lyr{font-size:26px}
+@media(max-width:900px){nav button span{display:none}.now{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.dev{width:min(92vw,52vh)}.paper{height:100%;rotate:0deg}.keys button{height:40px}}
+</style></head><body>
+<nav data-static data-autohide><h1>磁带机<sup>HI-FI</sup></h1><!--NAV--><span class="sp"></span><div class="tools"><!--TOOLS--></div><a class="back" href="index.html">全部风格</a></nav>
+<main>
+  <section data-view="now" class="now on">
+    <div class="dev" data-drift>
+      <div class="tape"><div class="screws"><i></i><i></i><i></i><i></i></div>
+        <div class="label"><small>SIDE A · <span data-mp="fmt"></span></small><h3><span data-mp="title"></span> — <span data-mp="artist"></span></h3></div>
+        <div class="win"><div class="reel" id="rl"><div class="hub" id="hl"></div></div><div class="reel" id="rr"><div class="hub" id="hr"></div></div></div>
+        <span class="ab">A</span><span class="ab">90</span></div>
+      <div class="meter"><canvas id="mt"></canvas></div>
+      <div class="seek" data-mp="progress" data-autohide></div>
+      <div class="keys" data-autohide><button data-mp="prev" data-icon="prev" title="倒带"></button><button class="pp" data-mp="play"></button><button data-mp="next" data-icon="next" title="快进"></button><button data-mp="shuffle" data-icon="shuffle"></button><button data-mp="repeat" data-icon="repeat"></button><div class="cnt" data-mp="cur">0:00</div></div>
+    </div>
+    <div class="paper" data-drift><h4>LYRICS · 歌词本</h4><div class="lyr" data-mp="lyrics" data-pos=".4"></div></div>
+  </section>
+  <!--VIEWS-->
+</main>
+<script>/*CORE_JS*/</script>
+<script>
+const $=id=>document.getElementById(id);let a1=0,a2=0,v=0;
+MP.on('frame',f=>{const s=MP.state,p=s.dur?s.t/s.dur:0;v+=((s.playing?1:0)-v)*Math.min(1,f.dt*3);
+  // 左盘越放越小、右盘越收越大，转速随磁带半径变化
+  const l=92-p*46,r=46+p*46;$('rl').style.setProperty('--sz',l+'%');$('rr').style.setProperty('--sz',r+'%');
+  a1+=v*f.dt*9000/l;a2+=v*f.dt*9000/r;$('hl').style.transform=`rotate(${a1}deg)`;$('hr').style.transform=`rotate(${a2}deg)`});
+MP.canvas($('mt'),(g,w,h)=>{const n=Math.floor(w/9),s=MP.spectrum(8),L=(s[1]+s[2]+s[3])/3*1.4,R=(s[2]+s[4]+s[5])/3*1.5;g.clearRect(0,0,w,h);
+  [L,R].forEach((lv,k)=>{for(let i=0;i<n;i++){const onn=i/n<lv;g.fillStyle=onn?(i/n>.8?'#e8552d':i/n>.6?'#f2b632':'#f5eddc'):'#333338';g.fillRect(i*9,k*(h/2+1),6,h/2-2)}})});
+</script></body></html>

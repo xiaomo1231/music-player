@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>02 午夜绿 · 界面 demo</title>
+<style>/*CORE_CSS*/
+/* ===== 02 午夜绿：参考 Spotify 的三栏深色布局与歌词卡片 ===== */
+:root{--mp-accent:#3ddc84;--mp-accent2:#9be36b;--mp-bg:#000;--mp-panel:rgba(28,28,28,.96);--mp-radius:10px;--card:#121212}
+body{background:#000;display:grid;grid-template-columns:260px minmax(0,1fr) 340px;grid-template-rows:minmax(0,1fr) 84px;gap:8px;padding:8px 8px 0}
+.col{background:var(--card);border-radius:10px;min-height:0;overflow:hidden;position:relative}
+aside{padding:14px 10px;display:flex;flex-direction:column;gap:2px;overflow:auto}
+aside h1{font-size:15px;margin:4px 10px 12px;display:flex;gap:8px;align-items:center}
+aside h1:before{content:"";width:22px;height:22px;border-radius:50%;background:var(--mp-accent);box-shadow:inset 0 -7px 0 -4px #000,inset 0 -13px 0 -9px #000}
+aside h6{margin:16px 10px 6px;font-size:11px;color:var(--mp-sub);letter-spacing:.1em}
+aside button{display:flex;gap:12px;align-items:center;background:none;border:0;padding:9px 10px;border-radius:6px;font-size:14px;font-weight:600;color:var(--mp-sub);text-align:left;transition:.2s}
+aside button:hover,aside button.on{color:#fff}aside button.on{background:#232323}
+aside .back{margin:auto 10px 4px}
+main .hero{height:100%;display:flex;flex-direction:column;background:linear-gradient(180deg,hsl(var(--hue) 55% 30%),var(--card) 62%);transition:background 1s}
+.top{display:flex;gap:26px;align-items:flex-end;padding:44px 30px 22px}
+.top .cv{width:210px;height:210px;border-radius:6px;background-size:cover;box-shadow:0 16px 50px rgba(0,0,0,.55);flex:none;transition:transform .2s}
+.top small{font-size:12px;font-weight:700}
+.top h2{font-size:clamp(40px,5.6vw,84px);margin:.05em 0 .12em;letter-spacing:-.03em;line-height:1}
+.top p{margin:0;font-size:13.5px;color:#ffffffc0}
+canvas#bars{flex:1;min-height:0;width:100%;display:block}
+.act{display:flex;gap:18px;align-items:center;padding:0 30px 6px}
+.act .big{width:56px;height:56px;border-radius:50%;border:0;background:var(--mp-accent);color:#000;font-size:24px;display:grid;place-items:center;transition:.15s}.act .big:hover{transform:scale(1.06)}
+.act button:not(.big){background:none;border:0;color:var(--mp-sub);font-size:22px}.act button:not(.big):hover{color:#fff}
+.act button span{display:none}
+.side{display:flex;flex-direction:column;padding:16px;gap:14px}
+.side h5{margin:0;font-size:15px}
+.lycard{flex:1;min-height:0;border-radius:10px;background:hsl(var(--hue) 45% 34%);padding:18px 20px;display:flex;flex-direction:column;transition:background 1s}
+.lycard h6{margin:0 0 6px;font-size:13px}
+.lycard [data-mp="lyrics"]{flex:1;min-height:0;font-size:21px;font-weight:800;line-height:1.35}
+.mp-ly-line{padding:.4em 0;color:rgba(0,0,0,.55)}.mp-ly-line.past{color:rgba(255,255,255,.55)}.mp-ly-line.on{color:#fff}
+.q{max-height:32%;overflow:auto}
+.mp-qrow{display:grid;grid-template-columns:40px 1fr auto;gap:10px;align-items:center;padding:6px;border-radius:6px;cursor:pointer;font-size:13px}
+.mp-qrow:hover{background:#232323}.mp-qrow i{width:40px;height:40px;border-radius:4px;background-size:cover}
+.mp-qrow b{display:block;font-weight:500}.mp-qrow small,.mp-qrow em{color:var(--mp-sub);font-size:12px;font-style:normal}.mp-qrow.on b{color:var(--mp-accent)}
+footer{grid-column:1/-1;display:grid;grid-template-columns:1fr minmax(0,1.4fr) 1fr;align-items:center;gap:20px;padding:0 10px}
+.np{display:flex;gap:12px;align-items:center;min-width:0}.np i{width:54px;height:54px;border-radius:5px;background-size:cover;flex:none}
+.np b{display:block;font-size:14px;font-weight:500}.np span{font-size:12px;color:var(--mp-sub)}
+.mid{display:grid;gap:6px}.ctrl{display:flex;justify-content:center;gap:18px;align-items:center}
+.ctrl button{background:none;border:0;color:var(--mp-sub);font-size:17px}.ctrl button:hover{color:#fff}.ctrl button.on{color:var(--mp-accent)}
+.ctrl .pp{width:34px;height:34px;border-radius:50%;background:#fff;color:#000;display:grid;place-items:center;font-size:18px}
+.bar{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;font-size:11.5px;color:var(--mp-sub);font-variant-numeric:tabular-nums}
+.line{height:4px;border-radius:4px;background:#4d4d4d;position:relative}
+.line:before{content:"";position:absolute;inset:0 auto 0 0;width:calc(var(--p,0)*100%);background:#fff;border-radius:4px}
+.line:hover:before{background:var(--mp-accent)}
+.line:hover:after{content:"";position:absolute;left:calc(var(--p,0)*100% - 6px);top:-4px;width:12px;height:12px;border-radius:50%;background:#fff}
+.right{display:flex;justify-content:flex-end;gap:6px;align-items:center;color:var(--mp-sub)}
+.right button{background:none;border:0;color:var(--mp-sub);font-size:17px;padding:6px}.right button:hover{color:#fff}.right .line{width:96px}
+/* 沉浸：整屏歌词 + 频谱 */
+body.immersive{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0;padding:0;grid-template-rows:minmax(0,1fr) 0}
+body.immersive aside{display:none}body.immersive .col{border-radius:0}
+body.immersive .side{background:hsl(var(--hue) 45% 30%);padding:6vh 5vw}body.immersive .lycard{background:none;padding:0}
+body.immersive .lycard [data-mp="lyrics"]{font-size:clamp(26px,3.2vw,48px)}body.immersive .q,body.immersive .side h5,body.immersive .lycard h6{display:none}
+body.immersive footer{position:fixed;left:0;right:0;bottom:0;height:84px;background:linear-gradient(transparent,#000c)}
+body.oled-black .hero,body.oled-black.immersive .side{background:#000}body.oled-black .lycard{background:#0a0a0a}body.oled-black .mp-ly-line{color:#555}body.oled-black .mp-ly-line.on{color:var(--mp-accent)}
+@media(max-width:1100px){body{grid-template-columns:64px minmax(0,1fr) 280px}aside button span,aside h1,aside h6,aside .back{display:none}.top .cv{width:140px;height:140px}}
+</style></head><body>
+<aside class="col" data-static><h1>午夜绿</h1><!--NAV--><h6>工具</h6><!--TOOLS--><a class="back" href="index.html">← 全部 10 款风格</a></aside>
+<main class="col">
+  <section data-view="now" class="hero on">
+    <div class="top"><div class="cv" data-mp="cover" id="cv" data-drift></div><div><small>正在播放 · <span data-mp="fmt"></span></small><h2 data-mp="title"></h2><p><b data-mp="artist"></b> · <span data-mp="album"></span> · <span data-mp="dur"></span></p></div></div>
+    <div class="act" data-autohide><button class="big" data-mp="play"></button><button data-mp="shuffle" data-icon="shuffle"></button><button data-icon="heart"></button><button data-mp="scan-open" data-icon="scan"></button><button data-mp="open-file" data-icon="folder"></button></div>
+    <canvas id="bars"></canvas>
+  </section>
+  <!--VIEWS-->
+</main>
+<div class="col side"><h5>歌词与队列</h5>
+  <div class="lycard"><h6>歌词</h6><div data-mp="lyrics" data-pos=".35"></div></div>
+  <div class="q" data-mp="queue"></div>
+</div>
+<footer data-autohide>
+  <div class="np"><i data-mp="cover"></i><div><b data-mp="title"></b><span data-mp="artist"></span></div></div>
+  <div class="mid"><div class="ctrl"><!--CTRL--></div><div class="bar"><span data-mp="cur"></span><div class="line" data-mp="progress"></div><span data-mp="dur"></span></div></div>
+  <div class="right"><button data-mp="eq-open" data-icon="eq"></button><button data-mp="oled-open" data-icon="oled"></button><button data-mp="mini" data-icon="mini"></button><button data-mp="immersive" data-icon="expand"></button><span data-icon="vol"></span><div class="line" data-mp="vol"></div></div>
+</footer>
+<script>/*CORE_JS*/</script>
+<script>
+const cv=document.getElementById('cv');
+MP.canvas(document.getElementById('bars'),(g,w,h)=>{
+  const n=Math.max(24,Math.min(72,w/14|0)),s=MP.spectrum(n),bw=w/n,hue=MP.cur().hue;
+  g.clearRect(0,0,w,h);
+  for(let i=0;i<n;i++){const v=s[i],bh=Math.max(3,v*h*.92),x=i*bw+bw*.18;
+    const gr=g.createLinearGradient(0,h-bh,0,h);gr.addColorStop(0,'#3ddc84');gr.addColorStop(1,`hsl(${hue} 70% 45%/.25)`);
+    g.fillStyle=gr;g.beginPath();g.roundRect(x,h-bh,bw*.64,bh,[bw*.3,bw*.3,0,0]);g.fill()}
+  cv.style.transform=`scale(${1+MP.level()*.05})`;
+});
+</script></body></html>

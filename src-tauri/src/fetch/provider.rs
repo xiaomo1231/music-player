@@ -1,4 +1,6 @@
 //! 下载源接口（预留）：把“能搜索、能给出下载地址”的服务接进自动获取。
+//! 音乐、视频、番剧、漫画、小说共用这一套：番剧可以给直链或磁力，漫画可以按章给图片地址（下完打包成 CBZ），
+//! 小说可以按章给正文（下完生成 EPUB）。
 //!
 //! 目前内置 B 站（`bili::BiliProvider`）。以后有正规渠道时，写一个实现了 [`Provider`] 的结构体，
 //! 在 [`builtin`] 里加一行即可：它会出现在“我的来源 → 添加下载源”里，搜索结果进入同一个搜索页，
@@ -7,12 +9,14 @@
 //!
 //! 只接你有权获取内容的服务：官方开放接口、自己的网盘或 NAS、已购买可下载的曲目、CC 授权曲库等。
 //! 不接绕过付费、会员或其他访问限制的来源。
+pub use super::pack::TextChapter;
 use super::Hit;
 use crate::parse;
 use futures_util::future::BoxFuture;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -24,7 +28,7 @@ pub struct ProviderInfo {
     pub id: String,
     /// 显示名
     pub name: String,
-    /// 支持的媒体类型：`music` / `video` / `anime`
+    /// 支持的媒体类型：`music` / `video` / `anime` / `manga`（漫画）/ `novel`（小说）
     pub media_kinds: Vec<String>,
     /// 一句话说明（授权范围、需要的账号等）
     pub note: String,
@@ -61,8 +65,14 @@ pub struct Item {
     pub duration: Option<f64>,
     /// 封面网址
     pub cover: String,
-    /// `music` / `video` / `anime`
+    /// `music` / `video` / `anime` / `manga` / `novel`
     pub media_kind: String,
+    /// 作品名（番剧 / 漫画 / 小说用）：搜索页按它分组，整理入库按它建文件夹。音乐不用填，用 `album`
+    pub series: String,
+    /// 第几季（番剧用，可选）
+    pub season: Option<i64>,
+    /// 第几集 / 第几话 / 第几章（可选）。填了以后搜索页能“追更”，新出的集数会自动下载
+    pub episode: Option<f64>,
     /// 从好到差排列；第一项是默认档位
     pub qualities: Vec<Quality>,
     /// 下载源自用的附加数据（签名、会话令牌等），原样带回 `resolve`
@@ -73,10 +83,20 @@ pub struct Item {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Target {
-    /// HTTP / HTTPS 直链，`ext` 为文件扩展名（不带点）
+    /// HTTP / HTTPS 直链，`ext` 为文件扩展名（不带点）。整本的 CBZ / EPUB / PDF 也用这个
     Http { url: String, ext: String },
-    /// 交给 yt-dlp 下载的页面地址
+    /// 交给 yt-dlp 下载的页面地址（含 m3u8 等流媒体）
     Ytdlp { url: String },
+    /// 磁力链接或 .torrent 网址，走 BT 下载（下完即停或做种，按设置）
+    Magnet { uri: String },
+    /// 漫画一话 / 一卷的全部图片地址，按顺序下载后打包成 CBZ。`headers` 是取图时要带的请求头（如 Referer、授权令牌）
+    Pages {
+        urls: Vec<String>,
+        #[serde(default)]
+        headers: BTreeMap<String, String>,
+    },
+    /// 小说若干章的正文，生成一本 EPUB
+    Chapters { chapters: Vec<TextChapter> },
 }
 
 /// `resolve` 的结果：真正的下载地址，以及可选的歌词
@@ -167,12 +187,39 @@ pub fn parse_task_url(u: &str) -> Option<(String, Item, String)> {
     Some((id, item?, quality))
 }
 
-/// 下载目录里的文件名：`歌名 - 艺人.ext`（没有艺人时只用歌名）
-pub fn file_name(item: &Item, ext: &str) -> String {
-    let base = if item.artist.trim().is_empty() {
-        item.title.trim().to_string()
+/// 集数显示：3 → “03”，3.5 → “3.5”
+pub fn ep_num(ep: f64) -> String {
+    if ep.fract() == 0.0 {
+        format!("{:02}", ep as i64)
     } else {
-        format!("{} - {}", item.title.trim(), item.artist.trim())
+        ep.to_string()
+    }
+}
+
+/// 下载目录里的文件名，整理入库时会从它认出作品和集数：
+/// - 音乐 / 视频：`歌名 - 艺人.ext`（没有艺人时只用歌名）
+/// - 番剧：`作品名 - 03.ext`（有季时 `作品名 S02E03.ext`）
+/// - 漫画：`作品名 第03话.cbz`
+/// - 小说：`书名 - 作者.epub`
+pub fn file_name(item: &Item, ext: &str) -> String {
+    let series = item.series.trim();
+    let base = match (item.media_kind.as_str(), item.episode) {
+        ("anime", Some(ep)) if !series.is_empty() => match item.season {
+            Some(s) if s > 1 => format!("{series} S{s:02}E{}", ep_num(ep)),
+            _ => format!("{series} - {}", ep_num(ep)),
+        },
+        ("manga", Some(ep)) if !series.is_empty() => format!("{series} 第{}话", ep_num(ep)),
+        ("manga", _) if !series.is_empty() && series != item.title.trim() => format!("{series} {}", item.title.trim()),
+        ("novel", _) => {
+            let t = if series.is_empty() { item.title.trim() } else { series };
+            if item.artist.trim().is_empty() {
+                t.to_string()
+            } else {
+                format!("{t} - {}", item.artist.trim())
+            }
+        }
+        _ if item.artist.trim().is_empty() => item.title.trim().to_string(),
+        _ => format!("{} - {}", item.title.trim(), item.artist.trim()),
     };
     let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
     let ext = if ext.is_empty() { "bin".to_string() } else { ext };
@@ -203,12 +250,20 @@ pub fn to_hit(provider: &str, it: &Item) -> Hit {
     if let Some(q) = q.filter(|q| !q.label.is_empty()) {
         title.push_str(&format!(" [{}]", q.label));
     }
+    // 作品名：番剧 / 漫画 / 小说用 series，音乐用专辑，都没有就用标题
+    let work = [&it.series, &it.album, &it.title]
+        .into_iter()
+        .find(|s| !s.trim().is_empty())
+        .cloned()
+        .unwrap_or_default();
     Hit {
         title,
         url: task_url(provider, it, q.map(|q| q.key.as_str()).unwrap_or("")),
         size: q.and_then(|q| q.size),
         kind: "provider".into(),
-        work: if it.album.trim().is_empty() { it.title.clone() } else { it.album.clone() },
+        work,
+        season: it.season,
+        episode: it.episode,
         resolution: q.map(|q| q.label.clone()).filter(|s| !s.is_empty()),
         group: (!it.artist.is_empty()).then(|| it.artist.clone()),
         ..Default::default()
@@ -375,6 +430,98 @@ pub mod tests {
             Target::Http {
                 url: "https://example.invalid/42.flac".into(),
                 ext: "flac".into()
+            }
+        );
+    }
+
+    #[test]
+    fn file_names_for_series() {
+        let anime = Item {
+            title: "邮差与星".into(),
+            series: "星屑邮局".into(),
+            episode: Some(3.0),
+            media_kind: "anime".into(),
+            ..Default::default()
+        };
+        assert_eq!(file_name(&anime, "mkv"), "星屑邮局 - 03.mkv");
+        let s2 = Item {
+            season: Some(2),
+            episode: Some(12.5),
+            ..anime.clone()
+        };
+        assert_eq!(file_name(&s2, "mp4"), "星屑邮局 S02E12.5.mp4");
+        let manga = Item {
+            media_kind: "manga".into(),
+            ..anime.clone()
+        };
+        assert_eq!(file_name(&manga, "cbz"), "星屑邮局 第03话.cbz");
+        let vol = Item {
+            title: "第2卷".into(),
+            episode: None,
+            ..manga.clone()
+        };
+        assert_eq!(file_name(&vol, "cbz"), "星屑邮局 第2卷.cbz");
+        let novel = Item {
+            media_kind: "novel".into(),
+            series: "潮汐档案".into(),
+            artist: "林间".into(),
+            ..Default::default()
+        };
+        assert_eq!(file_name(&novel, "epub"), "潮汐档案 - 林间.epub");
+        // 整理入库能从文件名认回作品和集数
+        let info = parse::parse_episode(Path::new("星屑邮局 - 03.mkv"));
+        assert_eq!((info.title.as_str(), info.episode), ("星屑邮局", Some(3.0)));
+    }
+
+    #[test]
+    fn hits_carry_series_and_episode() {
+        let it = Item {
+            title: "邮差与星".into(),
+            series: "星屑邮局".into(),
+            season: Some(1),
+            episode: Some(4.0),
+            media_kind: "anime".into(),
+            ..Default::default()
+        };
+        let h = to_hit("mock", &it);
+        assert_eq!(h.work, "星屑邮局");
+        assert_eq!((h.season, h.episode), (Some(1), Some(4.0)));
+        // 旧格式（没有新字段）的任务地址仍能读回
+        let old = r#"{"id":"1","title":"x","media_kind":"music","qualities":[]}"#;
+        let back: Item = serde_json::from_str(old).unwrap();
+        assert_eq!((back.series.as_str(), back.episode), ("", None));
+    }
+
+    #[test]
+    fn targets_serialize_with_type_tag() {
+        let t = Target::Pages {
+            urls: vec!["https://img.example/1.jpg".into()],
+            headers: BTreeMap::from([("Referer".to_string(), "https://example".to_string())]),
+        };
+        let v = serde_json::to_value(&t).unwrap();
+        assert_eq!(v["type"], "pages");
+        assert_eq!(
+            serde_json::from_value::<Target>(serde_json::json!({"type":"pages","urls":["a"]})).unwrap(),
+            Target::Pages {
+                urls: vec!["a".into()],
+                headers: BTreeMap::new()
+            }
+        );
+        let m: Target = serde_json::from_str(r#"{"type":"magnet","uri":"magnet:?xt=urn:btih:abc"}"#).unwrap();
+        assert_eq!(
+            m,
+            Target::Magnet {
+                uri: "magnet:?xt=urn:btih:abc".into()
+            }
+        );
+        let c: Target = serde_json::from_str(r#"{"type":"chapters","chapters":[{"title":"一","text":"正文"}]}"#).unwrap();
+        assert_eq!(
+            c,
+            Target::Chapters {
+                chapters: vec![TextChapter {
+                    title: "一".into(),
+                    text: "正文".into()
+                }]
             }
         );
     }

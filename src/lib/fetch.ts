@@ -132,7 +132,16 @@ export const STATUS_TEXT: Record<string, string> = {
   canceled: '已取消',
 };
 
-export const MEDIA_TEXT: Record<string, string> = { anime: '番剧', music: '音乐', video: '视频' };
+export const MEDIA_TEXT: Record<string, string> = { anime: '番剧', manga: '漫画', novel: '小说', music: '音乐', video: '视频' };
+
+/** 集数单位：番剧“集”、漫画“话”、小说“章” */
+export const EP_UNIT: Record<string, string> = { anime: '集', manga: '话', novel: '章', video: '集' };
+
+/** 第 3 集 / 第 12.5 话 */
+export function epText(kind: string, ep: number | null | undefined): string {
+  if (ep === null || ep === undefined) return '';
+  return `第 ${ep} ${EP_UNIT[kind] ?? '集'}`;
+}
 
 /** 进行中的任务（可以暂停、取消） */
 export const isActive = (s: string) => s === 'queued' || s === 'downloading' || s === 'seeding' || s === 'organizing';
@@ -162,6 +171,62 @@ export const fetchApi = {
   providers: () => invoke<ProviderInfo[]>('fetch_providers'),
 };
 
+// ---------- 资料源（作品资料：封面、简介、分集；见 docs/漫画番剧来源接口.md） ----------
+
+export interface MetaInfo {
+  id: string;
+  name: string;
+  media_kinds: string[];
+  note: string;
+  link_template: string;
+}
+
+export interface MetaSubject {
+  id: string;
+  title: string;
+  title_cn: string;
+  aliases: string[];
+  media_kind: string;
+  year: number | null;
+  date: string;
+  cover: string;
+  summary: string;
+  total: number | null;
+  rating: number | null;
+  tags: string[];
+  staff: string[];
+}
+
+export interface MetaCard {
+  provider: string;
+  provider_name: string;
+  link: string;
+  subject: MetaSubject;
+}
+
+export interface MetaOut {
+  cards: MetaCard[];
+  notes: string[];
+}
+
+export interface MetaEpisode {
+  sort: number;
+  title: string;
+  title_cn: string;
+  airdate: string;
+  duration: number | null;
+  special: boolean;
+}
+
+export const metaApi = {
+  providers: () => invoke<MetaInfo[]>('meta_providers'),
+  search: (query: string, mediaKind: string) => invoke<MetaOut>('meta_search', { query, mediaKind }),
+  episodes: (provider: string, subjectId: string) => invoke<MetaEpisode[]>('meta_episodes', { provider, subjectId }),
+};
+
+/** 支持这个类型的来源 / 资料源（media_kinds 为空表示都支持） */
+export const supportsKind = (kinds: string[], mk: string) => kinds.length === 0 || kinds.includes(mk);
+
 /** 下载源的一个档位 */
 export interface ProviderQuality {
   key: string;
@@ -182,6 +247,11 @@ export interface ProviderItem {
   duration: number | null;
   cover: string;
   media_kind: string;
+  /** 作品名（番剧 / 漫画 / 小说） */
+  series: string;
+  season: number | null;
+  /** 第几集 / 话 / 章 */
+  episode: number | null;
   qualities: ProviderQuality[];
 }
 

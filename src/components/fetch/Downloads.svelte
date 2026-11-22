@@ -7,7 +7,7 @@
   import SelCheck from '../SelCheck.svelte';
   // 下载列表：进度、速度、状态，暂停 / 继续 / 取消 / 重试，完成后显示整理到的路径
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, canResume, fmtBytes, isActive, STATUS_TEXT, type TaskRow } from '../../lib/fetch';
+  import { fetchApi, canResume, fmtBytes, isActive, MEDIA_TEXT, STATUS_TEXT, type TaskRow } from '../../lib/fetch';
 
   let { tasks, onchange }: { tasks: TaskRow[]; onchange?: () => void } = $props();
 
@@ -61,6 +61,7 @@
     role="presentation" onclick={e => rowClick(e, t)} onmousedown={noTextSelect}>
     <span title={t.title} class="dname">{#if sel.on && removable(t)}<SelCheck checked={sel.has(t.id)} onclick={e => (e.shiftKey ? sel.range(order, t.id, true) : sel.toggle(t.id))} />{/if}<span class="ell">{t.title}</span></span>
     <small>
+      {#if MEDIA_TEXT[t.media_kind]}{MEDIA_TEXT[t.media_kind]} ·{/if}
       {STATUS_TEXT[t.status] ?? t.status}
       {#if t.status === 'downloading' && t.speed > 0}· {fmtBytes(t.speed)}/s{/if}
       {#if t.size > 0}· {fmtBytes(t.size)}{/if}

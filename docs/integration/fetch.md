@@ -75,6 +75,9 @@ Tauri 权限：没有新增。只用到 `app.emit`（事件）和 `reqwest`。
 | `fetch_unsubscribe` | `id` | — |
 | `fetch_subs` | — | `SubView[]` |
 | `fetch_providers` | — | `ProviderInfo[]`：已接入的下载源（默认为空），开发说明见 [下载源接口](../下载源接口.md) |
+| `meta_providers` | — | `MetaInfo[]`：已接入的资料源（默认为空），开发说明见 [漫画番剧来源接口](../漫画番剧来源接口.md) |
+| `meta_search` | `query, mediaKind` | `{ cards, notes }`：作品资料卡 |
+| `meta_episodes` | `provider, subjectId` | `EpisodeMeta[]`：分集 |
 
 `FetchSettings`：`download_dir`（默认 `下载\极光播放器`）、`organize_dir`（默认 `视频\极光媒体库`）、`concurrency`（1–8，默认 3）、`speed_kbps`（0 为不限，只作用于 HTTP）、`seed_policy`（`stop` 下完即停 / `ratio` 做种到分享率）、`seed_ratio`（默认 1.0）。
 

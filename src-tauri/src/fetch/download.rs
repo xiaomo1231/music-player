@@ -1,8 +1,8 @@
-//! 下载引擎：统一队列（同时下载数、暂停 / 继续 / 取消 / 重试），三种后端：
-//! HTTP（断点续传 + 失败重试 3 次 + 限速）、BT / 磁力（librqbit，下完即停或做种到分享率）、yt-dlp（子进程，解析进度行）。
+//! 下载引擎：统一队列（同时下载数、暂停 / 继续 / 取消 / 重试），后端：
+//! HTTP（断点续传 + 失败重试 3 次 + 限速）、BT / 磁力（librqbit，下完即停或做种到分享率）、yt-dlp（子进程，解析进度行）、下载源按页 / 按章（打包 CBZ / EPUB）。
 //! 下载完成后交给 organize 删除可执行文件、识别、重命名、移入整理目录并入库。
 use super::{
-    bili, emit_task, load_settings, load_task, organize, provider, remove_task_files, set_task_progress, set_task_status, source, with_db, FetchSettings,
+    bili, emit_task, load_settings, load_task, organize, pack, provider, remove_task_files, set_task_progress, set_task_status, source, with_db, FetchSettings,
     TaskView,
 };
 use crate::{danmaku, db, tools};
@@ -141,7 +141,7 @@ pub fn cancel(app: &AppHandle, id: i64, delete_files: bool) {
 /// 删掉某个任务留下的文件和文件夹（都在下载目录里）
 fn cleanup_task(id: i64, save_path: &str, dl: &Path) {
     remove_task_files(save_path, dl);
-    for sub in [format!("bt-{id}"), format!("yt-{id}"), format!("file-{id}")] {
+    for sub in [format!("bt-{id}"), format!("yt-{id}"), format!("file-{id}"), format!("pages-{id}")] {
         remove_task_files(&dl.join(sub).to_string_lossy(), dl);
     }
 }
@@ -589,6 +589,31 @@ async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_
             // 档位是数字时当作清晰度上限（B 站下载源的档位就是画面高度，“0”为最高，空串按设置）
             ytdlp_download(app, &t, ctl, dl_dir, quality.parse::<u32>().ok()).await?
         }
+        provider::Target::Magnet { uri } => {
+            t.url = uri.clone();
+            bt_download(app, &t, ctl, dl_dir, settings).await?
+        }
+        provider::Target::Pages { urls, headers } => {
+            let out = if t.save_path.is_empty() {
+                organize::unique(dl_dir.join(provider::file_name(&item, "cbz")))
+            } else {
+                PathBuf::from(&t.save_path)
+            };
+            pages_download(app, &t, ctl, dl_dir, &out, urls, headers).await?
+        }
+        provider::Target::Chapters { chapters } => {
+            let out = organize::unique(dl_dir.join(provider::file_name(&item, "epub")));
+            save_path_of(app, t.id, &out);
+            let title = [&item.series, &item.title]
+                .into_iter()
+                .find(|s| !s.trim().is_empty())
+                .cloned()
+                .unwrap_or_default();
+            let (out2, author, chapters) = (out.clone(), item.artist.clone(), chapters.clone());
+            tokio::task::spawn_blocking(move || pack::write_epub(&out2, &title, &author, &chapters)).await??;
+            set_task_progress(app, t.id, 1.0, 0, std::fs::metadata(&out).map(|m| m.len() as i64).unwrap_or(0));
+            Some(out)
+        }
     };
     let Some(path) = got else { return Ok(None) };
     // HTTP 返回文件；yt-dlp 返回它的输出文件夹（里面是媒体文件和同名的字幕、弹幕）
@@ -613,6 +638,70 @@ async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_
         }
     }
     Ok(Some(path))
+}
+
+/// 漫画按页下载：图片先存进 `pages-<任务号>` 文件夹（已下好的页跳过，可断点续传），全部下完打包成 CBZ 再删掉文件夹
+async fn pages_download(
+    app: &AppHandle,
+    task: &TaskView,
+    ctl: &Ctl,
+    dl_dir: &Path,
+    out: &Path,
+    urls: &[String],
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Result<Option<PathBuf>> {
+    if urls.is_empty() {
+        bail!("下载源没有给出任何图片");
+    }
+    save_path_of(app, task.id, out);
+    let dir = dl_dir.join(format!("pages-{}", task.id));
+    tokio::fs::create_dir_all(&dir).await?;
+    let client = source::client();
+    let mut total: i64 = 0;
+    let started = Instant::now();
+    for (i, url) in urls.iter().enumerate() {
+        if ctl.flag() != RUN {
+            return Ok(None);
+        }
+        if let Some(p) = pack::existing_page(&dir, i) {
+            total += tokio::fs::metadata(&p).await.map(|m| m.len() as i64).unwrap_or(0);
+            continue;
+        }
+        let mut last_err = String::new();
+        let mut got = None;
+        for _attempt in 1..=3 {
+            source::throttle(url).await;
+            let mut req = source::with_auth(client.get(url.as_str()), url);
+            for (k, v) in headers {
+                req = req.header(k.as_str(), v.as_str());
+            }
+            match req.send().await {
+                Ok(resp) => {
+                    if let Err(m) = source::check_status(resp.status()) {
+                        bail!("第 {} 页：{m}", i + 1);
+                    }
+                    match resp.bytes().await {
+                        Ok(b) => {
+                            got = Some(b);
+                            break;
+                        }
+                        Err(err) => last_err = err.to_string(),
+                    }
+                }
+                Err(err) => last_err = err.to_string(),
+            }
+        }
+        let bytes = got.ok_or_else(|| anyhow!("第 {} 页下载失败：{last_err}", i + 1))?;
+        let name = format!("{}.{}", pack::page_stem(i), pack::image_ext(url, &bytes));
+        tokio::fs::write(dir.join(&name), &bytes).await?;
+        total += bytes.len() as i64;
+        let secs = started.elapsed().as_secs_f64().max(0.001);
+        set_task_progress(app, task.id, (i + 1) as f64 / urls.len() as f64, (total as f64 / secs) as i64, 0);
+    }
+    let (dir2, out2) = (dir.clone(), out.to_path_buf());
+    tokio::task::spawn_blocking(move || pack::write_cbz(&dir2, &out2)).await??;
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    Ok(Some(out.to_path_buf()))
 }
 
 #[cfg(test)]

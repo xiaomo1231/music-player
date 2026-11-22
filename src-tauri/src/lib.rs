@@ -15,6 +15,7 @@ pub mod library;
 pub mod lyrics;
 pub mod mangatr;
 pub mod media;
+pub mod meta;
 pub mod metadata;
 pub mod organize;
 pub mod parse;
@@ -293,6 +294,9 @@ pub fn run() {
             fetch::fetch_subs,
             fetch::fetch_remove_task,
             fetch::fetch_providers,
+            meta::meta_providers,
+            meta::meta_search,
+            meta::meta_episodes,
             fetch::fetch_bili_account,
             fetch::fetch_bili_qr_start,
             fetch::fetch_bili_qr_poll,

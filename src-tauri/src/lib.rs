@@ -13,6 +13,11 @@ pub mod media;
 pub mod metadata;
 pub mod organize;
 pub mod parse;
+#[cfg(feature = "mpv")]
+pub mod player;
+#[cfg(not(feature = "mpv"))]
+#[path = "player_stub.rs"]
+pub mod player;
 pub mod reader;
 pub mod scanner;
 pub mod shell;
@@ -165,6 +170,15 @@ pub fn run() {
             ai::ai_get_config,
             ai::ai_save_config,
             ai::ai_test,
+            player::mpv_load,
+            player::mpv_pause,
+            player::mpv_stop,
+            player::mpv_seek,
+            player::mpv_volume,
+            player::mpv_speed,
+            player::mpv_eq,
+            player::mpv_set_option,
+            player::mpv_play_video,
             // ↓ 各功能模块的命令（集成时加在这里）
         ])
         .run(tauri::generate_context!())

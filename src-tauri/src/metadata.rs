@@ -84,9 +84,12 @@ pub fn read_track(path: &Path, cover_dir: &Path) -> TrackMeta {
     }
     if m.artist.is_empty() {
         // “艺人 - 歌名.mp3” 这种文件名
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         if let Some((a, t)) = m.title.clone().split_once(" - ") {
             m.artist = a.trim().to_string();
             m.title = t.trim().to_string();
+        } else if let Some((a, _)) = stem.split_once(" - ") {
+            m.artist = a.trim().to_string();
         }
     }
     if m.album.is_empty() {

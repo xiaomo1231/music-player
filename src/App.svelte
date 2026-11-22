@@ -26,6 +26,7 @@
   import AiModal from './components/AiModal.svelte';
   import PlaylistAddModal from './components/PlaylistAddModal.svelte';
   import KeysModal from './components/KeysModal.svelte';
+  import FileInfoModal from './components/FileInfoModal.svelte';
   import VideoPlayer from './overlays/VideoPlayer.svelte';
   import NovelReader from './overlays/NovelReader.svelte';
   import ComicReader from './overlays/ComicReader.svelte';
@@ -306,6 +307,7 @@
 {#if ui.modal === 'ai'}<AiModal />{/if}
 {#if ui.modal === 'playlist-add'}<PlaylistAddModal />{/if}
 {#if ui.modal === 'keys'}<KeysModal />{/if}
+{#if ui.modal === 'about'}<FileInfoModal />{/if}
 
 {#if ui.videoId != null}<VideoPlayer />{/if}
 {#if ui.bookId != null}<NovelReader />{/if}

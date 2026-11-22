@@ -1,7 +1,8 @@
 // 音乐播放器状态与引擎。
 // 默认用 WebView2 自带的解码（HTMLAudioElement + Web Audio，支持 MP3/FLAC/WAV/OGG/Opus/AAC/M4A），
 // 10 段均衡器和频谱都在 Web Audio 里实现；装了 libmpv 后 engine 换成 mpv，覆盖 APE/DSD/WMA 等全部格式。
-import { invoke, fileUrl, inTauri, type Track, type LyricLine } from './api';
+import { invoke, listen, fileUrl, inTauri, type Track, type LyricLine } from './api';
+import { engine } from './engine.svelte';
 import { clamp, shuffleArr } from './util';
 import { toast } from './ui.svelte';
 
@@ -48,6 +49,8 @@ class Player {
   eq = $state<number[]>(load('eq', [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
   error = $state('');
   source = 'library';
+  /** 当前曲目用哪个引擎：web（WebView2）或 mpv */
+  backend = $state<'web' | 'mpv'>('web');
 
   el: HTMLAudioElement | null = null;
   ctx: AudioContext | null = null;
@@ -72,12 +75,13 @@ class Player {
     el.addEventListener('loadedmetadata', () => (this.dur = el.duration || this.current?.duration || 0));
     el.addEventListener('ended', () => this.onEnded());
     el.addEventListener('error', () => {
+      if (this.backend === 'mpv' || !el.getAttribute('src')) return;
       const c = this.current;
       this.error = c ? `无法播放：${c.title}` : '无法播放';
       toast(this.error + (c && !WEB_OK.has(ext(c.path)) ? `（${c.format} 需要 mpv 播放引擎）` : ''));
       this.playing = false;
     });
-    el.addEventListener('timeupdate', () => (this.t = el.currentTime));
+    el.addEventListener('timeupdate', () => this.backend === 'web' && (this.t = el.currentTime));
     try {
       const ctx = new AudioContext();
       const src = ctx.createMediaElementSource(el);
@@ -112,7 +116,7 @@ class Player {
 
   private loop = (now: number) => {
     if (this.el && this.playing) {
-      this.t = this.el.currentTime;
+      if (this.backend === 'web') this.t = this.el.currentTime;
       if (this.lastTick) this.listened += Math.min(0.25, (now - this.lastTick) / 1000) * this.speed;
     }
     this.lastTick = now;
@@ -195,9 +199,27 @@ class Player {
       this.playing = false;
       return;
     }
-    this.el!.src = fileUrl(c.path);
-    this.el!.playbackRate = this.speed;
-    if (autoplay) this.play();
+    this.backend = engine.mpv && (!WEB_OK.has(ext(c.path)) || engine.exclusive || engine.replaygain) ? 'mpv' : 'web';
+    if (this.backend === 'mpv') {
+      this.el!.pause();
+      this.el!.removeAttribute('src');
+      this.el!.load();
+      try {
+        await invoke('mpv_eq', { gains: this.eq });
+        await invoke('mpv_volume', { volume: this.muted ? 0 : this.vol });
+        await invoke('mpv_speed', { speed: this.speed });
+        await invoke('mpv_load', { path: c.path, paused: !autoplay });
+        this.playing = autoplay;
+      } catch (e) {
+        toast('mpv 播放失败：' + e);
+        this.playing = false;
+      }
+    } else {
+      if (engine.mpv) invoke('mpv_stop').catch(() => {});
+      this.el!.src = fileUrl(c.path);
+      this.el!.playbackRate = this.speed;
+      if (autoplay) this.play();
+    }
     if (inTauri) {
       invoke<LyricLine[]>('lyrics', { path: c.path })
         .then(l => {
@@ -213,6 +235,11 @@ class Player {
       if (this.current) this.load(true);
       return;
     }
+    if (this.backend === 'mpv') {
+      invoke('mpv_pause', { paused: false }).catch(() => {});
+      this.playing = true;
+      return;
+    }
     if (this.ctx?.state === 'suspended') this.ctx.resume();
     this.el.play().then(
       () => (this.playing = true),
@@ -224,6 +251,7 @@ class Player {
   }
 
   pause() {
+    if (this.backend === 'mpv') invoke('mpv_pause', { paused: true }).catch(() => {});
     this.el?.pause();
     this.playing = false;
   }
@@ -262,6 +290,16 @@ class Player {
     this.load(true);
   }
 
+  /** mpv 引擎的状态事件 */
+  onMpvState(s: { time: number; duration: number; paused: boolean }) {
+    if (this.backend !== 'mpv') return;
+    this.t = s.time;
+    if (s.duration) this.dur = s.duration;
+  }
+  onMpvEnd(natural: boolean) {
+    if (this.backend === 'mpv' && natural) this.onEnded();
+  }
+
   private onEnded() {
     if (this.repeat === 'one') {
       this.flushStats();
@@ -273,7 +311,8 @@ class Player {
   seek(t: number) {
     const d = this.dur || 0;
     this.t = clamp(t, 0, Math.max(0, d - 0.2));
-    if (this.el) this.el.currentTime = this.t;
+    if (this.backend === 'mpv') invoke('mpv_seek', { time: this.t }).catch(() => {});
+    else if (this.el) this.el.currentTime = this.t;
   }
 
   setVol(v: number) {
@@ -290,6 +329,7 @@ class Player {
 
   private applyVol() {
     const v = this.muted ? 0 : this.vol * this.vol; // 平方让音量条听感更线性
+    if (engine.mpv) invoke('mpv_volume', { volume: Math.sqrt(v) }).catch(() => {});
     if (this.gain) {
       this.el!.volume = 1;
       this.gain.gain.value = v;
@@ -298,6 +338,7 @@ class Player {
 
   setSpeed(v: number) {
     this.speed = v;
+    if (this.backend === 'mpv') invoke('mpv_speed', { speed: v }).catch(() => {});
     if (this.el) {
       this.el.playbackRate = v;
       this.el.preservesPitch = true;
@@ -307,6 +348,7 @@ class Player {
   setEq(gains: number[]) {
     this.eq = gains;
     gains.forEach((g, i) => this.filters[i] && (this.filters[i].gain.value = g));
+    if (this.backend === 'mpv') invoke('mpv_eq', { gains }).catch(() => {});
     save('eq', gains);
   }
 
@@ -427,3 +469,6 @@ if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
   ms.setActionHandler('seekto', d => d.seekTime != null && player.seek(d.seekTime));
 }
 if (typeof window !== 'undefined') window.addEventListener('beforeunload', () => player.flushStats());
+listen<{ time: number; duration: number; paused: boolean }>('mpv://state', s => player.onMpvState(s));
+listen<boolean>('mpv://end', n => player.onMpvEnd(n));
+listen<string>('mpv://error', m => toast('mpv：' + m));

@@ -1,6 +1,11 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import MoreButton from '../components/MoreButton.svelte';
-  import { openMenu, mediaEntries } from '../lib/items.svelte';
+  import BatchBar from '../components/BatchBar.svelte';
+  import SelCheck from '../components/SelCheck.svelte';
+  import Icon from '../lib/Icon.svelte';
+  import { openMenu, mediaEntries, removeMany, deleteMany, subtitleMany, type MenuEntry } from '../lib/items.svelte';
+  import { Selection, noTextSelect } from '../lib/select.svelte';
   import Poster from '../components/media/Poster.svelte';
   import SeriesDetail from '../components/media/SeriesDetail.svelte';
   import { lib } from '../lib/library.svelte';
@@ -67,7 +72,29 @@
       ui.seriesId = null;
     }
   });
+  // ---------- 多选（按部） ----------
+  const sel = new Selection();
+  const order = $derived(shown.map(s => s.id));
+  $effect(() => { const o = order; untrack(() => sel.prune(o)); });
+  $effect(() => { if (openId != null) untrack(() => sel.clear()); });
+
+  function clickS(e: MouseEvent, s: Series) {
+    if (!sel.click(e, s.id, order)) openId = s.id;
+  }
+  function batch(): MenuEntry[] {
+    const ids = sel.ids(order);
+    const done = (ok: boolean) => ok && sel.clear();
+    return [
+      { label: '生成 AI 字幕', run: () => subtitleMany(list.find(s => s.id === ids[0])?.next_id ?? null, ids.length) },
+      { label: '整理文件…', run: () => ui.go('org') },
+      'sep',
+      { label: '从媒体库移除…', run: async () => done(await removeMany('series', ids)) },
+      { label: '删除文件…', danger: true, run: async () => done(await deleteMany('series', ids)) },
+    ];
+  }
+
   function seriesMenu(e: MouseEvent, s: Series) {
+    if (sel.has(s.id) && sel.size > 1) return openMenu(e, `已选 ${sel.size} 部`, batch());
     openMenu(e, s.title, mediaEntries('series', s.id, s.title, [
       { label: '打开详情', run: () => (openId = s.id) },
       ...(s.next_id != null ? [{ label: '继续观看', run: () => s.next_id != null && ui.openItem(s.next_id, 'anime') }] : []),
@@ -75,7 +102,9 @@
   }
 </script>
 
-<section class="lib on">
+<svelte:window onkeydown={e => openId == null && sel.keys(e, () => order)} />
+
+<section class="lib on" class:multi={sel.on}>
   {#if openSeries}
     <SeriesDetail series={openSeries} kind="anime" onback={() => (openId = null)} onchanged={load} />
   {:else}
@@ -84,6 +113,9 @@
         <h2>番剧</h2>
         <p>{list.length} 部 · 点进去按集观看，缺字幕的可以生成 AI 字幕</p>
       </div>
+      {#if list.length}
+        <button class="mp-chip msel" class:on={sel.on} onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}><Icon name="check" /> {sel.on ? '退出多选' : '多选'}</button>
+      {/if}
     </header>
 
     <div class="mp-chips" style="margin:18px 0 16px">
@@ -91,6 +123,10 @@
         <button class="mp-chip" class:on={filter === f} onclick={() => (filter = f)}>{label}</button>
       {/each}
     </div>
+
+    {#if sel.on}
+      <BatchBar {sel} unit="部" total={order.length} onall={() => sel.selectAll(order)} entries={batch()} />
+    {/if}
 
     {#if !loaded}
       <div class="empty">正在读取…</div>
@@ -101,8 +137,9 @@
     {:else}
       <div class="mp-grid">
         {#each shown as s (s.id)}
-          <div class="mp-card" role="button" tabindex="0" onclick={() => (openId = s.id)} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)}>
+          <div class="mp-card" class:picked={sel.has(s.id)} role="button" tabindex="0" onclick={e => clickS(e, s)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)}>
             <Poster poster={s.poster} thumb={s.thumb} name={s.title}>
+              <SelCheck card checked={sel.has(s.id)} onclick={e => (e.shiftKey ? sel.range(order, s.id, true) : sel.toggle(s.id))} />
               <span class="mp-badge">{seriesBadge(s)}</span>
               <span class="mp-pt">{s.title}</span>
               <i class="mp-bar" style:width="{pct(s)}%"></i>
@@ -118,3 +155,7 @@
     {/if}
   {/if}
 </section>
+
+<style>
+  .msel { display: inline-flex; align-items: center; gap: 5px; }
+</style>

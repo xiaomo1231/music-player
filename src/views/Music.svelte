@@ -1,8 +1,12 @@
 <script lang="ts">
   import Icon from '../lib/Icon.svelte';
   import Cover from '../components/Cover.svelte';
+  import { untrack } from 'svelte';
   import MoreButton from '../components/MoreButton.svelte';
-  import { openMenu as popMenu, mediaEntries, ask, confirmDlg, pickImage, RESET } from '../lib/items.svelte';
+  import BatchBar from '../components/BatchBar.svelte';
+  import SelCheck from '../components/SelCheck.svelte';
+  import { openMenu as popMenu, mediaEntries, ask, confirmDlg, pickImage, RESET, removeMany, deleteMany, type MenuEntry } from '../lib/items.svelte';
+  import { Selection, noTextSelect, moveIds } from '../lib/select.svelte';
   import { openPlaylistMenu, renamePlaylist, exportPlaylist, deletePlaylist } from '../lib/playlists';
   import { coverUrl } from '../lib/api';
   import { lib } from '../lib/library.svelte';
@@ -112,7 +116,61 @@
     viewH = scroller.clientHeight;
     listTop = listEl ? listEl.offsetTop : 0;
   }
-  $effect(() => { void items; onScroll(); });
+  $effect(() => { void items; void sel.on; onScroll(); });
+
+  // ---------- 多选 ----------
+  const sel = new Selection();
+  /** 列表里歌曲的显示顺序（Shift 连选、全选、批量操作都按这个顺序） */
+  const order = $derived(items.flatMap(it => ('t' in it ? [it.t.id] : [])));
+  const byId = $derived(new Map(lib.tracks.map(t => [t.id, t])));
+  // 换列表时退出多选；列表内容变了（删除、移除）时去掉已不存在的
+  $effect(() => { void filter; untrack(() => sel.clear()); });
+  $effect(() => { const o = order; untrack(() => sel.prune(o)); });
+
+  const picked = () => sel.ids(order).map(id => byId.get(id)).filter((t): t is Track => !!t);
+
+  async function favMany(ts: Track[], favorite: boolean) {
+    await invoke('item_favorite_many', { ids: ts.map(t => t.id), favorite });
+    for (const t of ts) t.favorite = favorite;
+    toast(favorite ? `已收藏 ${ts.length} 首` : `已取消收藏 ${ts.length} 首`);
+  }
+  async function plRemoveMany(ids: number[]) {
+    const pl = curPl;
+    if (!pl) return;
+    await invoke('playlist_remove', { id: pl.id, files: ids });
+    const gone = new Set(ids);
+    plTracks = plTracks.filter(x => !gone.has(x));
+    lib.refreshPlaylists();
+    sel.clear();
+    toast(`已从歌单移除 ${ids.length} 首`);
+  }
+  /** 批量操作（批量栏和右键菜单共用） */
+  function batchEntries(): MenuEntry[] {
+    const ts = picked();
+    const ids = ts.map(t => t.id);
+    const pl = curPl;
+    return [
+      { label: '播放', run: () => { player.playList(ts, 0, filter); toast(`开始播放：${ts.length} 首`); } },
+      { label: '下一首播放', run: () => player.playNext(ts) },
+      { label: '加入队列', run: () => player.enqueue(ts) },
+      { label: '加入歌单…', run: () => ui.open('playlist-add', ids) },
+      ...(ts.some(t => !t.favorite) ? [{ label: '收藏', run: () => favMany(ts, true) }] : []),
+      ...(ts.some(t => t.favorite) ? [{ label: '取消收藏', run: () => favMany(ts, false) }] : []),
+      { label: '转换格式…', run: () => { ui.convertPaths = ts.map(t => t.path); ui.go('convert'); } },
+      ...(pl ? [{ label: '从这个歌单移除', run: () => plRemoveMany(ids) }] : []),
+      'sep',
+      { label: '从媒体库移除…', run: async () => { if (await removeMany('track', ids)) sel.clear(); } },
+      { label: '删除文件…', danger: true, run: async () => { if (await deleteMany('track', ids)) sel.clear(); } },
+    ];
+  }
+  function rowMenu(e: MouseEvent, t: Track) {
+    if (sel.has(t.id) && sel.size > 1) popMenu(e, `已选 ${sel.size} 首`, batchEntries());
+    else openMenu(e, t);
+  }
+  function rowClick(e: MouseEvent, t: Track) {
+    if (dragged) { dragged = false; return; }
+    if (!sel.click(e, t.id, order)) playFrom(t);
+  }
 
   function playFrom(t: Track) {
     player.playList(list, list.indexOf(t), filter);
@@ -171,17 +229,47 @@
     }
   }
 
-  // 歌单内拖动排序
-  let dragId: number | null = null;
-  async function dropOn(t: Track) {
-    if (!curPl || dragId == null || dragId === t.id) return;
-    const ids = [...plTracks];
-    const from = ids.indexOf(dragId), to = ids.indexOf(t.id);
-    ids.splice(from, 1);
-    ids.splice(to, 0, dragId);
-    plTracks = ids;
-    await invoke('playlist_reorder', { id: curPl.id, files: ids });
-    dragId = null;
+  // 歌单内拖动排序（指针拖动，不用 HTML5 拖放：窗口开着文件拖放时 WebView 里的 HTML5 拖放不可靠）
+  // 拖已选中的行时，所有选中的歌一起移动
+  const canReorder = $derived(!!curPl && group === 'none' && sort === 'def' && !q.trim());
+  let drag = $state<{ ids: number[]; y: number; gap: number } | null>(null);
+  let dragged = false;
+  function dragStart(e: PointerEvent, t: Track) {
+    if (!canReorder || e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) return;
+    if ((e.target as HTMLElement).closest('button, .selck')) return;
+    const y0 = e.clientY;
+    const ids = sel.has(t.id) && sel.size > 1 ? sel.ids(plTracks) : [t.id];
+    const move = (ev: PointerEvent) => {
+      if (!drag && Math.abs(ev.clientY - y0) < 6) return;
+      const r = listEl!.getBoundingClientRect();
+      const gap = Math.max(0, Math.min(list.length, Math.round((ev.clientY - r.top) / ROW)));
+      drag = { ids, y: ev.clientY, gap };
+      // 靠近上下边缘时自动滚动
+      const sr = scroller!.getBoundingClientRect();
+      if (ev.clientY < sr.top + 60) scroller!.scrollTop -= 14;
+      else if (ev.clientY > sr.bottom - 40) scroller!.scrollTop += 14;
+    };
+    const up = () => {
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', up);
+      const d = drag;
+      drag = null;
+      if (d) {
+        dragged = true;
+        setTimeout(() => (dragged = false), 0);
+        dropAt(d.ids, d.gap);
+      }
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+  }
+  async function dropAt(ids: number[], gap: number) {
+    if (!curPl) return;
+    const next = moveIds(plTracks, ids, gap);
+    if (next.every((id, i) => id === plTracks[i])) return;
+    plTracks = next;
+    await invoke('playlist_reorder', { id: curPl.id, files: next });
+    toast(ids.length > 1 ? `已移动 ${ids.length} 首` : '已调整顺序');
   }
 
   function setFilter(f: string) {
@@ -190,7 +278,9 @@
   }
 </script>
 
-<section class="lib on" bind:this={scroller} onscroll={onScroll}>
+<svelte:window onkeydown={e => sel.keys(e, () => order)} />
+
+<section class="lib on" class:multi={sel.on} bind:this={scroller} onscroll={onScroll}>
   <header>
     <div><h2>音乐</h2><p>共 {lib.tracks.length} 首{list.length !== lib.tracks.length ? `，当前显示 ${list.length} 首` : ''} · 点卡片上的播放键直接播放整组</p></div>
     <input class="tin" placeholder="在音乐库里筛选" bind:value={q} style="width:200px" />
@@ -201,6 +291,10 @@
     <select class="sel" bind:value={sort}>
       <option value="def">默认排序</option><option value="plays">按播放次数</option><option value="added">按添加时间</option><option value="title">按标题</option><option value="duration">按时长</option>
     </select>
+    {#if lib.tracks.length}
+      <button class="mp-chip msel" class:on={sel.on} title="多选后批量播放、加入歌单、移除或删除（也可以 Ctrl / Shift 点击，Ctrl+A 全选）"
+        onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}><Icon name="check" /> {sel.on ? '退出多选' : '多选'}</button>
+    {/if}
   </header>
 
   {#if !lib.tracks.length}
@@ -236,7 +330,10 @@
       <button class="mp-chip" onclick={() => ui.open('playlist-add', [])}>＋ 新建歌单</button>
     </div>
 
-    {#if curPl}
+    {#if sel.on}
+      <BatchBar {sel} unit="首" total={order.length} onall={() => sel.selectAll(order)} entries={batchEntries()}
+        hint={curPl && canReorder ? '单击勾选，Shift 连选，Ctrl+A 全选；拖动选中的歌可以一起调整顺序' : undefined} />
+    {:else if curPl}
       <div class="plbar">
         <b>{curPl.name}</b><span class="badge2">{curPl.count} 首</span>
         <button class="mp-chip" onclick={() => plAct('play')}><Icon name="play" /> 播放</button>
@@ -244,13 +341,17 @@
         <button class="mp-chip" onclick={() => plAct('export')}>导出 .m3u8</button>
         <button class="mp-chip" onclick={() => plAct('del')}>删除歌单</button>
         <MoreButton floating={false} title="更多" onopen={e => openPlaylistMenu(e, curPl!)} />
-        <span class="engine-note">拖动歌曲可以调整顺序</span>
+        <span class="engine-note">{canReorder ? '拖动歌曲可以调整顺序，选中多首可以一起拖' : '默认排序、不分组、不筛选时可以拖动调整顺序'}</span>
       </div>
-    {:else if group === 'none'}
+    {:else}
       <div class="plbar"><button class="mp-chip" onclick={() => playGroup(list)}><Icon name="play" /> 播放全部</button><button class="mp-chip" onclick={() => playGroup(list, true)}><Icon name="shuffle" /> 随机播放</button></div>
     {/if}
 
-    <div bind:this={listEl} class="vlist" style:height="{offsets[items.length]}px">
+    <div bind:this={listEl} class="vlist" class:dragging={!!drag} style:height="{offsets[items.length]}px">
+      {#if drag}
+        <div class="dropline" style:top="{drag.gap * ROW - 1}px"></div>
+        <div class="dragtip" style:top="{drag.y}px">移动 {drag.ids.length} 首</div>
+      {/if}
       {#each items.slice(range[0], range[1]) as it, j (('h' in it ? 'h:' + it.h : it.t.id) + ':' + (range[0] + j))}
         {@const top = offsets[range[0] + j]}
         {#if 'h' in it}
@@ -260,11 +361,13 @@
           </div>
         {:else}
           {@const t = it.t}
-          <div class="mp-row mrow" class:on={player.current?.id === t.id} style="position:absolute;left:0;right:0;top:{top}px;height:{ROW}px"
-            role="button" tabindex="-1" draggable={!!curPl}
-            ondragstart={() => (dragId = t.id)} ondragover={e => curPl && e.preventDefault()} ondrop={() => dropOn(t)}
-            ondblclick={() => playFrom(t)} onclick={() => playFrom(t)} oncontextmenu={e => openMenu(e, t)} onkeydown={() => {}}>
-            <span class="mp-n">{String(it.n).padStart(2, '0')}</span>
+          {@const checked = sel.has(t.id)}
+          <div class="mp-row mrow" class:on={player.current?.id === t.id} class:picked={checked} class:moving={drag?.ids.includes(t.id)}
+            style="position:absolute;left:0;right:0;top:{top}px;height:{ROW}px"
+            role="button" tabindex="-1" onpointerdown={e => dragStart(e, t)} onmousedown={noTextSelect}
+            ondblclick={() => playFrom(t)} onclick={e => rowClick(e, t)} oncontextmenu={e => rowMenu(e, t)} onkeydown={() => {}}>
+            <span class="mp-n"><span class="num">{String(it.n).padStart(2, '0')}</span>
+              <SelCheck {checked} onclick={e => (e.shiftKey ? sel.range(order, t.id, true) : sel.toggle(t.id))} /></span>
             <Cover cover={t.cover} name={t.album} hue={t.hue} />
             <span class="mp-t">{t.title}<small>{t.artist || '未知艺人'}</small></span>
             <span class="mp-al" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{t.album}</span>
@@ -275,7 +378,7 @@
               <button class:fav={t.favorite} title="收藏 (Ctrl+D)" onclick={e => { e.stopPropagation(); lib.toggleFav(t.id); }}><Icon name="heart" /></button>
               <button title="加入歌单" onclick={e => { e.stopPropagation(); ui.open('playlist-add', [t.id]); }}><Icon name="plus" /></button>
               {#if curPl}<button title="移出歌单" onclick={async e => { e.stopPropagation(); await invoke('playlist_remove', { id: curPl.id, files: [t.id] }); plTracks = plTracks.filter(x => x !== t.id); lib.refreshPlaylists(); }}><Icon name="close" /></button>{/if}
-              <button title="更多" onclick={e => { e.stopPropagation(); openMenu(e, t); }}><Icon name="more" /></button>
+              <button title="更多" onclick={e => { e.stopPropagation(); rowMenu(e, t); }}><Icon name="more" /></button>
             </span>
           </div>
         {/if}
@@ -300,4 +403,23 @@
   .sc.sc-add { display: grid; place-items: center; text-align: center; background: var(--glass); padding: 8px; }
   .sc .sc-hidden { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; font-size: 11.5px; margin-top: 4px; color: var(--mp-sub); align-items: center; max-height: 44px; overflow: hidden; }
   .sc .sc-hidden .mp-chip { padding: 2px 8px; font-size: 11px; }
+
+  /* 多选：序号位置悬停时变成勾选框，多选状态下一直显示 */
+  .msel { display: inline-flex; align-items: center; gap: 5px; }
+  .mrow .mp-n { display: grid; align-items: center; justify-items: start; }
+  .mrow .mp-n > :global(*) { grid-area: 1 / 1; }
+  .mrow .mp-n :global(.selck) { opacity: 0; }
+  .mrow:hover .mp-n :global(.selck), .multi .mrow .mp-n :global(.selck) { opacity: 1; }
+  .mrow:hover .num, .multi .mrow .num { opacity: 0; }
+  .mrow.picked { background: color-mix(in srgb, var(--mp-accent) 15%, transparent); }
+  .mrow.picked:hover { background: color-mix(in srgb, var(--mp-accent) 22%, transparent); }
+  .mrow.moving { opacity: .45; }
+  .vlist.dragging, .vlist.dragging .mrow { cursor: grabbing; }
+  .dropline { position: absolute; left: 0; right: 0; height: 2px; background: var(--mp-accent); z-index: 3; pointer-events: none; box-shadow: 0 0 8px var(--mp-accent); }
+  .dragtip { position: fixed; left: 50%; translate: -50% -140%; z-index: 20; pointer-events: none; font-size: 12px; padding: 3px 10px; border-radius: 99px; background: var(--mp-accent); color: #0b0b10; font-weight: 600; }
+  /* 窄窗口：保留序号 / 勾选框这一列 */
+  @media (max-width: 980px) {
+    .mrow { grid-template-columns: 2em 2.6em minmax(0, 1fr) 3.2em 4.6em; }
+    .mrow .mp-n { display: grid; }
+  }
 </style>

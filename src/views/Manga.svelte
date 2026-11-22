@@ -1,6 +1,11 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import MoreButton from '../components/MoreButton.svelte';
-  import { openMenu, mediaEntries } from '../lib/items.svelte';
+  import BatchBar from '../components/BatchBar.svelte';
+  import SelCheck from '../components/SelCheck.svelte';
+  import Icon from '../lib/Icon.svelte';
+  import { openMenu, mediaEntries, removeMany, deleteMany, type MenuEntry } from '../lib/items.svelte';
+  import { Selection, noTextSelect } from '../lib/select.svelte';
   import { invoke, inTauri, type ComicItem } from '../lib/api';
   import { lib } from '../lib/library.svelte';
   import { ui } from '../lib/ui.svelte';
@@ -59,18 +64,44 @@
   function open(id: number) {
     ui.comicId = id;
   }
+  // ---------- 多选 ----------
+  const sel = new Selection();
+  const order = $derived(comics.map(x => x.id));
+  $effect(() => { const o = order; untrack(() => sel.prune(o)); });
+  function clickItem(e: MouseEvent, id: number) {
+    if (!sel.click(e, id, order)) open(id);
+  }
+  function batch(): MenuEntry[] {
+    const ids = sel.ids(order);
+    const done = (ok: boolean) => ok && sel.clear();
+    return [
+      { label: '从媒体库移除…', run: async () => done(await removeMany('comic', ids)) },
+      { label: '删除文件…', danger: true, run: async () => done(await deleteMany('comic', ids)) },
+    ];
+  }
+
   function comicMenu(e: MouseEvent, c: ComicItem) {
+    if (sel.has(c.id) && sel.size > 1) return openMenu(e, `已选 ${sel.size} 卷`, batch());
     openMenu(e, c.title, mediaEntries('comic', c.id, c.title, [{ label: '打开', run: () => open(c.id) }]));
   }
 </script>
 
-<section class="lib on">
+<svelte:window onkeydown={e => sel.keys(e, () => order)} />
+
+<section class="lib on" class:multi={sel.on}>
   <header>
     <div>
       <h2>漫画</h2>
       <p>{comics.length ? `${groups.length} 个系列 · 共 ${comics.length} 卷` : '本地 CBZ / ZIP / PDF / 图片文件夹'}</p>
     </div>
+    {#if comics.length}
+      <button class="mp-chip msel" class:on={sel.on} onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}><Icon name="check" /> {sel.on ? '退出多选' : '多选'}</button>
+    {/if}
   </header>
+
+  {#if sel.on}
+    <BatchBar {sel} unit="卷" total={order.length} onall={() => sel.selectAll(order)} entries={batch()} />
+  {/if}
 
   {#if !loaded}
     <p class="empty">正在读取…</p>
@@ -81,8 +112,9 @@
       <h3 class="series">{g.name} <small>{g.items.length} 卷</small></h3>
       <div class="mp-grid">
         {#each g.items as c (c.id)}
-          <div class="mp-card mp-book" role="button" tabindex="0" onclick={() => open(c.id)} onkeydown={e => e.key === 'Enter' && open(c.id)} oncontextmenu={e => comicMenu(e, c)}>
+          <div class="mp-card mp-book" class:picked={sel.has(c.id)} role="button" tabindex="0" onclick={e => clickItem(e, c.id)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && open(c.id)} oncontextmenu={e => comicMenu(e, c)}>
             <Cover cover={c.cover} name={c.title} tag="div" cls="mp-poster">
+            <SelCheck card checked={sel.has(c.id)} onclick={e => (e.shiftKey ? sel.range(order, c.id, true) : sel.toggle(c.id))} />
               <span class="mp-badge">{fmt(c)}</span>
               {#if !c.cover}<span class="mp-pt">{c.title}</span>{/if}
               <i class="mp-bar" style="width:{pct(c)}%"></i>
@@ -98,6 +130,7 @@
 </section>
 
 <style>
+  .msel { display: inline-flex; align-items: center; gap: 5px; }
   .mp-card {
     background: none;
     border: 0;

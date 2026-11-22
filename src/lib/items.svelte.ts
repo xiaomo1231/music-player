@@ -1,7 +1,7 @@
 // 条目管理：统一的“⋯”菜单、改名 / 确认对话框，以及对各类条目的操作
 import { invoke, inTauri } from './api';
 import { lib } from './library.svelte';
-import { toast } from './ui.svelte';
+import { ui, toast } from './ui.svelte';
 import { fmtSize } from './util';
 
 export type MediaKind = 'track' | 'video' | 'series' | 'book' | 'comic';
@@ -20,9 +20,16 @@ export type Dialog =
 
 export const RESET = Symbol('reset');
 
+/** 批量移除后的“撤销”条 */
+export interface UndoReq {
+  msg: string;
+  paths: string[];
+}
+
 class Items {
   menu = $state<MenuReq | null>(null);
   dialog = $state<Dialog | null>(null);
+  undo = $state<UndoReq | null>(null);
 }
 export const items = new Items();
 
@@ -131,4 +138,88 @@ export function mediaEntries(kind: MediaKind, id: number, title: string, extra: 
     { label: kind === 'series' ? '从媒体库移除整部…' : '从媒体库移除…', run: () => removeItem(kind, id, title) },
     { label: kind === 'series' ? '删除整部的文件…' : '删除文件…', run: () => deleteItem(kind, id, title), danger: true },
   ];
+}
+
+// ---------- 批量 ----------
+
+/** 多选时的量词：3 首、3 个视频、3 部、3 本、3 卷 */
+export const COUNT: Record<MediaKind, (n: number) => string> = {
+  track: n => `${n} 首歌曲`,
+  video: n => `${n} 个视频`,
+  series: n => `${n} 部`,
+  book: n => `${n} 本小说`,
+  comic: n => `${n} 卷漫画`,
+};
+
+let undoTimer: ReturnType<typeof setTimeout> | undefined;
+function showUndo(u: UndoReq) {
+  items.undo = u;
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => (items.undo = null), 10000);
+}
+
+/** 撤销批量移除：把这些路径从“已移除”名单里去掉并重新入库（播放次数、进度不会回来） */
+export async function undoRemove() {
+  const u = items.undo;
+  if (!u) return;
+  items.undo = null;
+  clearTimeout(undoTimer);
+  try {
+    const added = await invoke<[number, string][]>('add_files', { paths: u.paths });
+    await lib.refresh();
+    toast(`已撤销：${added.length} 个文件重新加入媒体库`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+/** 批量从媒体库移除（确认后执行，完成后显示撤销条）。返回是否已移除 */
+export async function removeMany(kind: MediaKind, ids: number[]) {
+  if (!ids.length) return false;
+  const f = await invoke<{ files: string[] }>('item_files_many', { kind, ids });
+  const what = COUNT[kind](ids.length);
+  const ok = await confirmDlg(
+    '从媒体库移除',
+    `把选中的 ${what}${f.files.length !== ids.length ? `（共 ${f.files.length} 个文件）` : ''}从媒体库移除。硬盘上的文件不会删除，以后扫描也会跳过它们。播放次数、进度会一起清掉；移除后可以马上撤销。`,
+    { ok: '移除' },
+  );
+  if (!ok) return false;
+  try {
+    const paths = await invoke<string[]>('item_remove_many', { kind, ids });
+    await lib.refresh();
+    showUndo({ msg: `已从媒体库移除 ${what}`, paths });
+    return true;
+  } catch (e) {
+    toast(String(e));
+    return false;
+  }
+}
+
+/** 批量删除文件（移入回收站）。返回是否已删除 */
+export async function deleteMany(kind: MediaKind, ids: number[]) {
+  if (!ids.length) return false;
+  const f = await invoke<{ files: string[]; extras: string[]; size: number }>('item_files_many', { kind, ids });
+  const list = [...f.files, ...f.extras];
+  const ok = await confirmDlg(
+    `删除 ${COUNT[kind](ids.length)}`,
+    `下面 ${list.length} 个文件（共 ${fmtSize(f.size)}${f.extras.length ? `，含 ${f.extras.length} 个同名字幕 / 歌词` : ''}）会移入回收站，同时从媒体库删除。需要时可以在回收站里还原。`,
+    { list: list.length > 400 ? [...list.slice(0, 400), `……还有 ${list.length - 400} 个文件`] : list, ok: `移入回收站（${list.length} 个文件）`, danger: true },
+  );
+  if (!ok) return false;
+  try {
+    await invoke('item_delete_many', { kind, ids });
+    toast(`已移入回收站：${list.length} 个文件`);
+    await lib.refresh();
+    return true;
+  } catch (e) {
+    toast(String(e));
+    return false;
+  }
+}
+
+/** 批量“生成 AI 字幕”：字幕页一次只接一个视频，带上第一个并提示 */
+export function subtitleMany(first: number | null, n: number) {
+  ui.subVideo = first;
+  ui.go('aisub');
+  if (n > 1) toast(`AI 字幕页一次处理一个视频，已带上第一个；同一部的整季可以在那里勾选“整季批量处理”`);
 }

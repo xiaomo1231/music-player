@@ -399,7 +399,7 @@
       </button>
     </div>
 
-    <Queue {jobs} {speeds} {actions} onclear={clearDone} />
+    <Queue {jobs} {speeds} {actions} onclear={clearDone} onremoved={loadJobs} />
 
     <div class="mp-plugin">
       <input

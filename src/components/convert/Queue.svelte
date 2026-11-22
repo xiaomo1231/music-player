@@ -1,5 +1,12 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { STATUS_LABEL, baseName, dirName, isAudioPath, isVideoPath, type ConvertJob } from '../../lib/convert';
+  import { invoke } from '../../lib/api';
+  import { toast } from '../../lib/ui.svelte';
+  import { confirmDlg, type MenuEntry } from '../../lib/items.svelte';
+  import { Selection, noTextSelect } from '../../lib/select.svelte';
+  import BatchBar from '../BatchBar.svelte';
+  import SelCheck from '../SelCheck.svelte';
 
   interface Actions {
     cancel: (id: number) => void;
@@ -15,12 +22,38 @@
     speeds,
     actions,
     onclear,
+    onremoved,
   }: {
     jobs: ConvertJob[];
     speeds: Record<number, number | null>;
     actions: Actions;
     onclear: () => void;
+    /** 批量删除记录之后（重新读取列表） */
+    onremoved?: () => void;
   } = $props();
+
+  // 多选删除记录：进行中 / 排队中的任务不能选
+  const sel = new Selection();
+  const removable = (j: ConvertJob) => j.status !== 'queued' && j.status !== 'running';
+  const order = $derived(jobs.filter(removable).map(j => j.id));
+  $effect(() => { const o = order; untrack(() => sel.prune(o)); });
+  function rowClick(e: MouseEvent, j: ConvertJob) {
+    if (!removable(j) || (e.target as HTMLElement).closest('button')) return;
+    sel.click(e, j.id, order);
+  }
+  async function removeSelected() {
+    const ids = sel.ids(order);
+    if (!(await confirmDlg('删除记录', `删除选中的 ${ids.length} 条转换记录？只删除记录，不动任何文件。`, { ok: '删除记录' }))) return;
+    try {
+      for (const id of ids) await invoke('convert_remove', { id });
+      toast(`已删除 ${ids.length} 条记录`);
+    } catch (e) {
+      toast(String(e));
+    }
+    sel.clear();
+    onremoved?.();
+  }
+  const entries: MenuEntry[] = [{ label: '删除记录', danger: true, run: removeSelected }];
 
   function statusText(j: ConvertJob): string {
     if (j.status === 'running') {
@@ -49,16 +82,26 @@
 
 <div class="qhead">
   <h5>队列 <span class="badge2">{jobs.length}</span></h5>
-  <button class="mp-btn ghost" onclick={onclear}>清除已结束</button>
+  <span class="qacts">
+    {#if order.length}<button class="mp-btn ghost" class:on={sel.on} onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}>{sel.on ? '退出多选' : '多选'}</button>{/if}
+    <button class="mp-btn ghost" onclick={onclear}>清除已结束</button>
+  </span>
 </div>
+
+<svelte:window onkeydown={e => order.length && sel.keys(e, () => order)} />
+
+{#if sel.on}
+  <BatchBar {sel} unit="条" total={order.length} onall={() => sel.selectAll(order)} {entries} hint="单击勾选，Shift 连选，Ctrl+A 全选（进行中的任务不能选）" />
+{/if}
 
 {#if !jobs.length}
   <div class="empty">还没有转换任务</div>
 {:else}
   <div class="mp-q">
     {#each jobs as j (j.id)}
-      <div class="mp-qi" style="--p:{j.progress}">
-        <span title={j.input}>{baseName(j.input)}</span>
+      <div class="mp-qi" class:picked={sel.has(j.id)} class:pickable={sel.on && removable(j)} style="--p:{j.progress}"
+        role="presentation" onclick={e => rowClick(e, j)} onmousedown={noTextSelect}>
+        <span title={j.input} class="qname">{#if sel.on && removable(j)}<SelCheck checked={sel.has(j.id)} onclick={e => (e.shiftKey ? sel.range(order, j.id, true) : sel.toggle(j.id))} />{/if}<span class="ell">{baseName(j.input)}</span></span>
         <small class="mp-qs">{statusText(j)}</small>
         <small title={j.output ?? j.out_dir ?? ''}>{j.preset_name}</small>
         <span></span>
@@ -105,6 +148,12 @@
     gap: 8px;
     margin: 18px 0 10px;
   }
+  .qacts { display: flex; gap: 6px; }
+  .qacts .on { border-color: var(--mp-accent); color: var(--mp-accent); }
+  .qname { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pickable { cursor: pointer; }
+  .picked { background: color-mix(in srgb, var(--mp-accent) 15%, transparent); }
   .qhead h5 {
     margin: 0;
     font-size: 14px;

@@ -1,7 +1,7 @@
 <script lang="ts">
   // 全局的“⋯”菜单 + 改名 / 确认对话框（由 lib/items.svelte.ts 控制）
   import Modal from './Modal.svelte';
-  import { items, RESET } from '../lib/items.svelte';
+  import { items, RESET, undoRemove } from '../lib/items.svelte';
   let el: HTMLDivElement | undefined = $state();
   let pos = $state({ left: 0, top: 0 });
   let input: HTMLInputElement | undefined = $state();
@@ -69,7 +69,21 @@
   </Modal>
 {/if}
 
+{#if items.undo}
+  <div class="undobar" role="status">
+    <span>{items.undo.msg}</span>
+    <button class="mp-btn" onclick={undoRemove}>撤销</button>
+    <button class="x" title="关闭" aria-label="关闭" onclick={() => (items.undo = null)}>×</button>
+  </div>
+{/if}
+
 <style>
+  .undobar { position: fixed; left: 50%; bottom: 96px; translate: -50% 0; z-index: 1003; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 32px);
+    background: var(--mp-panel); border: 1px solid var(--edge); backdrop-filter: blur(30px); box-shadow: var(--mp-shadow); padding: 8px 10px 8px 18px; border-radius: 999px; font-size: 13px; }
+  .undobar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .undobar .mp-btn { padding: 5px 14px; }
+  .undobar .x { background: none; border: 0; color: var(--mp-sub); font-size: 18px; line-height: 1; padding: 2px 6px; border-radius: 6px; }
+  .undobar .x:hover { color: var(--mp-text); background: rgba(255, 255, 255, .1); }
   .itemmenu { z-index: 960; }
   .itemmenu hr { border: 0; border-top: 1px solid var(--edge); margin: 4px 6px; }
   .itemmenu button.danger { color: #ff8a8a; }

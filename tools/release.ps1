@@ -38,13 +38,21 @@ if (-not $m.Success -or -not $m.Groups[1].Value.Trim()) { throw "CHANGELOG.md �
 $notes = $m.Groups[1].Value.Trim()
 
 # ---- 发布前检查 ----
+# Windows PowerShell 5.1 在 Stop 模式下会把外部命令的 stderr 当成异常，这里临时放宽
+function Invoke-Quiet([scriptblock]$cmd) {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { $out = & $cmd 2>$null } finally { $ErrorActionPreference = $old }
+  return $out
+}
+
 if (-not $DryRun) {
-  gh release view $tag --repo $repo *> $null
+  Invoke-Quiet { gh release view $tag --repo $repo } | Out-Null
   if ($LASTEXITCODE -eq 0) { throw "GitHub 上已经有 $tag 了。改版本号后再发布。" }
   if (-not $env:GITHUB_ACTIONS) {
     $head = (git rev-parse HEAD).Trim()
-    git fetch -q origin
-    $onRemote = git branch -r --contains $head 2>$null
+    Invoke-Quiet { git fetch -q origin } | Out-Null
+    $onRemote = Invoke-Quiet { git branch -r --contains $head }
     if (-not $onRemote) { throw "当前提交 $head 还没推送到 GitHub，先合并 / 推送再发布。" }
     if (git status --porcelain --untracked-files=no) { throw "有未提交的改动，先提交再发布。" }
   }
@@ -63,7 +71,9 @@ if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
 $nsisDir = Join-Path $root 'src-tauri/target/release/bundle/nsis'
 if (-not $SkipBuild) {
   if (Test-Path $nsisDir) { Remove-Item -Recurse -Force $nsisDir }
+  $ErrorActionPreference = 'Continue'
   pnpm tauri build --bundles nsis
+  $ErrorActionPreference = 'Stop'
   if ($LASTEXITCODE -ne 0) { throw "打包失败" }
 }
 $setup = Get-ChildItem $nsisDir -Filter "*_${version}_x64-setup.exe" | Select-Object -First 1
@@ -95,6 +105,7 @@ if ($DryRun) { Write-Host "DryRun：没有上传。"; exit 0 }
 
 # ---- 上传 ----
 $target = (git rev-parse HEAD).Trim()
+$ErrorActionPreference = 'Continue'
 gh release create $tag --repo $repo --target $target --title "极光播放器 $version" --notes-file (Join-Path $out 'notes.md') `
   (Join-Path $out $assetName) (Join-Path $out "$assetName.sig") (Join-Path $out 'latest.json')
 if ($LASTEXITCODE -ne 0) { throw "上传失败" }

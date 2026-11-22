@@ -2,10 +2,10 @@
 //! HTTP（断点续传 + 失败重试 3 次 + 限速）、BT / 磁力（librqbit，下完即停或做种到分享率）、yt-dlp（子进程，解析进度行）、下载源按页 / 按章（打包 CBZ / EPUB）。
 //! 下载完成后交给 organize 删除可执行文件、识别、重命名、移入整理目录并入库。
 use super::{
-    emit_task, load_settings, load_task, organize, pack, provider, remove_task_files, set_task_progress, set_task_status, source, with_db, FetchSettings,
+    bili, emit_task, load_settings, load_task, organize, pack, provider, remove_task_files, set_task_progress, set_task_status, source, with_db, FetchSettings,
     TaskView,
 };
-use crate::{db, tools};
+use crate::{danmaku, db, tools};
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::StreamExt;
 use librqbit::api::TorrentIdOrHash;
@@ -195,7 +195,7 @@ async fn run(app: &AppHandle, id: i64, ctl: &Arc<Ctl>) -> Result<Option<organize
         "http" => http_download(app, &task, ctl, &dl_dir, &settings).await?,
         "file" => local_copy(app, &task, &dl_dir).await?,
         "magnet" | "torrent" => bt_download(app, &task, ctl, &dl_dir, &settings).await?,
-        "ytdlp" => ytdlp_download(app, &task, ctl, &dl_dir).await?,
+        "ytdlp" => ytdlp_download(app, &task, ctl, &dl_dir, None).await?,
         "provider" => provider_download(app, &task, ctl, &dl_dir, &settings).await?,
         other => bail!("不支持的下载类型：{other}"),
     };
@@ -441,28 +441,62 @@ async fn bt_download(app: &AppHandle, task: &TaskView, ctl: &Ctl, dl_dir: &Path,
     Ok(Some(out_dir))
 }
 
-/// yt-dlp 子进程：解析 [download] 进度行，结束后找到输出文件
-async fn ytdlp_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_dir: &Path) -> Result<Option<PathBuf>> {
+/// yt-dlp 子进程：解析 [download] 进度行。成功后返回任务自己的输出文件夹（视频和同名的字幕、弹幕、封面一起整理入库）。
+/// B 站网址会带上登录 Cookie（临时文件，用完即删）、清晰度、字幕和弹幕参数，见 bili::ytdlp_args
+/// `quality`：清晰度上限（画面高度），给下载源在搜索页选的档位用；None 时按设置
+async fn ytdlp_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_dir: &Path, quality: Option<u32>) -> Result<Option<PathBuf>> {
     let exe = source::ytdlp_path().ok_or_else(|| anyhow!(source::YTDLP_MISSING))?;
     let out_dir = dl_dir.join(format!("yt-{}", task.id));
     tokio::fs::create_dir_all(&out_dir).await?;
     source::throttle(&task.url).await;
+    let settings = with_db(app, |c| Ok(load_settings(c)))?;
+    let mut opts = bili::YtOpts::new(&task.url, &task.media_kind, &settings);
+    if let Some(q) = quality {
+        opts.quality = q;
+    }
     let (app2, ctl2) = (app.clone(), ctl.clone());
-    let (id, url) = (task.id, task.url.clone());
-    tokio::task::spawn_blocking(move || ytdlp_blocking(&app2, id, &ctl2, &exe, &url, &out_dir)).await?
+    let (id, url, dl) = (task.id, task.url.clone(), dl_dir.to_path_buf());
+    tokio::task::spawn_blocking(move || ytdlp_blocking(&app2, id, &ctl2, &exe, &url, &out_dir, &dl, opts)).await?
 }
 
-fn ytdlp_blocking(app: &AppHandle, id: i64, ctl: &Ctl, exe: &Path, url: &str, out_dir: &Path) -> Result<Option<PathBuf>> {
+#[allow(clippy::too_many_arguments)]
+fn ytdlp_blocking(
+    app: &AppHandle,
+    id: i64,
+    ctl: &Ctl,
+    exe: &Path,
+    url: &str,
+    out_dir: &Path,
+    dl_dir: &Path,
+    mut opts: bili::YtOpts,
+) -> Result<Option<PathBuf>> {
+    // Cookie 文件放在下载目录（不放进输出文件夹，免得被整理），函数结束时自动删除
+    let cookies = bili::temp_cookies(url, dl_dir, &id.to_string());
+    opts.cookies = cookies.as_ref().map(|c| c.path().to_path_buf());
     let mut cmd = tools::command(exe);
-    cmd.args(["--newline", "--no-playlist", "--no-warnings", "-P"])
-        .arg(out_dir)
-        .args(["-o", "%(title).150B [%(id)s].%(ext)s", "--"])
+    cmd.args(bili::ytdlp_args(&opts, out_dir))
+        .arg("--")
         .arg(url)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     let mut child = cmd.spawn().context("启动 yt-dlp 失败")?;
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("无法读取 yt-dlp 的输出"))?;
-    let mut last_dest: Option<PathBuf> = None;
+    // 错误信息在 stderr：另开线程收集最后几行，失败时给出原因
+    let stderr = child.stderr.take();
+    let err_tail = std::thread::spawn(move || {
+        let mut tail: Vec<String> = vec![];
+        if let Some(e) = stderr {
+            for line in BufReader::new(e).lines().map_while(|l| l.ok()) {
+                if !line.trim().is_empty() {
+                    tail.push(line);
+                    if tail.len() > 4 {
+                        tail.remove(0);
+                    }
+                }
+            }
+        }
+        tail.join("\n")
+    });
     let mut last_emit = Instant::now() - Duration::from_secs(5);
     for line in BufReader::new(stdout).lines() {
         let Ok(line) = line else { break };
@@ -470,9 +504,6 @@ fn ytdlp_blocking(app: &AppHandle, id: i64, ctl: &Ctl, exe: &Path, url: &str, ou
             let _ = child.kill();
             let _ = child.wait();
             return Ok(None);
-        }
-        if let Some(d) = parse_destination(&line) {
-            last_dest = Some(d);
         }
         if let Some((frac, speed, total)) = parse_ytdlp_progress(&line) {
             if last_emit.elapsed() >= Duration::from_millis(500) {
@@ -482,17 +513,25 @@ fn ytdlp_blocking(app: &AppHandle, id: i64, ctl: &Ctl, exe: &Path, url: &str, ou
         }
     }
     let status = child.wait()?;
+    let err = err_tail.join().unwrap_or_default();
+    drop(cookies);
     if ctl.flag() != RUN {
         return Ok(None);
     }
     if !status.success() {
-        bail!("yt-dlp 下载失败（退出码 {}）", status.code().unwrap_or(-1));
+        let why = if err.is_empty() {
+            format!("退出码 {}", status.code().unwrap_or(-1))
+        } else {
+            bili::friendly_error(&err)
+        };
+        bail!("yt-dlp 下载失败：{why}");
     }
-    let path = last_dest
-        .filter(|p| p.is_file())
-        .or_else(|| newest_file(out_dir))
-        .ok_or_else(|| anyhow!("下载完成，但找不到输出文件"))?;
-    Ok(Some(path))
+    // 弹幕 XML 转成 ASS，和视频同名，整理时跟着视频一起移动
+    danmaku::convert_dir(out_dir);
+    if newest_file(out_dir).is_none() {
+        bail!("下载完成，但找不到输出文件");
+    }
+    Ok(Some(out_dir.to_path_buf()))
 }
 
 /// yt-dlp 输出的目标文件行
@@ -547,7 +586,8 @@ async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_
         }
         provider::Target::Ytdlp { url } => {
             t.url = url.clone();
-            ytdlp_download(app, &t, ctl, dl_dir).await?
+            // 档位是数字时当作清晰度上限（B 站下载源的档位就是画面高度，“0”为最高，空串按设置）
+            ytdlp_download(app, &t, ctl, dl_dir, quality.parse::<u32>().ok()).await?
         }
         provider::Target::Magnet { uri } => {
             t.url = uri.clone();
@@ -576,12 +616,25 @@ async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_
         }
     };
     let Some(path) = got else { return Ok(None) };
-    if path.is_file() {
-        if let Err(err) = provider::fill_tags(&path, &item) {
-            eprintln!("补标签失败 {}：{err}", path.display());
+    // HTTP 返回文件；yt-dlp 返回它的输出文件夹（里面是媒体文件和同名的字幕、弹幕）
+    let media: Vec<PathBuf> = if path.is_file() {
+        vec![path.clone()]
+    } else {
+        std::fs::read_dir(&path)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| matches!(crate::parse::classify(p), Some("music") | Some("video")))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    for m in &media {
+        if let Err(err) = provider::fill_tags(m, &item) {
+            eprintln!("补标签失败 {}：{err}", m.display());
         }
         if let Some(l) = &resolved.lyric {
-            let _ = provider::save_lyric(&path, l);
+            let _ = provider::save_lyric(m, l);
         }
     }
     Ok(Some(path))

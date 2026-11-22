@@ -1,11 +1,13 @@
 //! 自动获取：来源（订阅 RSS / yt-dlp / 目录 / 网页 AI 解析）、下载引擎（HTTP / BT / yt-dlp）、
 //! 自动归类入库、追更。子模块：source（各类来源）、web（网页 AI 规则）、download（下载队列）、organize（整理入库）。
+pub mod bili;
 pub mod download;
 pub mod organize;
 pub mod pack;
 pub mod provider;
 pub mod source;
 pub mod web;
+pub mod ytdlp;
 
 use crate::{ai, db, library, AppState};
 use anyhow::Result;
@@ -234,6 +236,12 @@ pub struct FetchSettings {
     /// stop：下完即停；ratio：做种到分享率 seed_ratio 后停止
     pub seed_policy: String,
     pub seed_ratio: f64,
+    /// B 站清晰度上限（画面高度，如 1080），0 表示账号能拿到的最高
+    pub bili_quality: u32,
+    /// B 站：下载弹幕（转成 ASS，放在视频旁边）
+    pub bili_danmaku: bool,
+    /// B 站：下载 CC / AI 字幕（需要登录）
+    pub bili_subs: bool,
 }
 
 impl Default for FetchSettings {
@@ -245,6 +253,9 @@ impl Default for FetchSettings {
             speed_kbps: 0,
             seed_policy: "stop".into(),
             seed_ratio: 1.0,
+            bili_quality: 0,
+            bili_danmaku: true,
+            bili_subs: true,
         };
         s.normalize();
         s
@@ -268,6 +279,9 @@ impl FetchSettings {
             self.seed_ratio = 1.0;
         }
         self.seed_ratio = self.seed_ratio.clamp(0.1, 20.0);
+        if !matches!(self.bili_quality, 0 | 360 | 480 | 720 | 1080 | 1440 | 2160) {
+            self.bili_quality = 0;
+        }
     }
 }
 
@@ -890,6 +904,46 @@ pub async fn check_subs(app: &AppHandle) {
             let _ = app.emit("fetch://new", json!({ "subId": sub_id, "query": query, "titles": titles }));
         }
     }
+}
+
+// ---------- B 站与 yt-dlp ----------
+
+#[tauri::command]
+pub async fn fetch_bili_account() -> Result<bili::Account, String> {
+    bili::account().await.map_err(e)
+}
+
+#[tauri::command]
+pub async fn fetch_bili_qr_start() -> Result<bili::Qr, String> {
+    bili::qr_start().await.map_err(e)
+}
+
+/// 返回 waiting / scanned / expired / ok
+#[tauri::command]
+pub async fn fetch_bili_qr_poll(key: String) -> Result<String, String> {
+    bili::qr_poll(&key).await.map(|s| s.to_string()).map_err(e)
+}
+
+#[tauri::command]
+pub fn fetch_bili_logout() {
+    bili::clear_cookies();
+}
+
+#[tauri::command]
+pub async fn fetch_bili_parse(app: AppHandle, url: String) -> Result<bili::Parsed, String> {
+    let dl = with_db(&app, |c| Ok(load_settings(c).download_dir)).map_err(e)?;
+    bili::parse(&url, Path::new(&dl)).await.map_err(|err| bili::friendly_error(&format!("{err:#}")))
+}
+
+#[tauri::command]
+pub async fn fetch_ytdlp_status() -> ytdlp::Status {
+    ytdlp::status().await
+}
+
+/// 下载或更新 yt-dlp（官方发布页，校验 SHA-256）
+#[tauri::command]
+pub async fn fetch_ytdlp_install() -> Result<ytdlp::Status, String> {
+    ytdlp::install().await.map_err(e)
 }
 
 #[cfg(test)]

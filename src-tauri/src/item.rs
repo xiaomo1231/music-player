@@ -352,3 +352,98 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+/// 清空媒体库（不动硬盘上的任何媒体文件）。full=true 时连设置也恢复默认（AI 密钥在凭据管理器里，另行保留）
+pub fn reset_library(conn: &Connection, full: bool) -> Result<usize> {
+    let n: i64 = conn.query_row("SELECT count(*) FROM files", [], |r| r.get(0))?;
+    let mut tables = vec![
+        "playlist_items",
+        "playlists",
+        "play_history",
+        "files",
+        "series",
+        "scan_roots",
+        "jobs",
+        "excluded",
+        "novel_cleanups",
+        "org_moves",
+        "org_batches",
+        "feedback",
+        "daily",
+        "search_idx",
+    ];
+    // 自动获取模块的表（可能不存在）
+    for t in ["fetch_tasks", "fetch_subs", "fetch_sources"] {
+        let exists: bool = conn.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1", [t], |r| r.get::<_, i64>(0))? > 0;
+        if exists {
+            tables.push(t);
+        }
+    }
+    conn.execute_batch("BEGIN")?;
+    let r = (|| -> Result<()> {
+        for t in &tables {
+            conn.execute(&format!("DELETE FROM {t}"), [])?;
+        }
+        // 用户和 AI 生成的去广告规则一起清掉，内置规则保留
+        conn.execute("DELETE FROM novel_rules WHERE source <> 'builtin'", [])?;
+        if full {
+            conn.execute("DELETE FROM settings", [])?;
+        }
+        Ok(())
+    })();
+    match r {
+        Ok(()) => conn.execute_batch("COMMIT")?,
+        Err(err) => {
+            conn.execute_batch("ROLLBACK")?;
+            return Err(err);
+        }
+    }
+    Ok(n as usize)
+}
+
+#[tauri::command]
+pub fn library_reset(app: AppHandle, st: State<AppState>, full: bool) -> R<usize> {
+    let n = reset_library(&st.db.lock(), full).map_err(e)?;
+    // 封面和缩略图缓存一起清掉
+    for d in [&st.dirs.covers, &st.dirs.thumbs] {
+        if let Ok(rd) = std::fs::read_dir(d) {
+            for f in rd.flatten() {
+                let _ = std::fs::remove_file(f.path());
+            }
+        }
+    }
+    crate::commands::restart_watcher(&app);
+    let _ = app.emit("library://changed", ());
+    Ok(n)
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+
+    #[test]
+    fn reset_clears_everything_but_builtin_rules() {
+        let c = db::open_memory().unwrap();
+        c.execute("INSERT INTO files(path,kind,size,mtime,added_at) VALUES('D:/t/a.flac','music',1,1,1)", [])
+            .unwrap();
+        c.execute("INSERT INTO scan_roots(path) VALUES('D:/t')", []).unwrap();
+        c.execute("INSERT INTO playlists(name,created_at) VALUES('p',1)", []).unwrap();
+        c.execute("INSERT INTO settings(key,value) VALUES('watch','true')", []).unwrap();
+        c.execute("INSERT INTO novel_rules(scope,kind,pattern,source) VALUES('global','regex','x','builtin')", [])
+            .unwrap();
+        c.execute("INSERT INTO novel_rules(scope,kind,pattern,source) VALUES('global','regex','y','user')", [])
+            .unwrap();
+        assert_eq!(reset_library(&c, false).unwrap(), 1);
+        for t in ["files", "scan_roots", "playlists"] {
+            let n: i64 = c.query_row(&format!("SELECT count(*) FROM {t}"), [], |r| r.get(0)).unwrap();
+            assert_eq!(n, 0, "{t}");
+        }
+        let rules: i64 = c.query_row("SELECT count(*) FROM novel_rules", [], |r| r.get(0)).unwrap();
+        assert_eq!(rules, 1);
+        let s: i64 = c.query_row("SELECT count(*) FROM settings", [], |r| r.get(0)).unwrap();
+        assert_eq!(s, 1);
+        reset_library(&c, true).unwrap();
+        let s: i64 = c.query_row("SELECT count(*) FROM settings", [], |r| r.get(0)).unwrap();
+        assert_eq!(s, 0);
+    }
+}

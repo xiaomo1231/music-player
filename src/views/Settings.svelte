@@ -5,6 +5,8 @@
   import { ui, toast } from '../lib/ui.svelte';
   import { invoke, inTauri } from '../lib/api';
   import { fmtSize } from '../lib/util';
+  import { confirmDlg } from '../lib/items.svelte';
+  import { lib } from '../lib/library.svelte';
   import {
     autostartGet,
     autostartSet,
@@ -164,6 +166,26 @@
     }
   }
 
+  async function resetLibrary(full: boolean) {
+    const ok = await confirmDlg(
+      full ? '恢复初始状态' : '清空媒体库',
+      full
+        ? '清空媒体库的全部条目和记录（音乐、视频、番剧、漫画、小说、歌单、播放记录、扫描文件夹、转换和下载记录），并把所有设置恢复默认。硬盘上的媒体文件一个都不会删。AI 密钥保存在 Windows 凭据管理器里，不受影响。'
+        : '清空媒体库的全部条目和记录（音乐、视频、番剧、漫画、小说、歌单、播放记录、扫描文件夹、转换和下载记录）。硬盘上的媒体文件一个都不会删，设置保留。清空后可以重新扫描你自己的文件夹。',
+      { ok: full ? '恢复初始状态' : '清空媒体库', danger: true },
+    );
+    if (!ok) return;
+    try {
+      const n = await invoke<number>('library_reset', { full });
+      player.pause();
+      await lib.refresh();
+      toast(`已清空媒体库（${n} 个文件记录）`);
+      if (full) setTimeout(() => location.reload(), 600);
+    } catch (e) {
+      toast(String(e));
+    }
+  }
+
   function openDataDir() {
     if (!inTauri || !engine.dataDir) return;
     invoke('show_in_folder', { path: engine.dataDir }).catch(e => toast(String(e)));
@@ -307,6 +329,14 @@
       </label>
       <div class="rowbtns">
         <button class="mp-btn" disabled={!inTauri || clearing} onclick={clearCache}>{clearing ? '清理中…' : '清理缓存'}</button>
+      </div>
+      <div class="mp-opt">
+        <div>清空媒体库<small>删除库里所有条目和记录，从头开始；不删硬盘上的任何文件</small></div>
+        <button class="mp-btn ghost" disabled={!inTauri} onclick={() => resetLibrary(false)}>清空媒体库…</button>
+      </div>
+      <div class="mp-opt">
+        <div>恢复初始状态<small>清空媒体库，并把所有设置恢复默认</small></div>
+        <button class="mp-btn ghost" disabled={!inTauri} onclick={() => resetLibrary(true)}>恢复初始状态…</button>
       </div>
     </div>
 

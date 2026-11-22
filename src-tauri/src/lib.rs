@@ -137,6 +137,12 @@ pub fn run() {
             app.manage(state);
             commands::restart_watcher(app.handle());
             setup_modules(app.handle());
+            // 测试实例在标题上标明，避免和正式版混淆
+            if cfg!(debug_assertions) && std::env::var_os("MP_DATA_DIR").is_some() {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.set_title("极光播放器 [测试实例 · 测试数据]");
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -198,6 +204,7 @@ pub fn run() {
             item::item_set_cover,
             item::item_remove,
             item::item_delete,
+            item::library_reset,
             item::item_save_image,
             item::playlist_set_cover,
             // 各功能模块

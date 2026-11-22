@@ -1,0 +1,42 @@
+[package]
+name = "music-player"
+version = "0.1.0"
+description = "Windows 综合媒体播放 / 管理软件"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "music_player_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[features]
+default = []
+# 打开后用 libmpv 作为播放引擎；需要把 mpv-dev 包解压到 src-tauri/lib（见 docs/开发说明.md）
+mpv = ["dep:libmpv2"]
+
+[dependencies]
+tauri = { version = "2.12", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-dialog = "2.8"
+tauri-plugin-opener = "2.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+parking_lot = "0.12"
+rusqlite = { version = "0.37", features = ["bundled"] }
+lofty = "0.25"
+jwalk = "0.8"
+notify = "8"
+dirs = "6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }
+encoding_rs = "0.8"
+chardetng = "0.1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+regex = "1"
+once_cell = "1"
+blake3 = "1"
+pinyin = "0.10"
+libmpv2 = { version = "5", optional = true }

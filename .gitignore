@@ -3,3 +3,7 @@ target/
 dist/
 .DS_Store
 Thumbs.db
+src-tauri/target/
+src-tauri/gen/
+src-tauri/lib/
+*.log

@@ -482,7 +482,7 @@ function init(){
  emit('ready');
 }
 window.MP={songs,videos,anime,novels,state:S,cur,on,emit,play,pause,toggle,next,prev,seek,setVol,setSpeed,setTrack,spectrum,waveform,level,lyricIdx,lyricProgress,
- coverCSS,icon,fmtT,toast,openScan,openOled,openEq,openVideo,openNovel,immersive,mini,setView,scan:scanSt,oled:O,$,$$,clamp,
+ coverCSS,icon,fmtT,toast,modal,store,openScan,openOled,openEq,openVideo,openNovel,immersive,mini,setView,scan:scanSt,oled:O,$,$$,clamp,
  /* 旋转工具：播放时匀速转，暂停时带惯性慢慢停下 */
  spin(el,rpm=8){let a=0,v=0;on('frame',f=>{const tg=S.playing?rpm*6*S.speed:0;v+=(tg-v)*Math.min(1,f.dt*2.2);a=(a+v*f.dt)%360;el.style.transform=`rotate(${a}deg)`})},
  /* 画布工具：自动适配 DPR 与尺寸 */

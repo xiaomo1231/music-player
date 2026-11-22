@@ -9,6 +9,7 @@
   import PlayerBar from './components/PlayerBar.svelte';
   import MiniPlayer from './components/MiniPlayer.svelte';
   import NowPlaying from './views/NowPlaying.svelte';
+  import FxBackground from './components/fx/Background.svelte';
   import Music from './views/Music.svelte';
   import Videos from './views/Videos.svelte';
   import Anime from './views/Anime.svelte';
@@ -258,7 +259,7 @@
 
 <svelte:window oncontextmenu={onContextMenu} onkeydown={onKey} onmousemove={wake} onmousedown={wake} onkeydowncapture={wake} onwheel={wake} />
 
-<div class="bg mp-bgfx"><i></i><i></i><i></i></div>
+<FxBackground />
 <aside data-static>
   <h1><i></i>极光播放器</h1>
   <button class:on={ui.view === 'now'} onclick={() => ui.go('now')}><Icon name="home" /><span>正在播放</span></button>

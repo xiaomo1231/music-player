@@ -411,6 +411,104 @@ class Player {
     return out;
   }
 
+  // ---------------------------------------------------------------- 动效用的音频数据
+  // 和 spectrum() 分开保存状态：背景、唱片环、设置预览同一帧里各自调用也不会互相干扰。
+  private fxCache = new Map<number, { at: number; v: number[] }>();
+  private fxLv = { bass: 0, level: 0, beat: 0, at: 0 };
+  private fxBassAvg = 0.2;
+  private fxBeatAt = 0;
+
+  /** 是否有真实的音频数据（WebView2 引擎播放中）；mpv 引擎没有 Web Audio 数据，动效改用模拟律动 */
+  fxLive(): boolean {
+    return this.backend === 'web' && !!this.analyser && !!this.fbuf && this.playing && this.ctx?.state === 'running';
+  }
+
+  /** 动效用频谱：n 段，0–1，低频在前；同一帧重复调用直接返回缓存 */
+  fxBands(n = 32): number[] {
+    const now = performance.now();
+    const c = this.fxCache.get(n);
+    if (c && now - c.at < 8) return c.v;
+    const out = new Array<number>(n);
+    if (this.fxLive()) {
+      this.analyser!.getByteFrequencyData(this.fbuf!);
+      const f = this.fbuf!,
+        N = f.length,
+        lo = 2,
+        hi = N * 0.62;
+      for (let i = 0; i < n; i++) {
+        const a = lo * Math.pow(hi / lo, i / n),
+          b = lo * Math.pow(hi / lo, (i + 1) / n);
+        let m = 0,
+          k = 0;
+        for (let j = a | 0; j <= (b | 0) && j < N; j++) {
+          m += f[j];
+          k++;
+        }
+        out[i] = clamp(Math.pow(m / Math.max(k, 1) / 255, 1.4) * (1 + (i / n) * 1.3));
+      }
+    } else {
+      // 模拟律动：按时间生成（不按调用次数），播放时有起伏，暂停时回落到很低的呼吸
+      const t = now / 1000,
+        pl = this.playing ? 1 : 0.12,
+        kick = this.playing ? Math.exp(-((t * 1.9) % 1) * 5) : 0;
+      for (let i = 0; i < n; i++) {
+        const x = i / n;
+        const wob = 0.5 + 0.5 * Math.sin(t * 2.3 + i * 0.7) * Math.sin(t * 1.3 + i * 0.23 + 1.1);
+        const body = (0.62 - x * 0.38) * (0.35 + 0.65 * wob);
+        out[i] = clamp(pl * (body + kick * 0.45 * Math.max(0, 1 - x * 2.2)) + 0.015);
+      }
+    }
+    const prev = c?.v;
+    if (prev && prev.length === n) {
+      // 上升快、回落慢
+      for (let i = 0; i < n; i++) out[i] = out[i] > prev[i] ? prev[i] + (out[i] - prev[i]) * 0.6 : prev[i] * 0.86 + out[i] * 0.14;
+    }
+    this.fxCache.set(n, { at: now, v: out });
+    return out;
+  }
+
+  /** 动效用响度：bass 低频、level 整体响度、beat 节拍脉冲（触发时为 1，随后衰减），都在 0–1 */
+  levels(): { bass: number; level: number; beat: number } {
+    const now = performance.now();
+    const L = this.fxLv;
+    if (now - L.at < 8) return L;
+    const dt = Math.min(0.1, L.at ? (now - L.at) / 1000 : 0.016);
+    L.at = now;
+    let bass = 0,
+      level = 0;
+    if (this.fxLive()) {
+      this.analyser!.getByteFrequencyData(this.fbuf!);
+      const f = this.fbuf!,
+        hz = (this.ctx!.sampleRate || 48000) / (this.analyser!.fftSize || 2048);
+      const b1 = Math.max(1, Math.round(40 / hz)),
+        b2 = Math.max(b1 + 1, Math.round(160 / hz)),
+        top = Math.min(f.length, Math.round(12000 / hz));
+      let s = 0;
+      for (let j = b1; j <= b2; j++) s += f[j];
+      bass = clamp(Math.pow(s / (b2 - b1 + 1) / 255, 1.6) * 1.25);
+      s = 0;
+      for (let j = 1; j < top; j++) s += f[j];
+      level = clamp(Math.pow(s / Math.max(1, top - 1) / 255, 0.9) * 1.6);
+    } else if (this.playing) {
+      const t = now / 1000,
+        kick = Math.exp(-((t * 1.9) % 1) * 5);
+      bass = clamp(0.25 + 0.55 * kick + 0.08 * Math.sin(t * 0.7));
+      level = clamp(0.45 + 0.15 * Math.sin(t * 0.37) + 0.1 * kick);
+    }
+    // 节拍：低频明显高于最近的平均值
+    this.fxBassAvg += (bass - this.fxBassAvg) * Math.min(1, dt * 1.5);
+    let beat = L.beat * Math.exp(-dt * 5);
+    if (bass > 0.2 && bass > this.fxBassAvg * 1.3 && now - this.fxBeatAt > 280) {
+      beat = 1;
+      this.fxBeatAt = now;
+    }
+    const ease = (a: number, b: number) => (b > a ? a + (b - a) * Math.min(1, dt * 18) : a + (b - a) * Math.min(1, dt * 4));
+    L.bass = ease(L.bass, bass);
+    L.level = ease(L.level, level);
+    L.beat = beat;
+    return L;
+  }
+
   /** 当前歌词行 */
   lyricIndex(): number {
     const l = this.lyrics;

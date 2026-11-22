@@ -1,12 +1,49 @@
+pub mod adclean;
+pub mod ai;
 pub mod comic;
 pub mod commands;
+pub mod convert;
+pub mod daily;
 pub mod db;
+pub mod fetch;
 pub mod indexer;
 pub mod library;
+pub mod mangatr;
+pub mod media;
 pub mod metadata;
+pub mod organize;
 pub mod parse;
 pub mod reader;
 pub mod scanner;
+pub mod shell;
+pub mod subtitle;
+pub mod tools;
+
+/// 各功能模块自己的表
+fn init_modules(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    adclean::init(conn)?;
+    convert::init(conn)?;
+    daily::init(conn)?;
+    fetch::init(conn)?;
+    mangatr::init(conn)?;
+    media::init(conn)?;
+    organize::init(conn)?;
+    shell::init(conn)?;
+    subtitle::init(conn)?;
+    Ok(())
+}
+
+fn setup_modules(app: &tauri::AppHandle) {
+    convert::setup(app);
+    daily::setup(app);
+    fetch::setup(app);
+    mangatr::setup(app);
+    media::setup(app);
+    organize::setup(app);
+    shell::setup(app);
+    subtitle::setup(app);
+    adclean::setup(app);
+}
 
 use parking_lot::Mutex;
 use std::path::PathBuf;
@@ -34,6 +71,7 @@ fn init_state(app: &tauri::AppHandle) -> anyhow::Result<AppState> {
     }
     let db_path = data.join("library.db");
     let conn = db::open(&db_path)?;
+    init_modules(&conn)?;
     Ok(AppState {
         db: Mutex::new(conn),
         db_path,
@@ -79,6 +117,7 @@ pub fn run() {
             let state = init_state(app.handle()).map_err(|e| format!("初始化失败：{e}"))?;
             app.manage(state);
             commands::restart_watcher(app.handle());
+            setup_modules(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -123,6 +162,10 @@ pub fn run() {
             commands::add_files,
             commands::show_in_folder,
             commands::cover_dir,
+            ai::ai_get_config,
+            ai::ai_save_config,
+            ai::ai_test,
+            // ↓ 各功能模块的命令（集成时加在这里）
         ])
         .run(tauri::generate_context!())
         .expect("启动失败");

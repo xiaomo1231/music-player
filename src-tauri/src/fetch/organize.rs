@@ -160,7 +160,7 @@ fn is_main_media(p: &Path) -> bool {
 
 fn is_companion(p: &Path) -> bool {
     let e = parse::ext(p);
-    parse::SUBS.contains(&e.as_str()) || parse::IMAGE.contains(&e.as_str())
+    parse::SUBS.contains(&e.as_str()) || parse::IMAGE.contains(&e.as_str()) || e == "lrc"
 }
 
 /// 递归收集文件；可执行文件直接删除

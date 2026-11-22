@@ -20,6 +20,8 @@ fetch::fetch_set_settings,
 fetch::fetch_subscribe,
 fetch::fetch_unsubscribe,
 fetch::fetch_subs,
+fetch::fetch_remove_task,
+fetch::fetch_providers,
 ```
 
 `init` 和 `setup` 已经在 `lib.rs` 的 `init_modules` / `setup_modules` 里调用，不用再改。
@@ -50,8 +52,8 @@ Tauri 权限：没有新增。只用到 `app.emit`（事件）和 `reqwest`。
 
 ## 5. 数据表（`fetch::init` 建表，`IF NOT EXISTS`）
 
-- `fetch_sources(id, kind, name, url, rule_json, created_at, enabled)`：`kind` 为 `rss` / `ytdlp` / `dir` / `web`。网页来源的 `url` 列保存搜索网址模板，`rule_json` 保存 `{mode, template, rules}`。
-- `fetch_tasks(id, source_id, title, kind, url, status, progress, speed, size, save_path, error, created_at, finished_at, media_kind)`：`kind` 为 `http` / `magnet` / `torrent` / `ytdlp` / `file`；`status` 为 `queued` / `downloading` / `paused` / `seeding` / `organizing` / `done` / `manual` / `failed` / `canceled`。`manual` 时 `error` 里是“需要手动整理”的说明。
+- `fetch_sources(id, kind, name, url, rule_json, created_at, enabled)`：`kind` 为 `rss` / `ytdlp` / `dir` / `web` / `provider`（下载源，`url` 为 `provider://<id>`）。网页来源的 `url` 列保存搜索网址模板，`rule_json` 保存 `{mode, template, rules}`。
+- `fetch_tasks(id, source_id, title, kind, url, status, progress, speed, size, save_path, error, created_at, finished_at, media_kind)`：`kind` 为 `http` / `magnet` / `torrent` / `ytdlp` / `file` / `provider`；`status` 为 `queued` / `downloading` / `paused` / `seeding` / `organizing` / `done` / `manual` / `failed` / `canceled`。`manual` 时 `error` 里是“需要手动整理”的说明。
 - `fetch_subs(id, source_id, query, media_kind, last_check, seen_json)`。
 
 ## 6. 命令清单
@@ -72,6 +74,7 @@ Tauri 权限：没有新增。只用到 `app.emit`（事件）和 `reqwest`。
 | `fetch_subscribe` | `source_id`，`query`，`media_kind` | 订阅 id（订阅时把当前结果记为“已见”，只下载之后新出现的集） |
 | `fetch_unsubscribe` | `id` | — |
 | `fetch_subs` | — | `SubView[]` |
+| `fetch_providers` | — | `ProviderInfo[]`：已接入的下载源（默认为空），开发说明见 [下载源接口](../下载源接口.md) |
 
 `FetchSettings`：`download_dir`（默认 `下载\极光播放器`）、`organize_dir`（默认 `视频\极光媒体库`）、`concurrency`（1–8，默认 3）、`speed_kbps`（0 为不限，只作用于 HTTP）、`seed_policy`（`stop` 下完即停 / `ratio` 做种到分享率）、`seed_ratio`（默认 1.0）。
 

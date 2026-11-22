@@ -147,7 +147,8 @@ class Player {
   /** 下一首播放 */
   playNext(tracks: Track[]) {
     if (!this.current) return this.playList(tracks);
-    const add = tracks.filter(t => !this.queue.some(q => q.id === t.id));
+    const have = new Set(this.queue.map(q => q.id));
+    const add = tracks.filter(t => !have.has(t.id));
     const base = this.queue.length;
     this.queue = [...this.queue, ...add];
     const idxs = add.map((_, k) => base + k);
@@ -159,7 +160,8 @@ class Player {
 
   enqueue(tracks: Track[]) {
     if (!this.current) return this.playList(tracks);
-    const add = tracks.filter(t => !this.queue.some(q => q.id === t.id));
+    const have = new Set(this.queue.map(q => q.id));
+    const add = tracks.filter(t => !have.has(t.id));
     const base = this.queue.length;
     this.queue = [...this.queue, ...add];
     this.order = [...this.order, ...add.map((_, k) => base + k)];

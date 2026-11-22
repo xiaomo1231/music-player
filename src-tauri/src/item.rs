@@ -149,19 +149,93 @@ pub struct FileList {
 }
 
 pub fn list_files(conn: &Connection, kind: &str, id: i64) -> Result<FileList> {
-    let files = files_of(conn, kind, id)?;
-    let mut extras = vec![];
+    Ok(file_list(files_of(conn, kind, id)?))
+}
+
+// ---------- 批量 ----------
+
+/// 多个条目对应的 (file_id, 路径)，去重并保持顺序
+pub fn files_of_many(conn: &Connection, kind: &str, ids: &[i64]) -> Result<Vec<(i64, String)>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = vec![];
+    for &id in ids {
+        for f in files_of(conn, kind, id)? {
+            if seen.insert(f.0) {
+                out.push(f);
+            }
+        }
+    }
+    Ok(out)
+}
+
+pub fn list_files_many(conn: &Connection, kind: &str, ids: &[i64]) -> Result<FileList> {
+    Ok(file_list(files_of_many(conn, kind, ids)?))
+}
+
+/// 在一个事务里执行（几千条时快很多，出错时整体回滚）
+fn in_tx<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    let tx = conn.unchecked_transaction()?;
+    let r = f()?;
+    tx.commit()?;
+    Ok(r)
+}
+
+/// 批量从媒体库移除，返回被移除的文件路径（撤销时用它们重新入库）
+pub fn remove_many(conn: &Connection, kind: &str, ids: &[i64]) -> Result<Vec<String>> {
+    in_tx(conn, || {
+        let files = files_of_many(conn, kind, ids)?;
+        drop_rows(conn, &files, true)?;
+        Ok(files.into_iter().map(|f| f.1).collect())
+    })
+}
+
+/// 要移入回收站的路径：存在的媒体文件 + 同名配套文件（去重）
+pub fn trash_paths(files: &[(i64, String)]) -> Vec<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    let mut paths = vec![];
+    for (_, p) in files {
+        let pb = PathBuf::from(p);
+        for x in sidecars(&pb).into_iter().chain(pb.exists().then_some(pb.clone())) {
+            if seen.insert(x.clone()) {
+                paths.push(x);
+            }
+        }
+    }
+    paths
+}
+
+/// 批量收藏 / 取消收藏歌曲，返回改动的条数
+pub fn set_favorite_many(conn: &Connection, ids: &[i64], favorite: bool) -> Result<usize> {
+    in_tx(conn, || {
+        let mut n = 0;
+        let mut st = conn.prepare("UPDATE tracks SET favorite=?1 WHERE file_id=?2 AND favorite<>?1")?;
+        for id in ids {
+            n += st.execute(params![favorite as i64, id])?;
+        }
+        Ok(n)
+    })
+}
+
+fn file_list(files: Vec<(i64, String)>) -> FileList {
+    let mut extras: Vec<String> = vec![];
+    let mut seen = std::collections::HashSet::new();
     let mut size = 0u64;
+    let len = |p: &Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
     for (_, p) in &files {
         let pb = Path::new(p);
-        size += std::fs::metadata(pb).map(|m| m.len()).unwrap_or(0);
-        extras.extend(sidecars(pb).into_iter().map(|x| x.to_string_lossy().to_string()));
+        size += len(pb);
+        for x in sidecars(pb) {
+            if seen.insert(x.clone()) {
+                size += len(&x);
+                extras.push(x.to_string_lossy().to_string());
+            }
+        }
     }
-    Ok(FileList {
+    FileList {
         files: files.into_iter().map(|f| f.1).collect(),
         extras,
         size,
-    })
+    }
 }
 
 // ---------- 命令 ----------
@@ -200,21 +274,42 @@ pub fn item_remove(app: AppHandle, st: State<AppState>, kind: String, id: i64) -
 /// 删除文件：媒体文件和同名配套文件一起移入回收站，然后从库里删掉记录
 #[tauri::command]
 pub fn item_delete(app: AppHandle, st: State<AppState>, kind: String, id: i64) -> R<usize> {
-    let files = files_of(&st.db.lock(), &kind, id).map_err(e)?;
-    let mut paths: Vec<PathBuf> = vec![];
-    for (_, p) in &files {
-        let pb = PathBuf::from(p);
-        paths.extend(sidecars(&pb));
-        if pb.exists() {
-            paths.push(pb);
-        }
-    }
+    item_delete_many(app, st, kind, vec![id])
+}
+
+/// 批量列出要删除的文件（给确认框用）
+#[tauri::command]
+pub fn item_files_many(st: State<AppState>, kind: String, ids: Vec<i64>) -> R<FileList> {
+    list_files_many(&st.db.lock(), &kind, &ids).map_err(e)
+}
+
+/// 批量从媒体库移除，返回被移除的文件路径（前端撤销时交给 add_files 重新入库）
+#[tauri::command]
+pub fn item_remove_many(app: AppHandle, st: State<AppState>, kind: String, ids: Vec<i64>) -> R<Vec<String>> {
+    let v = remove_many(&st.db.lock(), &kind, &ids).map_err(e)?;
+    let _ = app.emit("library://changed", ());
+    Ok(v)
+}
+
+/// 批量删除：所有文件和同名字幕 / 歌词一次性移入回收站，然后删掉库里的记录
+#[tauri::command]
+pub fn item_delete_many(app: AppHandle, st: State<AppState>, kind: String, ids: Vec<i64>) -> R<usize> {
+    let files = files_of_many(&st.db.lock(), &kind, &ids).map_err(e)?;
+    let paths = trash_paths(&files);
     if !paths.is_empty() {
         trash::delete_all(&paths).map_err(|err| format!("移入回收站失败（文件可能正在被使用）：{err}"))?;
     }
-    drop_rows(&st.db.lock(), &files, false).map_err(e)?;
+    let conn = st.db.lock();
+    in_tx(&conn, || drop_rows(&conn, &files, false)).map_err(e)?;
+    drop(conn);
     let _ = app.emit("library://changed", ());
     Ok(files.len())
+}
+
+/// 批量收藏 / 取消收藏歌曲
+#[tauri::command]
+pub fn item_favorite_many(st: State<AppState>, ids: Vec<i64>, favorite: bool) -> R<usize> {
+    set_favorite_many(&st.db.lock(), &ids, favorite).map_err(e)
 }
 
 /// 歌单封面：image 为本地图片路径，None 恢复为歌曲封面拼图
@@ -335,6 +430,93 @@ mod tests {
         let n: i64 = c.query_row("SELECT count(*) FROM files", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 0);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn add_track(c: &Connection, path: &str) -> i64 {
+        c.execute("INSERT INTO files(path,kind,size,mtime,added_at) VALUES(?1,'music',1,1,1)", [path])
+            .unwrap();
+        let id = c.last_insert_rowid();
+        c.execute("INSERT INTO tracks(file_id,title,duration,format) VALUES(?1,'t',1,'MP3')", [id])
+            .unwrap();
+        id
+    }
+
+    #[test]
+    fn remove_many_returns_paths_and_excludes() {
+        let c = db::open_memory().unwrap();
+        let (t, s, _) = seed(&c);
+        let t2 = add_track(&c, "C:\\b.mp3");
+        let keep = add_track(&c, "C:\\keep.mp3");
+        // 重复的 id 只算一次
+        let v = remove_many(&c, "track", &[t, t2, t]).unwrap();
+        assert_eq!(v, vec!["C:\\a.flac".to_string(), "C:\\b.mp3".to_string()]);
+        let left: Vec<i64> = c
+            .prepare("SELECT id FROM files WHERE kind='music'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(left, vec![keep]);
+        let n: i64 = c.query_row("SELECT count(*) FROM excluded", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
+        // 整部番剧
+        assert_eq!(remove_many(&c, "series", &[s]).unwrap().len(), 3);
+        let n: i64 = c.query_row("SELECT count(*) FROM series", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+        // 未知类型整体失败，不会删掉任何东西
+        assert!(remove_many(&c, "nope", &[keep]).is_err());
+        assert!(remove_many(&c, "track", &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn remove_many_rolls_back_on_error() {
+        let c = db::open_memory().unwrap();
+        let a = add_track(&c, "C:\\a.mp3");
+        // 第二个 id 不存在不算错；类型错才回滚
+        assert_eq!(remove_many(&c, "track", &[a, 99999]).unwrap().len(), 1);
+        let b = add_track(&c, "C:\\b.mp3");
+        assert!(remove_many(&c, "bad", &[b]).is_err());
+        let n: i64 = c.query_row("SELECT count(*) FROM files", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn files_many_lists_sidecars_once() {
+        let c = db::open_memory().unwrap();
+        let dir = std::env::temp_dir().join(format!("mp-many-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (n, body) in [("a.mp3", "12345"), ("a.lrc", "12"), ("b.mp3", "123"), ("b.zh.lrc", "1"), ("c.mp3", "1")] {
+            std::fs::write(dir.join(n), body).unwrap();
+        }
+        let p = |n: &str| dir.join(n).to_string_lossy().to_string();
+        let a = add_track(&c, &p("a.mp3"));
+        let b = add_track(&c, &p("b.mp3"));
+        let gone = add_track(&c, &p("missing.mp3"));
+        let fl = list_files_many(&c, "track", &[a, b, a, gone]).unwrap();
+        assert_eq!(fl.files, vec![p("a.mp3"), p("b.mp3"), p("missing.mp3")]);
+        assert_eq!(fl.extras, vec![p("a.lrc"), p("b.zh.lrc")]);
+        assert_eq!(fl.size, 5 + 2 + 3 + 1);
+        // 回收站列表：不存在的文件跳过，配套文件带上
+        let files = files_of_many(&c, "track", &[a, b, gone]).unwrap();
+        let tp: Vec<String> = trash_paths(&files)
+            .iter()
+            .map(|x| x.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(tp, vec!["a.lrc", "a.mp3", "b.zh.lrc", "b.mp3"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn favorite_many_sets_value() {
+        let c = db::open_memory().unwrap();
+        let a = add_track(&c, "C:\\a.mp3");
+        let b = add_track(&c, "C:\\b.mp3");
+        crate::library::toggle_favorite(&c, a).unwrap();
+        assert_eq!(set_favorite_many(&c, &[a, b], true).unwrap(), 1);
+        assert!(crate::library::track(&c, b).unwrap().unwrap().favorite);
+        assert_eq!(set_favorite_many(&c, &[a, b], false).unwrap(), 2);
+        assert!(!crate::library::track(&c, a).unwrap().unwrap().favorite);
     }
 
     #[test]

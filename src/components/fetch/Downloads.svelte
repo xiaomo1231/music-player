@@ -1,5 +1,10 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { invoke } from '../../lib/api';
+  import { confirmDlg, type MenuEntry } from '../../lib/items.svelte';
+  import { Selection, noTextSelect } from '../../lib/select.svelte';
+  import BatchBar from '../BatchBar.svelte';
+  import SelCheck from '../SelCheck.svelte';
   // 下载列表：进度、速度、状态，暂停 / 继续 / 取消 / 重试，完成后显示整理到的路径
   import { toast } from '../../lib/ui.svelte';
   import { fetchApi, canResume, fmtBytes, isActive, STATUS_TEXT, type TaskRow } from '../../lib/fetch';
@@ -17,6 +22,23 @@
   }
 
   const isDone = (s: string) => s === 'done' || s === 'manual';
+
+  // 多选删除记录：进行中的任务不能选
+  const sel = new Selection();
+  const removable = (t: TaskRow) => !isActive(t.status);
+  const order = $derived(tasks.filter(removable).map(t => t.id));
+  $effect(() => { const o = order; untrack(() => sel.prune(o)); });
+  function rowClick(e: MouseEvent, t: TaskRow) {
+    if (!removable(t) || (e.target as HTMLElement).closest('button')) return;
+    sel.click(e, t.id, order);
+  }
+  async function removeSelected() {
+    const ids = sel.ids(order);
+    if (!(await confirmDlg('删除记录', `删除选中的 ${ids.length} 条下载记录？只从列表里删掉记录，已整理入库的文件不受影响。`, { ok: '删除记录' }))) return;
+    await act(async () => { for (const id of ids) await invoke('fetch_remove_task', { id }); }, `已删除 ${ids.length} 条记录`);
+    sel.clear();
+  }
+  const entries: MenuEntry[] = [{ label: '删除记录', danger: true, run: removeSelected }];
   const barText = (t: TaskRow) => (t.status === 'downloading' || t.status === 'seeding' ? `${Math.round(t.progress * 100)}%` : '');
 </script>
 
@@ -24,9 +46,20 @@
   <div class="empty" style="padding:18px">还没有下载任务。在上面搜索后点“下载”，任务会出现在这里。</div>
 {/if}
 
+<svelte:window onkeydown={e => order.length && sel.keys(e, () => order)} />
+
+{#if order.length}
+  {#if sel.on}
+    <BatchBar {sel} unit="条" total={order.length} onall={() => sel.selectAll(order)} {entries} hint="单击勾选，Shift 连选，Ctrl+A 全选（进行中的任务不能选）" />
+  {:else}
+    <div class="dlhead"><button class="mp-chip" onclick={() => (sel.mode = true)}>多选</button></div>
+  {/if}
+{/if}
+
 {#each tasks as t (t.id)}
-  <div class="dl" class:done={isDone(t.status)} style="--p:{t.progress}">
-    <span title={t.title}>{t.title}</span>
+  <div class="dl" class:done={isDone(t.status)} class:picked={sel.has(t.id)} class:pickable={sel.on && removable(t)} style="--p:{t.progress}"
+    role="presentation" onclick={e => rowClick(e, t)} onmousedown={noTextSelect}>
+    <span title={t.title} class="dname">{#if sel.on && removable(t)}<SelCheck checked={sel.has(t.id)} onclick={e => (e.shiftKey ? sel.range(order, t.id, true) : sel.toggle(t.id))} />{/if}<span class="ell">{t.title}</span></span>
     <small>
       {STATUS_TEXT[t.status] ?? t.status}
       {#if t.status === 'downloading' && t.speed > 0}· {fmtBytes(t.speed)}/s{/if}
@@ -59,6 +92,11 @@
 {/each}
 
 <style>
+  .dlhead { display: flex; justify-content: flex-end; margin: 0 0 6px; }
+  .dname { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pickable { cursor: pointer; }
+  .picked { background: color-mix(in srgb, var(--mp-accent) 15%, transparent); }
   .dl .acts {
     grid-column: 1 / -1;
     display: flex;

@@ -158,6 +158,68 @@ export const fetchApi = {
   providers: () => invoke<ProviderInfo[]>('fetch_providers'),
 };
 
+/** 下载源的一个档位 */
+export interface ProviderQuality {
+  key: string;
+  label: string;
+  format: string;
+  bitrate: number | null;
+  size: number | null;
+}
+
+/** 下载源搜索结果的完整信息（带在 Hit.url 里，见 docs/下载源接口.md） */
+export interface ProviderItem {
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  year: number | null;
+  track: number | null;
+  duration: number | null;
+  cover: string;
+  media_kind: string;
+  qualities: ProviderQuality[];
+}
+
+function providerParams(h: Hit): URLSearchParams | null {
+  if (h.kind !== 'provider' || !h.url.startsWith('provider://')) return null;
+  const i = h.url.indexOf('?');
+  return i < 0 ? null : new URLSearchParams(h.url.slice(i + 1));
+}
+
+/** 下载源结果里的曲目信息；不是下载源结果时返回 null */
+export function providerItem(h: Hit): ProviderItem | null {
+  const d = providerParams(h)?.get('d');
+  if (!d) return null;
+  try {
+    return JSON.parse(d) as ProviderItem;
+  } catch {
+    return null;
+  }
+}
+
+/** 当前选中的档位 key（空串表示默认档位） */
+export function providerQualityKey(h: Hit): string {
+  return providerParams(h)?.get('q') ?? '';
+}
+
+/** 换档位：返回改好下载地址的新 Hit（大小也换成该档位的） */
+export function withQuality(h: Hit, key: string): Hit {
+  const p = providerParams(h);
+  if (!p) return h;
+  p.set('q', key);
+  const q = providerItem(h)?.qualities.find(x => x.key === key);
+  return { ...h, url: h.url.slice(0, h.url.indexOf('?') + 1) + p.toString(), size: q?.size ?? h.size };
+}
+
+/** 秒数显示成 3:25 */
+export function fmtDur(sec: number | null | undefined): string {
+  if (!sec || sec <= 0) return '';
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 /** 由地址和类型推断的文案 */
 export function hitKindText(kind: string): string {
   return { magnet: '磁力', torrent: '种子', http: '直链', ytdlp: '网站', file: '本地文件', provider: '下载源' }[kind] ?? kind;

@@ -427,4 +427,15 @@ pub mod tests {
         assert_eq!(tag.title().as_deref(), Some("防波堤"));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// 前端换档位后用 URLSearchParams 重新编码的地址，后端要能读回
+    #[test]
+    fn parses_url_reencoded_by_frontend() {
+        let u = "provider://mock/item?q=mp3&d=%7B%22id%22%3A%2242%22%2C%22title%22%3A%22%E9%98%B2%E6%B3%A2%E5%A0%A4%22%2C%22artist%22%3A%22%E6%9E%97%E9%97%B4%E4%BF%A1%E5%8F%B7%22%2C%22album%22%3A%22%E6%BD%AE%E6%B1%90%E6%A1%A3%E6%A1%88%22%2C%22year%22%3Anull%2C%22track%22%3A3%2C%22duration%22%3A205%2C%22cover%22%3A%22%22%2C%22media_kind%22%3A%22music%22%2C%22qualities%22%3A%5B%7B%22key%22%3A%22flac%22%2C%22label%22%3A%22%E6%97%A0%E6%8D%9F%22%2C%22format%22%3A%22flac%22%2C%22bitrate%22%3Anull%2C%22size%22%3A30000000%7D%2C%7B%22key%22%3A%22mp3%22%2C%22label%22%3A%22320K%22%2C%22format%22%3A%22mp3%22%2C%22bitrate%22%3A320%2C%22size%22%3A8000000%7D%5D%2C%22extra%22%3A%7B%22sign%22%3A%22a%26b%3Dc+%E4%B8%AD%E6%96%87%2B%22%7D%7D";
+        let (id, it, q) = parse_task_url(u).unwrap();
+        assert_eq!((id.as_str(), q.as_str()), ("mock", "mp3"));
+        assert_eq!(it.title, "防波堤");
+        assert_eq!(it.qualities[1].bitrate, Some(320));
+        assert_eq!(it.extra["sign"], "a&b=c 中文+");
+    }
 }

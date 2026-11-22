@@ -3,7 +3,22 @@
   import { onMount } from 'svelte';
   import { inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, fmtBytes, hitKindText, MEDIA_TEXT, type DlItem, type Group, type Hit, type SearchOut, type SubRow } from '../../lib/fetch';
+  import {
+    fetchApi,
+    fmtBytes,
+    fmtDur,
+    hitKindText,
+    MEDIA_TEXT,
+    providerItem,
+    providerQualityKey,
+    withQuality,
+    type DlItem,
+    type Group,
+    type Hit,
+    type ProviderItem,
+    type SearchOut,
+    type SubRow,
+  } from '../../lib/fetch';
 
   let { onqueued }: { onqueued?: () => void } = $props();
 
@@ -16,6 +31,9 @@
   let prefs = $state('');
   let picking = $state(false);
   let subs = $state<SubRow[]>([]);
+  // 下载源结果：曲目信息（从结果地址里解出）和每行选的档位
+  let items = $derived<(ProviderItem | null)[]>(out ? out.hits.map(providerItem) : []);
+  let qsel = $state<Record<number, string>>({});
 
   const PLACEHOLDER: Record<string, string> = {
     anime: '例如：星屑邮局',
@@ -49,6 +67,7 @@
     out = null;
     picks = {};
     sel = {};
+    qsel = {};
     try {
       out = await fetchApi.search(text, mk);
     } catch (err) {
@@ -78,6 +97,15 @@
     return { title: h.title, url: h.url, kind: h.kind, mediaKind: mk, sourceId: h.source_id, size: h.size };
   }
 
+  /** 带上这一行选的档位 */
+  function hitAt(i: number): Hit {
+    const h = out!.hits[i];
+    return qsel[i] !== undefined ? withQuality(h, qsel[i]) : h;
+  }
+
+  /** 这一组是不是下载源的结果（按专辑分组，没有“集”，不能追更） */
+  const isProviderGroup = (g: Group) => !!out && out.hits[g.indices[0]]?.kind === 'provider';
+
   async function download(hits: Hit[]) {
     if (hits.length === 0) return toast('没有可下载的条目');
     try {
@@ -92,14 +120,16 @@
   /** 整季：优先下载 AI 推荐的版本，没有推荐就下第一个 */
   function seasonHits(g: Group): Hit[] {
     if (!out) return [];
-    const recs = g.indices.filter(i => picks[i] !== undefined).map(i => out!.hits[i]);
+    // 下载源：整张专辑全部下载
+    if (isProviderGroup(g)) return g.indices.map(hitAt);
+    const recs = g.indices.filter(i => picks[i] !== undefined).map(hitAt);
     if (recs.length) return recs;
-    return [out.hits[g.indices[0]]];
+    return [hitAt(g.indices[0])];
   }
 
   function selectedHits(): Hit[] {
     if (!out) return [];
-    return out.hits.filter((_, i) => sel[i]);
+    return out.hits.map((_, i) => i).filter(i => sel[i]).map(hitAt);
   }
 
   const selCount = $derived(out ? out.hits.filter((_, i) => sel[i]).length : 0);
@@ -177,22 +207,46 @@
           <span class="badge2">{g.indices.length} 个版本</span>
           {#if subOf(g)}<span class="badge2 ok">已追更</span>{/if}
           <span class="spacer"></span>
-          <button class="mp-btn ghost" onclick={() => download(seasonHits(g))}>下载整季</button>
-          <button class="mp-btn ghost" onclick={() => toggleSub(g)}>{subOf(g) ? '取消追更' : '追更'}</button>
+          {#if isProviderGroup(g)}
+            <button class="mp-btn ghost" onclick={() => download(seasonHits(g))}>全部下载</button>
+          {:else}
+            <button class="mp-btn ghost" onclick={() => download(seasonHits(g))}>下载整季</button>
+            <button class="mp-btn ghost" onclick={() => toggleSub(g)}>{subOf(g) ? '取消追更' : '追更'}</button>
+          {/if}
         </div>
         {#each g.indices as i (i)}
           {@const h = out.hits[i]}
+          {@const it = items[i]}
           <div class="rs" class:on={picks[i] !== undefined || sel[i]}>
             <div class="rs-top">
               <input type="checkbox" class="mp-sw" aria-label="选中" bind:checked={sel[i]} />
-              <b>{h.title}</b>
+              {#if it?.cover}<img class="cv" src={it.cover} alt="" loading="lazy" referrerpolicy="no-referrer" />{/if}
+              <b>{it ? it.title : h.title}</b>
               {#if picks[i] !== undefined}<span class="badge2 ai">推荐</span>{/if}
               {#if h.rule_updated}<span class="badge2">规则已更新</span>{/if}
             </div>
-            <small>{h.resolution ?? '清晰度未知'} · {h.group ?? '字幕组未知'} · {fmtBytes(h.size)} · {hitKindText(h.kind)}{h.date ? ' · ' + h.date : ''}</small>
+            {#if it}
+              {@const qk = qsel[i] ?? providerQualityKey(h)}
+              {@const cur = it.qualities.find(x => x.key === qk) ?? it.qualities[0]}
+              <small>{[it.artist || '艺人未知', it.album, it.year, fmtDur(it.duration)].filter(Boolean).join(' · ')}</small>
+              <div class="qrow">
+                {#if it.qualities.length > 1}
+                  <select class="sel" aria-label="音质" value={qk} onchange={e => (qsel[i] = e.currentTarget.value)}>
+                    {#each it.qualities as x (x.key)}
+                      <option value={x.key}>{x.label || x.format.toUpperCase()}{x.size ? ' · ' + fmtBytes(x.size) : ''}</option>
+                    {/each}
+                  </select>
+                {:else if cur}
+                  <span class="badge2">{cur.label || cur.format.toUpperCase()}</span>
+                {/if}
+                <small>{cur?.format ? cur.format.toUpperCase() : ''}{cur?.bitrate ? ' ' + cur.bitrate + 'k' : ''} · {fmtBytes(cur?.size ?? h.size)} · {hitKindText(h.kind)}</small>
+              </div>
+            {:else}
+              <small>{h.resolution ?? '清晰度未知'} · {h.group ?? '字幕组未知'} · {fmtBytes(h.size)} · {hitKindText(h.kind)}{h.date ? ' · ' + h.date : ''}</small>
+            {/if}
             <small>来源：{h.source_name}{picks[i] !== undefined ? ' · ' + picks[i] : ''}</small>
             <div class="acts">
-              <button class="mp-btn ghost" onclick={() => download([h])}>下载这一个</button>
+              <button class="mp-btn ghost" onclick={() => download([hitAt(i)])}>下载这一个</button>
             </div>
           </div>
         {/each}
@@ -249,6 +303,23 @@
   }
   .rs small {
     grid-column: 1 / -1;
+  }
+  .cv {
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex: none;
+  }
+  .qrow {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .qrow small {
+    grid-column: auto;
   }
   .chips {
     display: flex;

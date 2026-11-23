@@ -43,6 +43,11 @@ pub async fn throttle(url: &str) {
 
 /// 用户名和密码写在网址里时（如 WebDAV）用基本认证
 pub fn with_auth(req: reqwest::RequestBuilder, url: &str) -> reqwest::RequestBuilder {
+    // 在软件里登录过这个网站时带上它的 Cookie
+    let req = match super::login::cookie_header(url) {
+        Some(h) => req.header(reqwest::header::COOKIE, h),
+        None => req,
+    };
     match url::Url::parse(url) {
         Ok(u) if !u.username().is_empty() => req.basic_auth(pct_decode(u.username()), u.password().map(pct_decode)),
         _ => req,
@@ -479,9 +484,14 @@ pub async fn list_ytdlp(url: &str) -> Result<Vec<(String, String)>, String> {
     throttle(url).await;
     let u = url.to_string();
     tokio::task::spawn_blocking(move || {
+        let tmp = std::env::temp_dir().join("music-player-ytdlp");
+        let cookies = super::login::temp_cookies(&u, &tmp, &format!("list-{}", std::process::id()));
         let mut c = tools::command(&exe);
-        c.args(["--flat-playlist", "-J", "--no-warnings", "--skip-download", "--socket-timeout", "20", "--"])
-            .arg(&u);
+        c.args(["--flat-playlist", "-J", "--no-warnings", "--skip-download", "--socket-timeout", "20"]);
+        if let Some(ck) = &cookies {
+            c.arg("--cookies").arg(ck.path());
+        }
+        c.arg("--").arg(&u);
         let out = tools::run(c).map_err(|e| format!("yt-dlp 失败：{e}"))?;
         let v: serde_json::Value = serde_json::from_slice(&out).map_err(|e| format!("yt-dlp 的输出无法解析：{e}"))?;
         Ok(parse_ytdlp_json(&v, &u))

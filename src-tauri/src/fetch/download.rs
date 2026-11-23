@@ -472,7 +472,16 @@ fn ytdlp_blocking(
 ) -> Result<Option<PathBuf>> {
     // Cookie 文件放在下载目录（不放进输出文件夹，免得被整理），函数结束时自动删除
     let cookies = bili::temp_cookies(url, dl_dir, &id.to_string());
-    opts.cookies = cookies.as_ref().map(|c| c.path().to_path_buf());
+    // 其他网站：在软件里登录过时用它的 Cookie
+    let site_cookies = if cookies.is_none() {
+        super::login::temp_cookies(url, dl_dir, &id.to_string())
+    } else {
+        None
+    };
+    opts.cookies = cookies
+        .as_ref()
+        .map(|c| c.path().to_path_buf())
+        .or_else(|| site_cookies.as_ref().map(|c| c.path().to_path_buf()));
     let mut cmd = tools::command(exe);
     cmd.args(bili::ytdlp_args(&opts, out_dir))
         .arg("--")

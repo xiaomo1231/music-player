@@ -192,10 +192,10 @@ async fn run(app: &AppHandle, id: i64, ctl: &Arc<Ctl>) -> Result<Option<organize
     let dl_dir = PathBuf::from(&settings.download_dir);
     tokio::fs::create_dir_all(&dl_dir).await?;
     let downloaded: Option<PathBuf> = match task.kind.as_str() {
-        "http" => http_download(app, &task, ctl, &dl_dir, &settings).await?,
+        "http" => http_download(app, &task, ctl, &dl_dir, &settings, &Default::default()).await?,
         "file" => local_copy(app, &task, &dl_dir).await?,
         "magnet" | "torrent" => bt_download(app, &task, ctl, &dl_dir, &settings).await?,
-        "ytdlp" => ytdlp_download(app, &task, ctl, &dl_dir, None).await?,
+        "ytdlp" => ytdlp_download(app, &task, ctl, &dl_dir, None, "").await?,
         "provider" => provider_download(app, &task, ctl, &dl_dir, &settings).await?,
         other => bail!("不支持的下载类型：{other}"),
     };
@@ -242,7 +242,14 @@ fn save_path_of(app: &AppHandle, id: i64, p: &Path) {
 }
 
 /// HTTP / HTTPS 直链：流式写入 *.part，中断后用 Range 续传，失败重试 3 次，超时和限速由设置决定
-async fn http_download(app: &AppHandle, task: &TaskView, ctl: &Ctl, dl_dir: &Path, settings: &FetchSettings) -> Result<Option<PathBuf>> {
+async fn http_download(
+    app: &AppHandle,
+    task: &TaskView,
+    ctl: &Ctl,
+    dl_dir: &Path,
+    settings: &FetchSettings,
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Result<Option<PathBuf>> {
     url::Url::parse(&task.url).context("下载地址不正确")?;
     let final_path = if task.save_path.is_empty() {
         organize::unique(dl_dir.join(file_name_for(&task.url, &task.title)))
@@ -266,6 +273,9 @@ async fn http_download(app: &AppHandle, task: &TaskView, ctl: &Ctl, dl_dir: &Pat
         let mut req = client.get(task.url.as_str());
         if offset > 0 {
             req = req.header(reqwest::header::RANGE, format!("bytes={offset}-"));
+        }
+        for (k, v) in headers.iter().filter(|(k, _)| provider::allowed_header(k)) {
+            req = req.header(k.as_str(), v.as_str());
         }
         let resp = match source::with_auth(req, &task.url).send().await {
             Ok(r) => r,
@@ -465,7 +475,7 @@ async fn bt_download(app: &AppHandle, task: &TaskView, ctl: &Ctl, dl_dir: &Path,
 /// yt-dlp 子进程：解析 [download] 进度行。成功后返回任务自己的输出文件夹（视频和同名的字幕、弹幕、封面一起整理入库）。
 /// B 站网址会带上登录 Cookie（临时文件，用完即删）、清晰度、字幕和弹幕参数，见 bili::ytdlp_args
 /// `quality`：清晰度上限（画面高度），给下载源在搜索页选的档位用；None 时按设置
-async fn ytdlp_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_dir: &Path, quality: Option<u32>) -> Result<Option<PathBuf>> {
+async fn ytdlp_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_dir: &Path, quality: Option<u32>, format: &str) -> Result<Option<PathBuf>> {
     let exe = source::ytdlp_path().ok_or_else(|| anyhow!(source::YTDLP_MISSING))?;
     let out_dir = dl_dir.join(format!("yt-{}", task.id));
     tokio::fs::create_dir_all(&out_dir).await?;
@@ -474,6 +484,9 @@ async fn ytdlp_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_dir
     let mut opts = bili::YtOpts::new(&task.url, &task.media_kind, &settings);
     if let Some(q) = quality {
         opts.quality = q;
+    }
+    if provider::valid_ytdlp_format(format) {
+        opts.format = format.to_string();
     }
     let (app2, ctl2) = (app.clone(), ctl.clone());
     let (id, url, dl) = (task.id, task.url.clone(), dl_dir.to_path_buf());
@@ -603,21 +616,27 @@ fn newest_file(dir: &Path) -> Option<PathBuf> {
 /// 下完后音乐补标签、存歌词，最后照常整理入库
 async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_dir: &Path, settings: &FetchSettings) -> Result<Option<PathBuf>> {
     let (pid, item, quality) = provider::parse_task_url(&task.url).ok_or_else(|| anyhow!("下载源任务地址不正确"))?;
-    let p = provider::get(&pid).ok_or_else(|| anyhow!("这个版本的软件里没有下载源“{pid}”"))?;
+    let p = provider::get(&pid).ok_or_else(|| match crate::plugin::missing_reason(&pid) {
+        Some(m) => anyhow!(m),
+        None => anyhow!("这个版本的软件里没有下载源“{pid}”"),
+    })?;
+    if !p.can_resolve() {
+        return self_download(app, task, ctl, dl_dir, &*p, &item, &quality).await;
+    }
     let resolved = p.resolve(&item, &quality).await.map_err(|m| anyhow!(m))?;
     let mut t = task.clone();
     let got = match &resolved.target {
-        provider::Target::Http { url, ext } => {
+        provider::Target::Http { url, ext, headers } => {
             if t.save_path.is_empty() {
                 t.save_path = organize::unique(dl_dir.join(provider::file_name(&item, ext))).to_string_lossy().into_owned();
             }
             t.url = url.clone();
-            http_download(app, &t, ctl, dl_dir, settings).await?
+            http_download(app, &t, ctl, dl_dir, settings, headers).await?
         }
-        provider::Target::Ytdlp { url } => {
+        provider::Target::Ytdlp { url, format } => {
             t.url = url.clone();
             // 档位是数字时当作清晰度上限（B 站下载源的档位就是画面高度，“0”为最高，空串按设置）
-            ytdlp_download(app, &t, ctl, dl_dir, quality.parse::<u32>().ok()).await?
+            ytdlp_download(app, &t, ctl, dl_dir, quality.parse::<u32>().ok(), format).await?
         }
         provider::Target::Magnet { uri } => {
             t.url = uri.clone();
@@ -680,6 +699,85 @@ async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_
 }
 
 /// 漫画按页下载：图片先存进 `pages-<任务号>` 文件夹（已下好的页跳过，可断点续传），全部下完打包成 CBZ 再删掉文件夹
+/// 插件自己下载（`download` 能力）：下到 `plg-<任务号>\`，进度来自插件的 progress 事件，暂停 / 取消时结束插件进程。
+/// 返回主文件（一个时）或整个文件夹（多个时），字幕、歌词、封面改成和主文件同名，整理时跟着一起移动
+async fn self_download(
+    app: &AppHandle,
+    task: &TaskView,
+    ctl: &Arc<Ctl>,
+    dl_dir: &Path,
+    p: &dyn provider::Provider,
+    item: &provider::Item,
+    quality: &str,
+) -> Result<Option<PathBuf>> {
+    let dest = dl_dir.join(format!("plg-{}", task.id));
+    let resume = dest.is_dir() && std::fs::read_dir(&dest).map(|mut d| d.next().is_some()).unwrap_or(false);
+    tokio::fs::create_dir_all(&dest).await?;
+    save_path_of(app, task.id, &dest);
+    let (app2, id) = (app.clone(), task.id);
+    let last = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(5)));
+    let progress: provider::ProgressFn = Arc::new(move |pr: provider::Progress| {
+        let mut l = last.lock();
+        if l.elapsed() < Duration::from_millis(500) {
+            return;
+        }
+        *l = Instant::now();
+        let frac = match pr.total {
+            Some(t) if t > 0.0 => (pr.done / t).clamp(0.0, 1.0),
+            _ => 0.0,
+        };
+        let size = if pr.unit == "bytes" { pr.total.unwrap_or(0.0) as i64 } else { 0 };
+        set_task_progress(&app2, id, frac, pr.speed.unwrap_or(0.0) as i64, size);
+    });
+    let ctl2 = ctl.clone();
+    let stop: provider::StopFn = Arc::new(move || ctl2.flag() != RUN);
+    let files = p.download(item, quality, &dest, resume, progress, stop).await;
+    if ctl.flag() != RUN {
+        return Ok(None);
+    }
+    let files = files.map_err(|m| anyhow!(m))?;
+    let out = collect_plugin_files(&dest, &files)?;
+    for f in files.iter().filter(|f| f.role == "main") {
+        let m = PathBuf::from(&f.path);
+        if matches!(crate::parse::classify(&m), Some("music")) {
+            if let Err(err) = provider::fill_tags(&m, item) {
+                eprintln!("补标签失败 {}：{err}", m.display());
+            }
+        }
+    }
+    let size = std::fs::metadata(&out).map(|m| if m.is_file() { m.len() as i64 } else { 0 }).unwrap_or(0);
+    set_task_progress(app, task.id, 1.0, 0, size);
+    Ok(Some(out))
+}
+
+/// 检查插件返回的文件都在 `dest` 里、确实存在；把字幕 / 歌词 / 封面改成和第一个主文件同名
+pub fn collect_plugin_files(dest: &Path, files: &[provider::DownloadedFile]) -> Result<PathBuf> {
+    let root = std::fs::canonicalize(dest)?;
+    let mut mains = vec![];
+    for f in files {
+        let p = std::fs::canonicalize(&f.path).map_err(|_| anyhow!("插件返回的文件不存在：{}", f.path))?;
+        if !p.starts_with(&root) || !p.is_file() {
+            bail!("插件返回的文件不在下载文件夹里：{}", f.path);
+        }
+        if f.role == "main" {
+            mains.push(p);
+        }
+    }
+    let Some(main) = mains.first().cloned() else {
+        bail!("插件没有返回下载好的文件")
+    };
+    let stem = main.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    for f in files.iter().filter(|f| f.role != "main") {
+        let p = PathBuf::from(&f.path);
+        let ext = p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+        let to = main.with_file_name(format!("{stem}.{ext}"));
+        if to != p && !to.exists() {
+            let _ = std::fs::rename(&p, &to);
+        }
+    }
+    Ok(if mains.len() == 1 { main } else { root })
+}
+
 async fn pages_download(
     app: &AppHandle,
     task: &TaskView,

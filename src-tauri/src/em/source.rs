@@ -1160,6 +1160,7 @@ impl Runner {
                         Some(Next::Done(Target::Http {
                             ext: clean_ext(&ext, &u),
                             url: u,
+                            headers: Default::default(),
                         }))
                     }
                     None => None,
@@ -1167,6 +1168,7 @@ impl Runner {
                 TargetSpec::Ytdlp { url } => match one(url)? {
                     Some(u) => Some(Next::Done(Target::Ytdlp {
                         url: self.checked_url(&page_url, &u, "视频页地址")?,
+                        format: String::new(),
                     })),
                     None => None,
                 },
@@ -1423,8 +1425,8 @@ fn clean_ext(ext: &str, url: &str) -> String {
 /// 给测试面板看的下载方式摘要（不下载）
 pub fn target_summary(t: &Target, total_chapters: Option<usize>) -> Value {
     match t {
-        Target::Http { url, ext } => json!({ "type": "http", "label": "直链下载", "url": url, "ext": ext }),
-        Target::Ytdlp { url } => json!({ "type": "ytdlp", "label": "交给 yt-dlp", "url": url }),
+        Target::Http { url, ext, .. } => json!({ "type": "http", "label": "直链下载", "url": url, "ext": ext }),
+        Target::Ytdlp { url, format } => json!({ "type": "ytdlp", "label": "交给 yt-dlp", "url": url, "format": format }),
         Target::Magnet { uri } => json!({ "type": "magnet", "label": "磁力 / 种子", "url": uri }),
         Target::Pages { urls, headers } => json!({
             "type": "pages", "label": "漫画图片", "count": urls.len(),
@@ -1753,7 +1755,8 @@ mod tests {
             r.target,
             Target::Http {
                 url: "https://archive.org/download/prideandprejudi00aust/Pride%20and%20Prejudice.epub".into(),
-                ext: "epub".into()
+                ext: "epub".into(),
+                headers: Default::default(),
             }
         );
         // 没有 EPUB：规则里写的 on_empty

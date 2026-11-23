@@ -29,6 +29,7 @@ pub mod player;
 #[cfg(not(feature = "mpv"))]
 #[path = "player_stub.rs"]
 pub mod player;
+pub mod plugin;
 pub mod reader;
 pub mod scanner;
 pub mod shell;
@@ -46,6 +47,7 @@ fn init_modules(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     convert::init(conn)?;
     daily::init(conn)?;
     em::init(conn)?;
+    plugin::init(conn)?;
     fetch::init(conn)?;
     lyrics::init(conn)?;
     mangatr::init(conn)?;
@@ -73,6 +75,7 @@ fn setup_modules(app: &tauri::AppHandle) {
     aiclassify::setup(app);
     artmeta::setup(app);
     em::setup(app);
+    plugin::setup(app);
 }
 
 use parking_lot::Mutex;
@@ -272,6 +275,30 @@ pub fn run() {
             em::em_export,
             em::em_test,
             em::em_open,
+            plugin::plugin_get_settings,
+            plugin::plugin_save_settings,
+            plugin::plugin_list,
+            plugin::plugin_inspect,
+            plugin::plugin_install,
+            plugin::plugin_load_dev,
+            plugin::plugin_set_enabled,
+            plugin::plugin_uninstall,
+            plugin::plugin_rollback,
+            plugin::plugin_logs,
+            plugin::plugin_clear_logs,
+            plugin::plugin_open_dir,
+            plugin::plugin_pack,
+            plugin::plugin_pack_dir,
+            plugin::plugin_test,
+            plugin::repo::plugin_repos,
+            plugin::repo::plugin_repo_add,
+            plugin::repo::plugin_repo_remove,
+            plugin::repo::plugin_repo_refresh,
+            plugin::repo::plugin_repo_inspect,
+            plugin::repo::plugin_repo_install,
+            plugin::repo::plugin_update,
+            plugin::repo::plugin_get_auto_update,
+            plugin::repo::plugin_set_auto_update,
             em::comic::em_comic_view,
             em::comic::em_comic_export,
             adclean::adclean_scan,

@@ -83,10 +83,20 @@ pub struct Item {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Target {
-    /// HTTP / HTTPS 直链，`ext` 为文件扩展名（不带点）。整本的 CBZ / EPUB / PDF 也用这个
-    Http { url: String, ext: String },
-    /// 交给 yt-dlp 下载的页面地址（含 m3u8 等流媒体）
-    Ytdlp { url: String },
+    /// HTTP / HTTPS 直链，`ext` 为文件扩展名（不带点）。整本的 CBZ / EPUB / PDF 也用这个。
+    /// `headers` 只能放 Referer、Accept、Accept-Language、Authorization（见 [`allowed_header`]）
+    Http {
+        url: String,
+        ext: String,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        headers: BTreeMap<String, String>,
+    },
+    /// 交给 yt-dlp 下载的页面地址（含 m3u8 等流媒体）。`format` 是 yt-dlp 的格式选择（`-f`），只用来选清晰度，空表示按设置
+    Ytdlp {
+        url: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        format: String,
+    },
     /// 磁力链接或 .torrent 网址，走 BT 下载（下完即停或做种，按设置）
     Magnet { uri: String },
     /// 漫画一话 / 一卷的全部图片地址，按顺序下载后打包成 CBZ。`headers` 是取图时要带的请求头（如 Referer、授权令牌）
@@ -109,6 +119,83 @@ pub struct Resolved {
     pub lyric: Option<String>,
 }
 
+/// 插件给出的直链请求头里允许的名字（不能带 Cookie：登录只来自用户自己在“网站登录”里保存的）
+pub fn allowed_header(name: &str) -> bool {
+    ["referer", "accept", "accept-language", "authorization"].contains(&name.to_ascii_lowercase().as_str())
+}
+
+/// yt-dlp 格式选择只允许这些字符（防止借 `-f` 夹带别的参数）
+pub fn valid_ytdlp_format(f: &str) -> bool {
+    f.len() <= 120 && !f.starts_with('-') && f.chars().all(|c| c.is_ascii_alphanumeric() || "*+/[]<>=!:._,-?^$|()".contains(c))
+}
+
+// ---------- 错误码 ----------
+
+/// 插件可以返回的错误码（见 docs/插件开发.md）。错误文字写成 `[code] 给用户看的话`，前端据此给出“去登录”“打开设置”等按钮
+pub const ERROR_CODES: [&str; 10] = [
+    "login_required",
+    "captcha",
+    "forbidden",
+    "not_found",
+    "rate_limited",
+    "network",
+    "bad_config",
+    "unsupported",
+    "internal",
+    "plugin_disabled",
+];
+
+/// 带错误码的错误文字
+pub fn coded(code: &str, msg: &str) -> String {
+    let code = if ERROR_CODES.contains(&code) { code } else { "internal" };
+    format!("[{code}] {}", msg.trim())
+}
+
+/// 拆出错误码：`[login_required] 请先登录` → (Some("login_required"), "请先登录")
+pub fn split_code(s: &str) -> (Option<&str>, &str) {
+    if let Some(rest) = s.strip_prefix('[') {
+        if let Some((code, msg)) = rest.split_once("] ") {
+            if ERROR_CODES.contains(&code) {
+                return (Some(code), msg);
+            }
+        }
+    }
+    (None, s)
+}
+
+// ---------- 插件自己下载 ----------
+
+/// 下载进度（插件自己下载时回报）
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct Progress {
+    pub done: f64,
+    pub total: Option<f64>,
+    /// bytes / pages / items
+    pub unit: String,
+    /// 字节 / 秒
+    pub speed: Option<f64>,
+    /// 状态文字，如“正在合并分段 3/12”
+    pub text: String,
+}
+
+pub type ProgressFn = Arc<dyn Fn(Progress) + Send + Sync>;
+/// 返回 true 表示用户暂停或取消了，插件应当尽快停下
+pub type StopFn = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// 插件下好的一个文件
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct DownloadedFile {
+    pub path: String,
+    /// main / subtitle / lyric / cover
+    #[serde(default = "main_role")]
+    pub role: String,
+}
+
+fn main_role() -> String {
+    "main".into()
+}
+
 /// 下载源要实现的接口
 pub trait Provider: Send + Sync {
     fn info(&self) -> ProviderInfo;
@@ -119,6 +206,24 @@ pub trait Provider: Send + Sync {
     /// 下载开始前调用，把搜索结果换成下载地址。`quality` 是 `Quality::key`，空串表示默认档位。
     /// 直链会过期时也不用担心：每次开始 / 继续下载都会重新调用。
     fn resolve<'a>(&'a self, item: &'a Item, quality: &'a str) -> BoxFuture<'a, Result<Resolved, String>>;
+
+    /// 能不能用 `resolve` 给出下载地址（由软件下载）。插件只声明了 `download` 时为 false
+    fn can_resolve(&self) -> bool {
+        true
+    }
+
+    /// 由下载源自己把文件下到 `dest` 文件夹里（插件的 `download` 能力）。`resume` 表示上次没下完，`dest` 里留着上次的文件
+    fn download<'a>(
+        &'a self,
+        _item: &'a Item,
+        _quality: &'a str,
+        _dest: &'a Path,
+        _resume: bool,
+        _progress: ProgressFn,
+        _stop: StopFn,
+    ) -> BoxFuture<'a, Result<Vec<DownloadedFile>, String>> {
+        Box::pin(async { Err(coded("unsupported", "这个下载源不支持自己下载")) })
+    }
 }
 
 /// 已注册的下载源
@@ -348,6 +453,7 @@ pub mod tests {
                     target: Target::Http {
                         url: format!("https://example.invalid/{}.{quality}", item.id),
                         ext: quality.into(),
+                        headers: BTreeMap::new(),
                     },
                     lyric: Some("[00:00.00]测试".into()),
                 })
@@ -436,7 +542,8 @@ pub mod tests {
             r.target,
             Target::Http {
                 url: "https://example.invalid/42.flac".into(),
-                ext: "flac".into()
+                ext: "flac".into(),
+                headers: BTreeMap::new(),
             }
         );
     }

@@ -101,3 +101,7 @@ organize::org_batches
 - 单元测试（临时副本里运行，通过）：模板生成（含年份缺失）、非法字符和保留字、长名截断、特典识别、重名序号、配套文件归属（最长主名）、AI 结果写回（AI 最高给“把握中”）、撤销顺序（倒序）、一次真实的移动 + 撤销（临时目录，包含字幕配套文件，校验 `files.path` 与 id 保持、旧文件夹清理、撤销后原位恢复、撤销过的批次不能再撤销）。
 - 没有对 `D:\vibe coding\测试\testmedia` 以外的真实文件做任何移动；测试只用临时目录。没有调用 AI 接口。
 - `pnpm check`：本模块文件零错误零警告。`pnpm build`：通过。
+
+## 10. 整理文件规则（.em，kind: organize）
+
+详见 `docs/rules/organize.md`。`scan_core` 多了一个参数（生效中的规则，`em::organize::active()` 在扫描线程里取）：每个文件先按规则匹配（`em::organize::match_path`），第一个匹配的生成把握高的条目（`rule_guess` / `rule_dst`，模板用规则自己的或 `template_for`），都不匹配的走原来的 `guess_*`。`load_settings` 改为 `pub(crate)`，规则测试面板用它取模板设置。

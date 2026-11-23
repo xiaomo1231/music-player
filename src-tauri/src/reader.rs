@@ -73,7 +73,17 @@ pub fn merge_broken_lines(lines: Vec<String>) -> Vec<String> {
     out
 }
 
+/// 默认的章节标题识别（“第 N 章”、序章、Chapter 1 等，40 字以内）
+pub fn is_chapter_title(line: &str) -> bool {
+    RE_CHAPTER.is_match(line) && line.trim().chars().count() <= 40
+}
+
 pub fn split_txt(text: &str) -> Vec<Chapter> {
+    split_txt_with(text, &is_chapter_title, &merge_broken_lines)
+}
+
+/// 按给定的章节标题判断和断行合并方式分章（小说排版规则用）。merge 拿到的是原始行（含空行）
+pub fn split_txt_with(text: &str, is_title: &dyn Fn(&str) -> bool, merge: &dyn Fn(Vec<String>) -> Vec<String>) -> Vec<Chapter> {
     let mut chapters: Vec<Chapter> = vec![];
     let mut cur = Chapter {
         title: "开始".into(),
@@ -81,8 +91,8 @@ pub fn split_txt(text: &str) -> Vec<Chapter> {
     };
     let mut buf: Vec<String> = vec![];
     for line in text.lines() {
-        if RE_CHAPTER.is_match(line) && line.trim().chars().count() <= 40 {
-            cur.paras = merge_broken_lines(std::mem::take(&mut buf));
+        if is_title(line) {
+            cur.paras = merge(std::mem::take(&mut buf));
             if !cur.paras.is_empty() || !chapters.is_empty() {
                 chapters.push(cur);
             }
@@ -94,7 +104,7 @@ pub fn split_txt(text: &str) -> Vec<Chapter> {
             buf.push(line.to_string());
         }
     }
-    cur.paras = merge_broken_lines(buf);
+    cur.paras = merge(buf);
     chapters.push(cur);
     // 去掉重复章节（同标题同开头）
     let mut seen = std::collections::HashSet::new();
@@ -131,6 +141,11 @@ pub fn split_txt(text: &str) -> Vec<Chapter> {
 }
 
 pub fn open_txt(path: &Path) -> Result<Book> {
+    open_txt_with(path, &split_txt)
+}
+
+/// 读 TXT，用给定的分章方式（小说排版规则可以换章节标题和断行合并）
+pub fn open_txt_with(path: &Path, split: &dyn Fn(&str) -> Vec<Chapter>) -> Result<Book> {
     let bytes = std::fs::read(path).with_context(|| format!("读取 {}", path.display()))?;
     let (text, enc) = decode_text(&bytes);
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
@@ -139,7 +154,7 @@ pub fn open_txt(path: &Path) -> Result<Book> {
         title,
         author,
         encoding: enc.into(),
-        chapters: split_txt(&text),
+        chapters: split(&text),
     })
 }
 

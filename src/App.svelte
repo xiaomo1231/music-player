@@ -31,6 +31,8 @@
   import ItemMenu from './components/ItemMenu.svelte';
   import UpdateModal from './components/UpdateModal.svelte';
   import CloseModal from './components/CloseModal.svelte';
+  import EmImportModal from './components/em/ImportModal.svelte';
+  import { takeEm, startEm } from './lib/em.svelte';
   import { updater } from './lib/updater.svelte';
   import VideoPlayer from './overlays/VideoPlayer.svelte';
   import NovelReader from './overlays/NovelReader.svelte';
@@ -215,6 +217,7 @@
   let dragging = $state(false);
   onMount(() => {
     wake();
+    startEm();
     const offs: Promise<() => void>[] = [];
     if (inTauri) {
       offs.push(
@@ -225,7 +228,9 @@
           else if (p.type === 'drop') {
             dragging = false;
             if (ui.view === 'convert') return; // 转换页自己接收
-            const added = await invoke<[number, string][]>('add_files', { paths: p.paths });
+            const paths = takeEm(p.paths); // .em 规则文件走导入确认
+            if (!paths.length) return;
+            const added = await invoke<[number, string][]>('add_files', { paths });
             await lib.refresh();
             const music = added.filter(a => a[1] === 'music').map(a => lib.byId(a[0])).filter(Boolean);
             if (music.length) {
@@ -355,6 +360,7 @@
 <ItemMenu />
 {#if updater.show}<UpdateModal />{/if}
 <CloseModal />
+<EmImportModal />
 
 <div class="mp-dim"></div>
 <div class="mp-refresh" class:run={ui.refreshRun > 0}></div>

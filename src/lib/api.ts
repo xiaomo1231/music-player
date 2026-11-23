@@ -23,7 +23,27 @@ export async function initPaths() {
 /** 绝对路径（用户自定义的封面）直接用，否则是封面缓存里的文件名 */
 export const isAbs = (p: string) => /^[a-zA-Z]:[\\/]|^\\\\/.test(p);
 export const coverUrl = (name?: string | null) => (name ? fileUrl(isAbs(name) ? name : coverDir + '/' + name) : '');
-export const comicPage = (id: number, page: number) => (inTauri ? `http://mpc.localhost/${id}/${page}` : '');
+// 漫画排版规则变了，页面图片也变了：地址里带上版本，避免用到缓存的旧图
+let comicEpoch = 0;
+const comicVers = new Map<number, string>();
+/** 记下这本漫画当前的页面版本（em_comic_view 返回的 ver） */
+export function setComicVer(id: number, ver: string) {
+  comicVers.set(id, ver);
+}
+/** 规则有变化：所有漫画的页面地址都换掉 */
+export function bumpComicPages() {
+  comicEpoch++;
+  comicVers.clear();
+}
+/** 漫画第 page 页（从 0 开始）。rule：只用某个规则（规则测试面板） */
+export const comicPage = (id: number, page: number, rule?: { id: string; ver: string }) => {
+  if (!inTauri) return '';
+  const q: string[] = [];
+  const v = rule ? rule.ver : comicVers.get(id) ?? '';
+  if (comicEpoch || v) q.push(`v=${comicEpoch}.${v}`);
+  if (rule) q.push(`rule=${encodeURIComponent(rule.id)}`);
+  return `http://mpc.localhost/${id}/${page}${q.length ? '?' + q.join('&') : ''}`;
+};
 
 export interface Track {
   id: number; path: string; title: string; artist: string; album: string; album_artist: string;

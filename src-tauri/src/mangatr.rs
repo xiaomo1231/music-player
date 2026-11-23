@@ -4,7 +4,7 @@
 //! 数据：应用数据目录 `mangatr/<comic_id>.json`，结构 `{pages:{"<页号>":{blocks:[…]}}, glossary:[{src,tr}]}`。
 //! 页号从 0 开始，与前端 `comicPage(id, page)` 一致。
 //! 只保存在本机，只把页面图片和文字发给用户配置的 AI 服务。
-use crate::{ai, comic, db, library, localocr, parse, textdet, AppState};
+use crate::{ai, db, library, localocr, parse, textdet, AppState};
 use anyhow::{anyhow, Result};
 use base64::Engine as _;
 use image::{imageops::FilterType, ImageEncoder, RgbImage};
@@ -518,14 +518,12 @@ fn comic_path(st: &AppState, comic_id: i64) -> Result<PathBuf> {
     Ok(PathBuf::from(p))
 }
 
-fn page_count(path: &Path) -> Result<u32> {
-    if path.is_dir() {
-        return Ok(comic::folder_pages(path)?.len() as u32);
-    }
-    if parse::ext(path) == "pdf" {
+/// 页数：和阅读器一致（有漫画排版规则时按规则排过之后的页）
+fn page_count(st: &AppState, comic_id: i64, path: &Path) -> Result<u32> {
+    if !path.is_dir() && parse::ext(path) == "pdf" {
         return Err(anyhow!("PDF 暂不支持漫画翻译嵌字，请使用 CBZ / ZIP 或图片文件夹"));
     }
-    Ok(comic::zip_pages(path)?.len() as u32)
+    Ok(crate::em::comic::page_count(st, comic_id)? as u32)
 }
 
 /// 读翻译数据。文件损坏时把它改名备份，返回错误，避免覆盖掉用户的数据。
@@ -668,16 +666,22 @@ fn apply_outs(blocks: &mut [Block], idx: &[usize], outs: Vec<TrOut>) {
 
 /// 识别 + 翻译一页并保存。成功才保存；中途失败不写入。
 async fn run_page(app: &AppHandle, c: Ctx, page: u32, cancel: Option<&AtomicBool>) -> Result<PageTr> {
-    let (path, file) = {
+    let (bytes, file) = {
         let st = app.state::<AppState>();
-        (comic_path(&st, c.comic_id)?, book_file(&st.dirs.data, c.comic_id))
+        let path = comic_path(&st, c.comic_id)?;
+        let count = page_count(&st, c.comic_id, &path)?;
+        if page >= count {
+            return Err(anyhow!("没有第 {} 页", page + 1));
+        }
+        emit(app, c, page, "load", "读取页面");
+        let st2 = app.clone();
+        let id = c.comic_id;
+        let bytes = tauri::async_runtime::spawn_blocking(move || crate::em::comic::read_page(&st2.state::<AppState>(), id, page as usize))
+            .await
+            .map_err(|e| anyhow!("读取页面失败：{e}"))??
+            .0;
+        (bytes, book_file(&st.dirs.data, c.comic_id))
     };
-    let count = page_count(&path)?;
-    if page >= count {
-        return Err(anyhow!("没有第 {} 页", page + 1));
-    }
-    emit(app, c, page, "load", "读取页面");
-    let (bytes, _) = comic::read_page(&path, page as usize)?;
     let local = use_local_ocr(app);
     let original = if local { bytes.clone() } else { Vec::new() };
     let (jpeg, rgb) = tauri::async_runtime::spawn_blocking(move || prepare_image(&bytes))
@@ -723,11 +727,11 @@ async fn run_page(app: &AppHandle, c: Ctx, page: u32, cancel: Option<&AtomicBool
 
 // ---------- 导出 ----------
 
-fn export_cbz(path: &Path, pages_png: Vec<(u32, String)>) -> Result<PathBuf> {
+fn export_cbz(st: &AppState, comic_id: i64, path: &Path, pages_png: Vec<(u32, String)>) -> Result<PathBuf> {
     if parse::ext(path) == "pdf" {
         return Err(anyhow!("PDF 来源暂不支持导出为 CBZ，请先转换为 CBZ 或图片文件夹"));
     }
-    let count = page_count(path)?;
+    let count = page_count(st, comic_id, path)?;
     let mut pngs: HashMap<u32, Vec<u8>> = HashMap::new();
     for (p, b64) in pages_png {
         let bytes = base64::engine::general_purpose::STANDARD
@@ -744,7 +748,7 @@ fn export_cbz(path: &Path, pages_png: Vec<(u32, String)>) -> Result<PathBuf> {
             let (data, ext) = match pngs.remove(&i) {
                 Some(d) => (d, "png"),
                 None => {
-                    let (b, m) = comic::read_page(path, i as usize)?;
+                    let (b, m) = crate::em::comic::read_page(st, comic_id, i as usize)?;
                     (b, ext_of_mime(&m))
                 }
             };
@@ -792,7 +796,7 @@ pub async fn mangatr_translate_range(app: AppHandle, comic_id: i64, from: u32, t
     }
     let count = {
         let st = app.state::<AppState>();
-        page_count(&comic_path(&st, comic_id).map_err(es)?).map_err(es)?
+        page_count(&st, comic_id, &comic_path(&st, comic_id).map_err(es)?).map_err(es)?
     };
     if to >= count {
         return Err(format!("这本书只有 {count} 页"));
@@ -857,7 +861,7 @@ pub fn mangatr_estimate(st: State<AppState>, comic_id: i64, from: u32, to: u32) 
     if from > to {
         return Err("起始页不能大于结束页".into());
     }
-    let count = page_count(&comic_path(&st, comic_id).map_err(es)?).map_err(es)?;
+    let count = page_count(&st, comic_id, &comic_path(&st, comic_id).map_err(es)?).map_err(es)?;
     if to >= count {
         return Err(format!("这本书只有 {count} 页"));
     }
@@ -960,7 +964,7 @@ pub async fn mangatr_export(app: AppHandle, comic_id: i64, pages_png: Vec<(u32, 
         let st = app.state::<AppState>();
         comic_path(&st, comic_id).map_err(es)?
     };
-    tauri::async_runtime::spawn_blocking(move || export_cbz(&path, pages_png).map(|p| p.to_string_lossy().to_string()))
+    tauri::async_runtime::spawn_blocking(move || export_cbz(&app.state::<AppState>(), comic_id, &path, pages_png).map(|p| p.to_string_lossy().to_string()))
         .await
         .map_err(|e| e.to_string())?
         .map_err(es)

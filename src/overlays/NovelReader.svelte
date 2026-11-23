@@ -95,7 +95,13 @@
   const total = $derived(book ? book.chapters.length : 0);
   const pct = $derived(total ? ((ci + ratio) / total) * 100 : 0);
   const appliedCount = $derived(hits.filter(h => h.status === 'applied').length);
-  const pStyle = $derived(`line-height:${prefs.lh};font-family:${FONTS[prefs.font]}`);
+  /** 小说排版规则（.em）给的段首缩进、段间空行；没有规则时为 null，用默认样式 */
+  const layout = $derived((book as (Book & { layout?: { indent: string; blank_lines: number } | null }) | null)?.layout ?? null);
+  const indentEm = (s: string) => Array.from(s).reduce((n, c) => n + (c === '\u3000' ? 1 : 0.5), 0);
+  const pStyle = $derived(
+    `line-height:${prefs.lh};font-family:${FONTS[prefs.font]}` +
+      (layout ? `;text-indent:${indentEm(layout.indent)}em;margin-bottom:${0.6 + layout.blank_lines * 1.2}em` : ''),
+  );
   const paged = $derived(np.mode === 'page');
   const modeInfo = $derived(NOVEL_MODES.find(m => m.id === np.mode) ?? NOVEL_MODES[0]);
 

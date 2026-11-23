@@ -71,3 +71,5 @@ media::media_save_screenshot,
 - `media::media_series_cover` / `media::media_video_cover`：卡片进入可视区域且没有海报时调用，找本地海报或生成竖版截帧（`series.frame`、缩略图目录 `v*.jpg`）。
 - `artmeta.rs`：联网海报。番剧、动画电影查 Bangumi（不需要 key），电视剧、真人电影查 TMDB（设置键 `artwork_online.tmdb_key`，可配 `proxy`）。结果在 `art_match` 表，状态 auto / pending / locked / none；拿不准的标 pending，不自动换图。启动 20 秒后和打开番剧 / 电影页时后台补全，每条完成发 `art://updated`。
 - 命令：`art_list`、`art_auto`、`art_refresh_all`、`art_test`。
+- 手动更换（`components/media/CoverPicker.svelte`）：`art_picker`、`art_search`（bangumi / anilist / tmdb）、`art_choose`（下载并锁定）、`art_off`（这部不要联网封面）、`art_reset`（恢复自动并立即重新匹配）。漫画按系列匹配，编号是系列名的哈希（`art_comic_id`）。
+- Bangumi 搜不到时退到 AniList；拿不准时如果打开了“AI 辅助识别”，让 AI 从前 6 个候选里挑。

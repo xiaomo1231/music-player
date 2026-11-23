@@ -1,0 +1,57 @@
+name: 打包检查
+
+# 改了随包分发的外部程序（yt-dlp、ffmpeg）或打包配置时，真打一次安装包，确认它们装进去了且能运行。
+# 不签名、不上传；也可以在 Actions 页面手动运行。
+on:
+  pull_request:
+    paths:
+      - tools/bundled-tools.json
+      - tools/fetch-tools.mjs
+      - src-tauri/tauri.conf.json
+      - .github/workflows/bundle-check.yml
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: 打安装包（不签名）
+        shell: pwsh
+        run: |
+          $cfg = Join-Path $env:RUNNER_TEMP 'nosign.json'
+          '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Encoding ascii $cfg
+          pnpm tauri build --bundles nsis --config $cfg
+          if ($LASTEXITCODE -ne 0) { throw '打包失败' }
+      - name: 检查安装包里的外部程序
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw '没找到安装包' }
+          '安装包大小：{0:N1} MB' -f ($setup.Length / 1MB)
+          $dir = Join-Path $env:RUNNER_TEMP 'aurora'
+          Start-Process -Wait -FilePath $setup.FullName -ArgumentList '/S', "/D=$dir"
+          $bin = Join-Path $dir 'bin'
+          Get-ChildItem -Recurse $bin | Select-Object FullName, Length | Format-Table -AutoSize
+          foreach ($f in 'ffmpeg.exe', 'ffprobe.exe', 'yt-dlp.exe', 'versions.json', 'licenses/THIRD-PARTY-NOTICES.txt', 'licenses/ffmpeg/LICENSE', 'licenses/yt-dlp/LICENSE') {
+            if (-not (Test-Path (Join-Path $bin $f))) { throw "安装后缺少 bin/$f" }
+          }
+          & (Join-Path $bin 'ffmpeg.exe') -hide_banner -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg 无法运行' }
+          & (Join-Path $bin 'ffmpeg.exe') -hide_banner -encoders | Select-String 'libx264|libx265|libmp3lame|libopus'
+          & (Join-Path $bin 'ffprobe.exe') -hide_banner -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) { throw 'ffprobe 无法运行' }
+          & (Join-Path $bin 'yt-dlp.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'yt-dlp 无法运行' }

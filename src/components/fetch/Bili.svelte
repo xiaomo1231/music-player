@@ -174,7 +174,7 @@
 
 {#if ytdlp && !ytdlp.installed}
   <div class="note warn">
-    下载需要 yt-dlp。点“安装”会从 yt-dlp 官方发布页下载（约 18 MB）并校验后放到软件的数据目录。
+    没有找到 yt-dlp（安装包自带的可能被删除了）。点“安装”会从 yt-dlp 官方发布页下载（约 23 MB）并校验后放到软件的数据目录。
     <button class="mp-btn" onclick={installYtdlp} disabled={installing}>{installing ? '下载中…' : '安装 yt-dlp'}</button>
   </div>
 {/if}

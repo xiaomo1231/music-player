@@ -1547,6 +1547,23 @@ pub fn apply(_app: &AppHandle, rule: &Rule, on: bool) {
     }
 }
 
+/// 导入（或更新）规则后：加进“我的来源”。已经在里面时只更新显示名，用户停用过的保持停用
+pub fn add_to_sources(app: &AppHandle, rule: &Rule) -> anyhow::Result<()> {
+    let url = provider::source_url(&format!("{ID_PREFIX}{}", rule.id()));
+    crate::fetch::with_db(app, |c| upsert_source(c, &url, &rule.header.name))
+}
+
+fn upsert_source(c: &rusqlite::Connection, url: &str, name: &str) -> anyhow::Result<()> {
+    let n = c.execute("UPDATE fetch_sources SET name=?2 WHERE url=?1", rusqlite::params![url, name])?;
+    if n == 0 {
+        c.execute(
+            "INSERT INTO fetch_sources(kind,name,url,rule_json,created_at,enabled) VALUES('provider',?1,?2,'',?3,1)",
+            rusqlite::params![name, url, crate::db::now()],
+        )?;
+    }
+    Ok(())
+}
+
 /// 规则被删除后：从“我的来源”里移除这个下载源（连同它的追更）
 pub fn removed(app: &AppHandle, id: &str) {
     let url = provider::source_url(&format!("{ID_PREFIX}{id}"));
@@ -1654,6 +1671,28 @@ pub async fn test(_app: AppHandle, rule: Arc<Rule>, arg: Value) -> Result<Value,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn imported_rule_joins_my_sources_once() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        crate::fetch::init(&c).unwrap();
+        let url = "provider://em-archive-books";
+        super::upsert_source(&c, url, "公版书").unwrap();
+        super::upsert_source(&c, url, "公版书 v2").unwrap();
+        let rows: Vec<(String, String, i64)> = c
+            .prepare("SELECT kind,name,enabled FROM fetch_sources WHERE url=?1")
+            .unwrap()
+            .query_map([url], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows, vec![("provider".to_string(), "公版书 v2".to_string(), 1)]);
+        // 用户在来源里停用过：更新规则不会重新打开
+        c.execute("UPDATE fetch_sources SET enabled=0 WHERE url=?1", [url]).unwrap();
+        super::upsert_source(&c, url, "公版书 v3").unwrap();
+        let en: i64 = c.query_row("SELECT enabled FROM fetch_sources WHERE url=?1", [url], |r| r.get(0)).unwrap();
+        assert_eq!(en, 0);
+    }
+
     use super::super::format;
     use super::super::net::tests::Canned;
     use super::*;

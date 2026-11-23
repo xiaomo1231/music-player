@@ -463,6 +463,12 @@ pub fn em_install(app: AppHandle, st: State<AppState>, path: String) -> R<RuleRo
         },
     );
     apply(&app, &rule, true);
+    if rule.kind() == Kind::Source {
+        // 导入下载源规则后直接加进“自动获取 → 我的来源”，不用再手动添加
+        if let Err(e) = source::add_to_sources(&app, &rule) {
+            eprintln!("下载源规则加入来源失败：{e}");
+        }
+    }
     let _ = app.emit(CHANGED, rule.kind().as_str());
     let conn = st.db.lock();
     let row = load_rows(&conn).map_err(es)?.into_iter().find(|r| r.id == id).ok_or("导入失败")?;

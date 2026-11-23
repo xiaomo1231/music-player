@@ -33,7 +33,8 @@
     try {
       const r = await emInstall(path);
       em.version++;
-      toast(r.problem ? `已导入「${r.name}」，但：${r.problem}` : `已${p.installed_version ? '更新' : '导入'}规则「${r.name}」`);
+      const where = r.kind === 'source' ? '，已加到“自动获取 → 我的来源”，可以直接搜索下载' : '';
+      toast(r.problem ? `已导入「${r.name}」，但：${r.problem}` : `已${p.installed_version ? '更新' : '导入'}规则「${r.name}」${where}`);
       next();
     } catch (e) {
       toast(String(e));
@@ -90,6 +91,7 @@
             </li>
           {/each}
         </ul>
+        {#if p.kind === 'source'}<p class="note">导入后会自动加到“自动获取 → 我的来源”，在搜索页直接搜索、下载、追更。</p>{/if}
         {#if LOGIN[p.login]}<p class="note">{LOGIN[p.login]}。</p>{/if}
         <p class="note">只导入来源有权获取内容的规则。规则不能自己登录、过验证码或解密受保护的内容。</p>
       {:else}

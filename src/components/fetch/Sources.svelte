@@ -6,7 +6,7 @@
   import { listen, inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
   import { fetchApi, needsLogin, KIND_TEXT, MEDIA_TEXT, metaApi, type MetaInfo, type ProviderInfo, type Source, type SourceStep } from '../../lib/fetch';
-  import { em } from '../../lib/em.svelte';
+  import { em, pickEm } from '../../lib/em.svelte';
 
   let { onchange }: { onchange?: () => void } = $props();
 
@@ -176,6 +176,7 @@
   <input class="tin" style="flex:1" placeholder="粘贴网站地址、订阅链接，或下载源程序（exe）的路径" autocomplete="off" bind:value={url} onkeydown={e => e.key === 'Enter' && add()} />
   <button class="mp-btn" onclick={add} disabled={busy}>添加</button>
   <button class="mp-btn ghost" title="添加自己写的下载源程序：搜索和下载时由软件调用它" onclick={pickProgram} disabled={busy}>选择程序…</button>
+  <button class="mp-btn ghost" title="导入 .em 下载源规则：导入后直接出现在我的来源里，可以搜索和下载" onclick={pickEm} disabled={busy}>导入规则…</button>
 </div>
 {#if addable.length > 0}
   <div class="frow" style="margin-top:10px">

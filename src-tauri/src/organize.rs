@@ -129,7 +129,7 @@ pub struct OrgSettings {
     pub exclude: Vec<String>,
 }
 
-fn load_settings(conn: &Connection) -> OrgSettings {
+pub(crate) fn load_settings(conn: &Connection) -> OrgSettings {
     library::get_setting(conn, "org")
         .ok()
         .flatten()
@@ -608,6 +608,96 @@ fn guess_manga(path: &Path) -> Guess {
     }
 }
 
+// ---------- .em 整理规则 ----------
+
+/// 季号：阿拉伯数字或“一”～“九十九”这样的中文数字
+fn num_of(s: &str) -> Option<u32> {
+    let s = s.trim();
+    if let Ok(n) = s.parse::<u32>() {
+        return Some(n);
+    }
+    let d = |c: char| "零一二三四五六七八九".chars().position(|x| x == c).map(|i| i as u32);
+    let cs: Vec<char> = s.chars().collect();
+    match cs.as_slice() {
+        ['十'] => Some(10),
+        [a] => d(*a),
+        ['十', b] => Some(10 + d(*b)?),
+        [a, '十'] => Some(d(*a)? * 10),
+        [a, '十', b] => Some(d(*a)? * 10 + d(*b)?),
+        _ => None,
+    }
+}
+
+/// 规则匹配结果 → 识别结果（把握高）。模板名按 media 取，有特典时用 Specials 的模板
+fn rule_guess(m: &crate::em::organize::Matched, path: &Path) -> Guess {
+    let f = |k: &str| m.fields.get(k).cloned().unwrap_or_default();
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let (series, title) = (f("series"), f("title"));
+    let work = if series.is_empty() { title.clone() } else { series.clone() };
+    let named = if title.is_empty() { series.clone() } else { title.clone() };
+    let year = match f("year") {
+        y if !y.is_empty() => y,
+        _ => find_year(&stem, &folder_names(path, 2)),
+    };
+    let episodic = matches!(m.media.as_str(), "anime" | "tv");
+    let season = if episodic {
+        num_of(&f("season")).unwrap_or(1).to_string()
+    } else {
+        f("season")
+    };
+    let ep_num = f("episode").parse::<f64>().ok();
+    let ep = ep_num.map(ep_text).unwrap_or_else(|| f("episode"));
+    let track = f("track").parse::<u32>().map(|n| n.to_string()).unwrap_or_else(|_| f("track"));
+    let special = f("special");
+    let key: &'static str = match (m.media.as_str(), special.is_empty()) {
+        ("anime", false) => "anime_special",
+        ("tv", false) => "tv_special",
+        ("anime", true) => "anime",
+        ("tv", true) => "tv",
+        ("movie", _) => "movie",
+        ("music", _) => "music",
+        ("manga", _) => "manga",
+        _ => "novel",
+    };
+    let ep_key = match (episodic && special.is_empty(), ep_num) {
+        (true, Some(e)) => Some(format!("{}|{}|{season}|{}", m.media, work.to_lowercase(), (e * 10.0).round() as i64)),
+        _ => None,
+    };
+    let v = vars(&[
+        ("作品名", work),
+        ("片名", named.clone()),
+        ("书名", named),
+        ("标题", title.clone()),
+        ("歌名", title),
+        ("年份", year),
+        ("季", season),
+        ("集", ep),
+        ("特典", special),
+        ("艺人", f("artist")),
+        ("作者", f("artist")),
+        ("专辑", f("album")),
+        ("音轨", track),
+        ("字幕组", f("group")),
+        ("原文件名", stem.clone()),
+    ]);
+    Guess {
+        kind: m.media.clone(),
+        conf: "hi",
+        reason: format!("规则「{}」", m.rule_name),
+        tpl: Some((key, v)),
+        ep_key,
+        res: resolution_score(&stem),
+    }
+}
+
+/// 规则给出的目标位置：规则自己的模板，没有就用整理页里这类文件的模板
+pub(crate) fn rule_dst(m: &crate::em::organize::Matched, path: &Path, target: &Path, st: &OrgSettings) -> PathBuf {
+    let g = rule_guess(m, path);
+    let (key, v) = g.tpl.expect("rule_guess 总有模板");
+    let tpl = m.template.clone().unwrap_or_else(|| template_for(st, key));
+    render_dst(target, &tpl, &v, &parse::ext(path))
+}
+
 // ---------- 配套文件 ----------
 
 fn is_companion_ext(e: &str) -> bool {
@@ -709,7 +799,7 @@ struct Pending {
 }
 
 /// 扫描并生成预览列表。不改动任何文件
-fn scan_core(roots: &[PathBuf], types: &str, target: &Path, st: &OrgSettings, covers: &Path) -> Result<Vec<Item>> {
+fn scan_core(roots: &[PathBuf], types: &str, target: &Path, st: &OrgSettings, covers: &Path, em: &[crate::em::organize::OrgRule]) -> Result<Vec<Item>> {
     if !matches!(types, "all" | "video" | "music") {
         bail!("未知的整理范围：{types}");
     }
@@ -750,14 +840,24 @@ fn scan_core(roots: &[PathBuf], types: &str, target: &Path, st: &OrgSettings, co
         if !type_ok(types, &parse::ext(f)) {
             continue;
         }
-        let g = match kind {
-            "music" => guess_music(f, covers),
-            "novel" => guess_novel(f),
-            "manga" => guess_manga(f),
-            _ => guess_video(f),
+        // 先试 .em 整理规则（第一条匹配的说了算），都不匹配再用自带的识别
+        let (g, own_tpl) = match crate::em::organize::match_path(em, f) {
+            Some(m) => (rule_guess(&m, f), m.template),
+            None => (
+                match kind {
+                    "music" => guess_music(f, covers),
+                    "novel" => guess_novel(f),
+                    "manga" => guess_manga(f),
+                    _ => guess_video(f),
+                },
+                None,
+            ),
         };
         let size = fs::metadata(f).map(|m| m.len()).unwrap_or(0);
-        let dst = g.tpl.as_ref().map(|(key, v)| render_dst(target, &template_for(st, key), v, &parse::ext(f)));
+        let dst = g
+            .tpl
+            .as_ref()
+            .map(|(key, v)| render_dst(target, &own_tpl.clone().unwrap_or_else(|| template_for(st, key)), v, &parse::ext(f)));
         pend.push(Pending { src: f.clone(), g, size, dst });
     }
 
@@ -1277,10 +1377,13 @@ pub async fn org_scan(app: AppHandle, roots: Vec<String>, types: String, target_
         (load_settings(&conn), st.dirs.covers.clone())
     };
     let roots: Vec<PathBuf> = roots.iter().map(PathBuf::from).collect();
-    tauri::async_runtime::spawn_blocking(move || scan_core(&roots, &types, Path::new(&target_root), &settings, &covers))
-        .await
-        .map_err(e)?
-        .map_err(e)
+    tauri::async_runtime::spawn_blocking(move || {
+        let em = crate::em::organize::active();
+        scan_core(&roots, &types, Path::new(&target_root), &settings, &covers, &em)
+    })
+    .await
+    .map_err(e)?
+    .map_err(e)
 }
 
 /// 交给 AI 之前：算出需要识别的文件数和预计 token
@@ -1377,6 +1480,68 @@ mod tests {
             covers: d.to_path_buf(),
             thumbs: d.to_path_buf(),
         }
+    }
+
+    fn org_rule(text: &str) -> crate::em::organize::OrgRule {
+        crate::em::organize::compile(&crate::em::format::parse(text).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn em_rule_matches_first_and_falls_through() {
+        let root = temp_dir("em");
+        let src = root.join("下载");
+        fs::create_dir_all(&src).unwrap();
+        for n in [
+            "[Nekomoe kissaten] 葬送的芙莉莲 - 05 [1080p].mkv",
+            "[Nekomoe kissaten] 葬送的芙莉莲 - 05 [1080p].sc.ass",
+            "[LoliHouse] 葬送的芙莉莲 第二季 - 03 [1080p].mkv",
+            "随便一个视频.mp4",
+        ] {
+            fs::write(src.join(n), b"x").unwrap();
+        }
+        let target = root.join("媒体");
+        let rule = org_rule(include_str!("../../tools/em-examples/anime-release.em"));
+        let items = scan_core(std::slice::from_ref(&src), "all", &target, &OrgSettings::default(), &root, &[rule]).unwrap();
+        let by = |part: &str| items.iter().find(|i| i.src.contains(part)).unwrap_or_else(|| panic!("{part}: {items:?}"));
+        let a = by("- 05");
+        assert_eq!(a.confidence, "hi");
+        assert_eq!(a.reason, "规则「字幕组发布名」");
+        assert_eq!(a.kind, "anime");
+        assert!(a.checked);
+        assert_eq!(
+            PathBuf::from(&a.dst),
+            target.join("番剧").join("葬送的芙莉莲").join("Season 01").join("葬送的芙莉莲 - S01E05.mkv")
+        );
+        // 配套字幕跟着走
+        assert_eq!(a.extras.len(), 1);
+        assert!(a.extras[0].dst.ends_with("葬送的芙莉莲 - S01E05.sc.ass"), "{:?}", a.extras);
+        // 第二种文件名没有自己的模板：用默认的番剧模板，季号认中文数字
+        let b = by("第二季");
+        assert_eq!(
+            PathBuf::from(&b.dst),
+            target.join("番剧").join("葬送的芙莉莲").join("Season 02").join("葬送的芙莉莲 - S02E03.mkv")
+        );
+        // 不匹配的走原来的识别
+        let c = by("随便");
+        assert_ne!(c.reason, "规则「字幕组发布名」");
+        assert_ne!(c.confidence, "hi");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rule_dst_uses_settings_template_and_fields() {
+        let rule = org_rule(
+            "em: 1\nkind: organize\nid: music-x\nname: 音乐\nrules:\n  - match: '^(?P<artist>.+?) - (?P<album>.+?) - (?P<track>\\d+) (?P<title>.+)\\.'\n    media: music\n",
+        );
+        let p = Path::new("/dl/林间信号 - 潮汐档案 - 3 雾港.flac");
+        let m = crate::em::organize::match_path(std::slice::from_ref(&rule), p).unwrap();
+        let mut st = OrgSettings::default();
+        st.templates.insert("music".into(), "歌/{艺人}/{专辑}/{音轨:02} {歌名}.ext".into());
+        let d = rule_dst(&m, p, Path::new("/m"), &st);
+        assert_eq!(d, PathBuf::from("/m/歌/林间信号/潮汐档案/03 雾港.flac"));
+        assert_eq!(num_of("十二"), Some(12));
+        assert_eq!(num_of("二十"), Some(20));
+        assert_eq!(num_of("03"), Some(3));
     }
 
     #[test]

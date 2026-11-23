@@ -117,3 +117,13 @@ adclean::adclean_export_clean
 - AI 识别只取本地挑出的可疑段落，没有“精读模式”（逐章检查）。
 - 内置规则写入后不会因为版本升级而自动更新（已存在则跳过）。需要改内置规则时，要么改 scope/pattern 组合，要么在 init 里加迁移。
 - 找相似依赖“连续覆盖”，对句中插入两处以上的不同词、或换序的变体识别率会下降。
+
+## 9. 小说排版规则（.em，kind: clean）
+
+详见 `docs/rules/clean.md`。和本模块相关的改动：
+
+- `novel_rules.source` 新增 `em:<规则 id>`：规则文件的 `remove` 同步过来的规则。把握按 `hi` 算；`adclean_rule_set_enabled` / `adclean_rule_delete` 拒绝修改它们（提示到“设置 › 规则文件”里管理）；`adclean_rules_export` 不导出它们；`RulesList.svelte` 里显示为只读，同一条按书限定的规则只显示一次。
+- 打开书统一走 `em::clean::open_book`（阅读器的 `open_book` 命令和本模块的 `book_of`），套用生效的排版规则；清理记录的下标以套用之后的文字为准。
+- `relocate_cleanups`：每次打开书时检查清理记录，对不上当前文字的按原文片段重新定位（同样的文字取离原位置最近的一处）。找不到的保留原样，阅读器（`hitMatches`）和导出都会跳过。
+- `adclean_export_clean` 先删广告再按规则的 `indent` / `blank_lines` 排版（`export_text_with`），并跳过对不上的记录。
+- `open_book` 命令的返回多了 `layout` 字段（`{indent, blank_lines, rules}` 或 null），阅读器据此设置段首缩进和段间距。

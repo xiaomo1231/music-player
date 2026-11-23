@@ -240,6 +240,27 @@ fn builtin_compiled() -> Vec<Compiled> {
         .collect()
 }
 
+/// 规则文件（.em）同步过来的规则，source 为 `em:<规则 id>`：只读，跟着规则文件启用 / 停用 / 删除
+pub const EM_SOURCE: &str = "em:";
+
+/// 检查一条规则能不能用（规则文件导入前校验）
+pub fn check_pattern(kind: &str, pattern: &str) -> std::result::Result<(), String> {
+    compile_pattern(kind, pattern).map(|_| ()).map_err(|err| err.to_string())
+}
+
+/// 一条规则在一段文字里命中的区间（字符下标），和扫描时一样：先归一化再匹配，line 规则整段删除
+pub fn spans_for(kind: &str, pattern: &str, para: &str) -> Result<Vec<(usize, usize)>> {
+    let re = compile_pattern(kind, pattern)?;
+    let n = norm_of(para);
+    let plen = para.chars().count();
+    let mut v: Vec<(usize, usize)> = find_spans(&re, &n)
+        .into_iter()
+        .map(|(s, e)| if kind == "line" && n.chars.len() <= LINE_MAX { (0, plen) } else { (s, e) })
+        .collect();
+    v.dedup();
+    Ok(v)
+}
+
 /// 在一段文字里找出规则命中的原文区间（字符下标，左闭右开）
 fn find_spans(re: &Regex, n: &Norm) -> Vec<(usize, usize)> {
     if n.chars.is_empty() {
@@ -322,7 +343,7 @@ fn pack(h: &Hit) -> String {
 }
 
 fn conf_for(source: &str, text: &str) -> &'static str {
-    if source == "builtin" || source == "user" || signal(text) {
+    if source == "builtin" || source == "user" || source.starts_with(EM_SOURCE) || signal(text) {
         "hi"
     } else {
         "mid"
@@ -625,6 +646,11 @@ pub fn remove_ranges(p: &str, ranges: &[(usize, usize)]) -> String {
 
 /// 生成干净的 TXT：章节标题 + 正文，已确认的广告不输出
 pub fn export_text(book: &reader::Book, applied: &[Hit]) -> String {
+    export_text_with(book, applied, "　　", 0)
+}
+
+/// 同上，段首缩进和段间空行可以指定（小说排版规则）。先删广告再排版，清理记录的下标不受影响
+pub fn export_text_with(book: &reader::Book, applied: &[Hit], indent: &str, blank_lines: usize) -> String {
     let mut out = String::new();
     for (ci, ch) in book.chapters.iter().enumerate() {
         let title = ch.title.trim();
@@ -642,9 +668,12 @@ pub fn export_text(book: &reader::Book, applied: &[Hit]) -> String {
             if t.is_empty() {
                 continue;
             }
-            out.push_str("　　");
+            out.push_str(indent);
             out.push_str(&t);
             out.push('\n');
+            for _ in 0..blank_lines {
+                out.push('\n');
+            }
         }
         out.push('\n');
     }
@@ -814,10 +843,94 @@ fn upsert_freq_rule(conn: &Connection, file_id: i64, c: &FreqCluster) -> Result<
     Ok((conn.last_insert_rowid(), true))
 }
 
+/// 打开书：和阅读器看到的一样（套用了生效的小说排版规则），清理记录的下标都以它为准
 fn book_of(conn: &Connection, id: i64) -> Result<(String, reader::Book)> {
+    let (path, opened) = opened_of(conn, id)?;
+    Ok((path, opened.book))
+}
+
+fn opened_of(conn: &Connection, id: i64) -> Result<(String, crate::em::clean::Opened)> {
     let path = library::file_path(conn, id)?;
-    let book = reader::open_book(Path::new(&path))?;
-    Ok((path, book))
+    let opened = crate::em::clean::open_book(conn, id, &path)?;
+    Ok((path, opened))
+}
+
+/// 清理记录对不上当前的文字时（排版规则改了、启用或停用了，原文件被改过），按记录的原文片段重新定位。
+/// 同样的文字出现多处时，取离原位置最近的一处；找不到的保持原样（阅读器和导出都会忽略对不上的记录）。
+/// 返回重新定位的条数
+pub fn relocate_cleanups(conn: &Connection, file_id: i64, book: &reader::Book) -> Result<usize> {
+    let rows = load_rows(conn, file_id)?;
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let paras: Vec<Vec<char>> = book.chapters.iter().flat_map(|c| c.paras.iter().map(|p| p.chars().collect())).collect();
+    // 每章第一段在 paras 里的位置
+    let mut first = vec![];
+    let mut k = 0;
+    for c in &book.chapters {
+        first.push(k);
+        k += c.paras.len();
+    }
+    let flat = |ch: usize, para: usize| -> Option<usize> {
+        let c = book.chapters.get(ch)?;
+        (para < c.paras.len()).then(|| first[ch] + para)
+    };
+    let fits = |h: &Hit| -> bool {
+        flat(h.chapter, h.para).is_some_and(|f| {
+            let p = &paras[f];
+            h.start < h.end && h.end <= p.len() && p[h.start..h.end].iter().collect::<String>() == h.text
+        })
+    };
+    let (ok, stale): (Vec<Hit>, Vec<Hit>) = rows.into_iter().partition(|h| fits(h));
+    if stale.is_empty() || paras.is_empty() {
+        return Ok(0);
+    }
+    let mut taken: HashSet<(usize, usize, usize)> = ok.iter().filter_map(|h| flat(h.chapter, h.para).map(|f| (f, h.start, h.end))).collect();
+    // 原来大致在第几段（章节重新划分过时只是估计）
+    let nch = book.chapters.len();
+    let estimate = |h: &Hit| -> usize {
+        let ch = h.chapter.min(nch - 1);
+        first[ch] + h.para.min(book.chapters[ch].paras.len().saturating_sub(1))
+    };
+    let mut moved = 0;
+    for h in stale {
+        let needle: Vec<char> = h.text.chars().collect();
+        if needle.is_empty() {
+            continue;
+        }
+        let est = estimate(&h);
+        let mut best: Option<(usize, usize, usize)> = None;
+        for (f, p) in paras.iter().enumerate() {
+            if p.len() < needle.len() {
+                continue;
+            }
+            for s in 0..=p.len() - needle.len() {
+                if p[s..s + needle.len()] == needle[..]
+                    && !taken.contains(&(f, s, s + needle.len()))
+                    && best.map_or(true, |(bf, _, _)| f.abs_diff(est) < bf.abs_diff(est))
+                {
+                    best = Some((f, s, s + needle.len()));
+                }
+            }
+        }
+        let Some((f, s, en)) = best else { continue };
+        taken.insert((f, s, en));
+        // 空章节会让 first 里有重复值，取最后一个不大于 f 的，正好是有这一段的章
+        let ch = first.partition_point(|&x| x <= f) - 1;
+        let nh = Hit {
+            chapter: ch,
+            para: f - first[ch],
+            start: s,
+            end: en,
+            ..h.clone()
+        };
+        conn.execute(
+            "UPDATE novel_cleanups SET chapter=?1, text=?2 WHERE id=?3",
+            params![nh.chapter as i64, pack(&nh), h.id],
+        )?;
+        moved += 1;
+    }
+    Ok(moved)
 }
 
 // ---------- 命令 ----------
@@ -1108,11 +1221,21 @@ pub async fn adclean_rules(st: State<'_, AppState>, scope: Option<String>) -> R<
     .await
 }
 
+const EM_READONLY: &str = "这条规则来自规则文件，要停用请到“设置 › 规则文件”里停用或删除对应的规则文件";
+
+fn rule_source(conn: &Connection, id: i64) -> Result<String> {
+    Ok(conn.query_row("SELECT source FROM novel_rules WHERE id=?1", [id], |r| r.get(0))?)
+}
+
 /// 停用或启用一条规则
 #[tauri::command]
 pub async fn adclean_rule_set_enabled(st: State<'_, AppState>, id: i64, enabled: bool) -> R<()> {
     blocking(&st, move |db| {
-        open_conn(db)?.execute("UPDATE novel_rules SET enabled=?1 WHERE id=?2", params![enabled as i64, id])?;
+        let conn = open_conn(db)?;
+        if rule_source(&conn, id)?.starts_with(EM_SOURCE) {
+            return Err(anyhow!(EM_READONLY));
+        }
+        conn.execute("UPDATE novel_rules SET enabled=?1 WHERE id=?2", params![enabled as i64, id])?;
         Ok(())
     })
     .await
@@ -1123,9 +1246,12 @@ pub async fn adclean_rule_set_enabled(st: State<'_, AppState>, id: i64, enabled:
 pub async fn adclean_rule_delete(st: State<'_, AppState>, id: i64) -> R<()> {
     blocking(&st, move |db| {
         let conn = open_conn(db)?;
-        let src: String = conn.query_row("SELECT source FROM novel_rules WHERE id=?1", [id], |r| r.get(0))?;
+        let src = rule_source(&conn, id)?;
         if src == "builtin" {
             return Err(anyhow!("内置规则只能停用，不能删除"));
+        }
+        if src.starts_with(EM_SOURCE) {
+            return Err(anyhow!(EM_READONLY));
         }
         conn.execute("DELETE FROM novel_rules WHERE id=?1", [id])?;
         Ok(())
@@ -1138,7 +1264,8 @@ pub async fn adclean_rule_delete(st: State<'_, AppState>, id: i64) -> R<()> {
 pub async fn adclean_rules_export(st: State<'_, AppState>, path: String) -> R<usize> {
     blocking(&st, move |db| {
         let conn = open_conn(db)?;
-        let mut stmt = conn.prepare("SELECT id,scope,kind,pattern,note,enabled,source FROM novel_rules WHERE source!='builtin' ORDER BY id")?;
+        let mut stmt =
+            conn.prepare("SELECT id,scope,kind,pattern,note,enabled,source FROM novel_rules WHERE source!='builtin' AND source NOT LIKE 'em:%' ORDER BY id")?;
         let rows: Vec<RuleRow> = stmt
             .query_map([], |r| {
                 Ok(RuleRow {
@@ -1187,12 +1314,28 @@ pub async fn adclean_rules_import(st: State<'_, AppState>, path: String) -> R<us
 pub async fn adclean_export_clean(st: State<'_, AppState>, id: i64, path: String) -> R<usize> {
     blocking(&st, move |db| {
         let conn = open_conn(db)?;
-        let (src, book) = book_of(&conn, id)?;
+        let (src, opened) = opened_of(&conn, id)?;
         if path.eq_ignore_ascii_case(&src) {
             return Err(anyhow!("不能覆盖原文件，请换一个文件名"));
         }
-        let applied: Vec<Hit> = load_rows(&conn, id)?.into_iter().filter(|h| h.status == "applied").collect();
-        std::fs::write(&path, export_text(&book, &applied))?;
+        let book = &opened.book;
+        // 对不上当前文字的记录（重新定位也没找到）不处理，免得删错
+        let applied: Vec<Hit> = load_rows(&conn, id)?
+            .into_iter()
+            .filter(|h| h.status == "applied")
+            .filter(|h| {
+                book.chapters
+                    .get(h.chapter)
+                    .and_then(|c| c.paras.get(h.para))
+                    .is_some_and(|p| slice_chars(p, h.start, h.end) == h.text)
+            })
+            .collect();
+        let (indent, blank) = opened
+            .layout
+            .as_ref()
+            .map(|l| (l.indent.as_str(), l.blank_lines as usize))
+            .unwrap_or(("　　", 0));
+        std::fs::write(&path, export_text_with(book, &applied, indent, blank))?;
         Ok(applied.len())
     })
     .await

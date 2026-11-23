@@ -1,5 +1,5 @@
 //! 前端可调用的 Tauri 命令
-use crate::{indexer, library, metadata, parse, reader, scanner, AppState};
+use crate::{indexer, library, metadata, parse, scanner, AppState};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -85,12 +85,18 @@ pub async fn list_books(st: State<'_, AppState>) -> R<Vec<library::BookItem>> {
 }
 
 #[tauri::command]
-pub async fn open_book(st: State<'_, AppState>, id: i64) -> R<reader::Book> {
+pub async fn open_book(st: State<'_, AppState>, id: i64) -> R<crate::em::clean::Opened> {
     let path = library::file_path(&st.db.lock(), id).map_err(e)?;
-    tauri::async_runtime::spawn_blocking(move || reader::open_book(Path::new(&path)))
-        .await
-        .map_err(e)?
-        .map_err(e)
+    let db = st.db_path.clone();
+    // 套用小说排版规则（.em）；单独开连接，不占主连接的锁
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<crate::em::clean::Opened> {
+        let conn = rusqlite::Connection::open(&db)?;
+        conn.busy_timeout(std::time::Duration::from_secs(10))?;
+        crate::em::clean::open_book(&conn, id, &path)
+    })
+    .await
+    .map_err(e)?
+    .map_err(e)
 }
 
 #[tauri::command]

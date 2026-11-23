@@ -1042,7 +1042,7 @@ async fn pipeline(app: &AppHandle, id: u64) -> Result<(Vec<String>, Vec<Line>)> 
 // ---------- 命令 ----------
 
 fn ensure_ready(app: &AppHandle) -> R<()> {
-    tools::ffmpeg().ok_or_else(|| "没有找到 ffmpeg.exe（放到程序目录的 bin 文件夹，或加入 PATH）".to_string())?;
+    tools::ffmpeg().ok_or_else(|| "没有找到 ffmpeg.exe（安装包自带，可能被删除了：重新安装播放器，或放到程序目录的 bin 文件夹）".to_string())?;
     ai::ready(app).map_err(es)?;
     Ok(())
 }

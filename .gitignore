@@ -8,3 +8,6 @@ src-tauri/gen/
 src-tauri/lib/
 *.log
 release-out/
+# 随安装包分发的外部程序，由 node tools/fetch-tools.mjs 下载（清单见 tools/bundled-tools.json）
+src-tauri/bin/*
+!src-tauri/bin/.gitkeep

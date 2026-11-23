@@ -8,6 +8,7 @@
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "tauri": "tauri",
+    "tools": "node tools/fetch-tools.mjs",
     "demos": "python tools/build_demos.py"
   },
   "dependencies": {

@@ -1,4 +1,4 @@
-//! yt-dlp 的安装与更新：从 yt-dlp 官方 GitHub 发布页下载 yt-dlp.exe，按同一发布里的 SHA2-256SUMS 校验后放到数据目录的 bin\。
+//! yt-dlp 的更新：安装包自带一份（程序目录 bin\），这里从 yt-dlp 官方 GitHub 发布页下载 yt-dlp.exe，按同一发布里的 SHA2-256SUMS 校验后放到数据目录的 bin\。
 //! B 站等网站经常改接口，yt-dlp 也随之频繁发版，所以在软件里一键更新，不用重新安装播放器。
 use crate::tools;
 use anyhow::{anyhow, bail, Context, Result};
@@ -81,7 +81,16 @@ pub async fn install() -> Result<Status> {
     }
     let part = dir.join(format!("{EXE}.part"));
     tokio::fs::write(&part, &bytes).await?;
-    tokio::fs::rename(&part, dir.join(EXE)).await?;
+    let exe = dir.join(EXE);
+    tokio::fs::rename(&part, &exe).await?;
+    // 记下版本：安装包也自带一份 yt-dlp，两份都在时按版本选新的
+    let _ = tokio::task::spawn_blocking(move || {
+        let v = version_of(&exe);
+        if !v.is_empty() {
+            tools::write_ytdlp_data_version(&exe, &v);
+        }
+    })
+    .await;
     Ok(status().await)
 }
 

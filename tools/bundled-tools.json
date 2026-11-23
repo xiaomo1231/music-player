@@ -1,0 +1,29 @@
+{
+  "_说明": "随安装包一起分发的外部程序。改版本时同时改 url 和 sha256，然后运行 node tools/fetch-tools.mjs 验证。下载的文件放在 src-tauri/bin/（不提交到 git），打包时整个文件夹装到程序目录的 bin\\。",
+  "tools": [
+    {
+      "name": "yt-dlp",
+      "version": "2026.10.26",
+      "license": "Unlicense（附带的 Python 运行库等第三方组件见 THIRD_PARTY_LICENSES.txt）",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp.exe",
+      "sha256": "f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d",
+      "files": { "yt-dlp.exe": "yt-dlp.exe" },
+      "licenses": {
+        "LICENSE": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.10.26/LICENSE",
+        "THIRD_PARTY_LICENSES.txt": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.10.26/THIRD_PARTY_LICENSES.txt"
+      },
+      "source": "https://github.com/yt-dlp/yt-dlp/tree/2026.10.26"
+    },
+    {
+      "name": "ffmpeg",
+      "version": "8.1.1-essentials_build-www.gyan.dev",
+      "license": "GPL v3",
+      "url": "https://github.com/GyanD/codexffmpeg/releases/download/8.1.1/ffmpeg-8.1.1-essentials_build.zip",
+      "sha256": "6f58ce889f59c311410f7d2b18895b33c03456463486f3b1ebc93d97a0f54541",
+      "zipRoot": "ffmpeg-8.1.1-essentials_build",
+      "files": { "bin/ffmpeg.exe": "ffmpeg.exe", "bin/ffprobe.exe": "ffprobe.exe" },
+      "licenseFiles": { "LICENSE": "LICENSE", "README.txt": "README.txt" },
+      "source": "https://github.com/FFmpeg/FFmpeg/commit/239f2c733d （FFmpeg 源码）；各依赖库的版本和源码地址见 README.txt；编译脚本和发布页 https://www.gyan.dev/ffmpeg/builds/ 、https://github.com/GyanD/codexffmpeg/releases/tag/8.1.1"
+    }
+  ]
+}

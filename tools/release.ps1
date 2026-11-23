@@ -6,7 +6,7 @@
 #
 # 会做的事：
 #   1. 读 tauri.conf.json 的版本号，从 CHANGELOG.md 取这个版本的更新说明
-#   2. 用签名私钥打 NSIS 安装包（生成 .sig 签名）
+#   2. 用签名私钥打 NSIS 安装包（生成 .sig 签名）；打包前会自动下载随包分发的 yt-dlp、ffmpeg、ffprobe（tools/fetch-tools.mjs）
 #   3. 生成 latest.json（软件“检查更新”读的就是它）
 #   4. gh release create v<版本>，上传安装包、签名和 latest.json
 #

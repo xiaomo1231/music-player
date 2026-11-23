@@ -30,6 +30,7 @@
   import FileInfoModal from './components/FileInfoModal.svelte';
   import ItemMenu from './components/ItemMenu.svelte';
   import UpdateModal from './components/UpdateModal.svelte';
+  import CloseModal from './components/CloseModal.svelte';
   import { updater } from './lib/updater.svelte';
   import VideoPlayer from './overlays/VideoPlayer.svelte';
   import NovelReader from './overlays/NovelReader.svelte';
@@ -353,6 +354,7 @@
 
 <ItemMenu />
 {#if updater.show}<UpdateModal />{/if}
+<CloseModal />
 
 <div class="mp-dim"></div>
 <div class="mp-refresh" class:run={ui.refreshRun > 0}></div>

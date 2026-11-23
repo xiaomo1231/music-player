@@ -30,12 +30,8 @@ pub fn setup(app: &AppHandle) {
         let h = app.clone();
         w.on_window_event(move |ev| {
             if let WindowEvent::CloseRequested { api, .. } = ev {
-                if get_bool(&h, "close_to_tray", false) {
-                    api.prevent_close();
-                    if let Some(w) = h.get_webview_window(MAIN) {
-                        let _ = w.hide();
-                    }
-                }
+                api.prevent_close();
+                on_close_requested(&h);
             }
         });
     }
@@ -67,6 +63,10 @@ pub fn on_second_instance(app: &AppHandle, args: Vec<String>, cwd: String) {
 
 pub const CMD_EVENT: &str = "shell://cmd";
 pub const OPEN_EVENT: &str = "shell://open-files";
+/// 关闭 / 退出需要前端弹窗确认时发出，内容见 CloseAsk
+pub const CLOSE_EVENT: &str = "shell://close-ask";
+/// 设置项：关闭按钮行为 "ask" / "tray" / "quit"（旧版本用布尔值 close_to_tray）
+const CLOSE_ACTION_KEY: &str = "close_action";
 /// 桌面歌词窗口的 label
 pub const LYRICS: &str = "lyrics";
 const TRAY_ID: &str = "main-tray";
@@ -116,6 +116,16 @@ pub struct OpenPayload {
     pub paths: Vec<String>,
     pub add_only: bool,
 }
+
+/// 发给前端的关闭询问：ask=true 时让用户选最小化还是退出；ask=false 时只是退出前确认下载
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct CloseAsk {
+    pub ask: bool,
+    pub downloads: i64,
+}
+
+/// 前端是否已经在监听关闭询问；没就绪（比如界面还没加载完）时不弹窗，按原来的方式处理
+static CLOSE_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Serialize)]
 pub struct AutostartInfo {
@@ -386,9 +396,73 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 读取关闭按钮行为：优先 close_action；没有时沿用旧开关 close_to_tray（开着就是 "tray"），否则每次询问
+fn resolve_close_action(action: Option<&serde_json::Value>, legacy_tray: Option<&serde_json::Value>) -> &'static str {
+    match action.and_then(|v| v.as_str()) {
+        Some("tray") => "tray",
+        Some("quit") => "quit",
+        Some("ask") => "ask",
+        _ if legacy_tray.and_then(|v| v.as_bool()) == Some(true) => "tray",
+        _ => "ask",
+    }
+}
+
+fn close_action(app: &AppHandle) -> &'static str {
+    resolve_close_action(get_setting(app, CLOSE_ACTION_KEY).as_ref(), get_setting(app, "close_to_tray").as_ref())
+}
+
+/// 正在进行的下载数（排队、下载中、整理中；做种不算）
+fn active_downloads(app: &AppHandle) -> i64 {
+    let st = app.state::<AppState>();
+    let conn = st.db.lock();
+    conn.query_row(
+        "SELECT COUNT(*) FROM fetch_tasks WHERE status IN ('queued','downloading','organizing')",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
+}
+
+/// 点了主窗口的关闭按钮
+fn on_close_requested(app: &AppHandle) {
+    match close_action(app) {
+        "tray" => {
+            if let Some(w) = app.get_webview_window(MAIN) {
+                let _ = w.hide();
+            }
+        }
+        "quit" => request_quit(app),
+        _ => {
+            if !CLOSE_READY.load(std::sync::atomic::Ordering::SeqCst) {
+                app.exit(0);
+                return;
+            }
+            show_main(app);
+            let _ = app.emit(
+                CLOSE_EVENT,
+                CloseAsk {
+                    ask: true,
+                    downloads: active_downloads(app),
+                },
+            );
+        }
+    }
+}
+
+/// 退出程序；有下载在进行时先让前端确认
+fn request_quit(app: &AppHandle) {
+    let downloads = active_downloads(app);
+    if downloads == 0 || !CLOSE_READY.load(std::sync::atomic::Ordering::SeqCst) {
+        app.exit(0);
+        return;
+    }
+    show_main(app);
+    let _ = app.emit(CLOSE_EVENT, CloseAsk { ask: false, downloads });
+}
+
 fn on_tray_menu(app: &AppHandle, id: &str) {
     match id {
-        "quit" => app.exit(0),
+        "quit" => request_quit(app),
         "show" => {
             show_main(app);
             let _ = app.emit(CMD_EVENT, "show");
@@ -491,6 +565,31 @@ pub fn shell_tray_tooltip(app: AppHandle, text: String) -> Result<(), String> {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let short: String = text.chars().take(120).collect();
         tray.set_tooltip(Some(short)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 前端已开始监听关闭询问
+#[tauri::command]
+pub fn shell_close_ready() {
+    CLOSE_READY.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 关闭询问的结果：action 为 "tray" 或 "quit"；remember 为真时记住，下次不再询问
+#[tauri::command]
+pub fn shell_close_choose(app: AppHandle, action: String, remember: bool) -> Result<(), String> {
+    if action != "tray" && action != "quit" {
+        return Err(format!("未知操作：{action}"));
+    }
+    if remember {
+        save_setting(&app, CLOSE_ACTION_KEY, &serde_json::json!(action))?;
+    }
+    if action == "tray" {
+        if let Some(w) = app.get_webview_window(MAIN) {
+            let _ = w.hide();
+        }
+    } else {
+        app.exit(0);
     }
     Ok(())
 }
@@ -875,6 +974,24 @@ mod tests {
         assert!(m.iter().all(|h| h.action != "bogus"));
         // 格式错误的值：忽略，得到默认值
         assert_eq!(merge_hotkeys(Some(&serde_json::json!("oops"))), d);
+    }
+
+    #[test]
+    fn close_action_resolves_with_legacy_fallback() {
+        let j = |v: serde_json::Value| Some(v);
+        assert_eq!(resolve_close_action(None, None), "ask");
+        assert_eq!(resolve_close_action(None, j(serde_json::json!(false)).as_ref()), "ask");
+        assert_eq!(resolve_close_action(None, j(serde_json::json!(true)).as_ref()), "tray");
+        assert_eq!(
+            resolve_close_action(j(serde_json::json!("quit")).as_ref(), j(serde_json::json!(true)).as_ref()),
+            "quit"
+        );
+        assert_eq!(
+            resolve_close_action(j(serde_json::json!("ask")).as_ref(), j(serde_json::json!(true)).as_ref()),
+            "ask"
+        );
+        assert_eq!(resolve_close_action(j(serde_json::json!("tray")).as_ref(), None), "tray");
+        assert_eq!(resolve_close_action(j(serde_json::json!("weird")).as_ref(), None), "ask");
     }
 
     #[test]

@@ -12,12 +12,14 @@
     autostartSet,
     cacheClear,
     cacheSize,
+    getCloseAction,
     getSetting,
     setDesktopLyrics,
     setExplorerMenu,
     setSetting,
     setWallpaper,
     type CacheInfo,
+    type CloseAction,
   } from '../lib/shell.svelte';
   import HotkeyList from '../components/settings/HotkeyList.svelte';
   import LyricsSettings from '../components/settings/LyricsSettings.svelte';
@@ -31,7 +33,7 @@
   let fade = $state(false);
   let useDefVol = $state(false);
   let defVol = $state(80);
-  let closeToTray = $state(false);
+  let closeAction = $state<CloseAction>('ask');
   let autostart = $state(false);
   let autostartMin = $state(false);
   let wallpaper = $state(false);
@@ -62,7 +64,7 @@
     const dv = await getSetting<number | null>('default_volume', null);
     useDefVol = dv != null;
     defVol = dv ?? Math.round(player.vol * 100);
-    closeToTray = await getSetting('close_to_tray', false);
+    closeAction = await getCloseAction();
     explorer = await getSetting('explorer_menu', false);
     lyrics = await getSetting('desktop_lyrics', false);
     if (inTauri) {
@@ -321,8 +323,12 @@
         <input type="checkbox" class="mp-sw" checked={autostartMin} disabled={!autostart} onchange={onAutostartMin} />
       </label>
       <label class="mp-opt">
-        <div>关闭窗口时最小化到托盘<small>点右上角关闭按钮后继续在托盘运行；从托盘右键退出</small></div>
-        <input type="checkbox" class="mp-sw" checked={closeToTray} onchange={flag('close_to_tray', v => (closeToTray = v))} />
+        <div>点关闭按钮时<small>最小化到托盘后音乐和下载继续，单击托盘图标打开窗口，右键托盘图标可以退出</small></div>
+        <select bind:value={closeAction} onchange={() => setSetting('close_action', closeAction)}>
+          <option value="ask">每次询问</option>
+          <option value="tray">最小化到托盘</option>
+          <option value="quit">直接退出</option>
+        </select>
       </label>
     </div>
 

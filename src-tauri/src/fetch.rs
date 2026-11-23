@@ -2,6 +2,7 @@
 //! 自动归类入库、追更。子模块：source（各类来源）、web（网页 AI 规则）、download（下载队列）、organize（整理入库）。
 pub mod bili;
 pub mod download;
+pub mod external;
 pub mod login;
 pub mod organize;
 pub mod pack;
@@ -73,6 +74,7 @@ pub fn setup(app: &AppHandle) {
         )?;
         Ok(())
     });
+    register_external(app);
     download::pump(app);
     let h = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -82,6 +84,16 @@ pub fn setup(app: &AppHandle) {
             tokio::time::sleep(Duration::from_secs(30 * 60)).await;
         }
     });
+}
+
+/// 注册用户添加过的外部程序下载源（信息存在来源表的 rule_json 里，启动时不用运行程序）
+fn register_external(app: &AppHandle) {
+    let rows = with_db(app, |c| list_sources(c, false)).unwrap_or_default();
+    for r in rows.iter().filter(|r| r.kind == "provider") {
+        if let Some(s) = external::Stored::parse(&r.rule_json) {
+            external::register(&s);
+        }
+    }
 }
 
 // ---------- 数据库小工具 ----------
@@ -593,6 +605,12 @@ pub async fn fetch_add_source(app: AppHandle, kind: String, url: String, name: O
         return Err("请先粘贴网站地址、订阅链接或文件夹路径".into());
     }
     let mut kind = kind.trim().to_lowercase();
+    if (kind.is_empty() || kind == "auto") && external::looks_like_program(&url) {
+        kind = "exe".into();
+    }
+    if kind == "exe" {
+        return add_external(&app, &url, name).await;
+    }
     if kind.is_empty() || kind == "auto" {
         kind = detect_kind(&url).await;
     }
@@ -657,6 +675,43 @@ pub async fn fetch_add_source(app: AppHandle, kind: String, url: String, name: O
     Ok(row.view())
 }
 
+/// 添加外部程序下载源：运行 `程序 info` 取得信息，注册，存进来源表（kind = provider）
+async fn add_external(app: &AppHandle, path: &str, name: Option<String>) -> Result<SourceView, String> {
+    let exe = PathBuf::from(path.trim().trim_matches('"'));
+    if !exe.is_file() {
+        return Err(format!("找不到这个程序：{}", exe.display()));
+    }
+    let exe = std::path::absolute(&exe).unwrap_or(exe);
+    let mut info = external::probe(&exe).await?;
+    if let Some(n) = name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        info.name = n;
+    }
+    let url = provider::source_url(&info.id);
+    let exists = with_db(app, |c| list_sources(c, false)).map_err(e)?.into_iter().any(|r| r.url == url);
+    if exists {
+        return Err(format!("已经添加过下载源“{}”（{}），要换程序请先删掉旧的", info.name, info.id));
+    }
+    if provider::get(&info.id).is_some() {
+        return Err(format!("下载源 id“{}”和已有的下载源重名，请在程序的 info 里换一个 id", info.id));
+    }
+    let stored = external::Stored {
+        exe: exe.to_string_lossy().into_owned(),
+        info: info.clone(),
+    };
+    let rule_json = serde_json::to_string(&stored).map_err(e)?;
+    external::register(&stored);
+    let id = with_db(app, |c| {
+        c.execute(
+            "INSERT INTO fetch_sources(kind,name,url,rule_json,created_at,enabled) VALUES('provider',?1,?2,?3,?4,1)",
+            params![info.name, url, rule_json, db::now()],
+        )?;
+        Ok(c.last_insert_rowid())
+    })
+    .map_err(e)?;
+    let row = with_db(app, |c| load_source(c, id)).map_err(e)?.ok_or("保存失败")?;
+    Ok(row.view())
+}
+
 #[tauri::command]
 pub async fn fetch_rebuild_rule(app: AppHandle, id: i64) -> Result<SourceView, String> {
     let row = with_db(&app, |c| load_source(c, id)).map_err(e)?.ok_or("找不到这个来源")?;
@@ -682,6 +737,13 @@ pub async fn fetch_rebuild_rule(app: AppHandle, id: i64) -> Result<SourceView, S
 #[tauri::command]
 pub fn fetch_remove_source(st: State<AppState>, id: i64) -> Result<(), String> {
     let c = st.db.lock();
+    if let Ok(Some(row)) = load_source(&c, id) {
+        if external::Stored::parse(&row.rule_json).is_some() {
+            if let Some(pid) = provider::provider_id(&row.url) {
+                provider::unregister(pid);
+            }
+        }
+    }
     c.execute("DELETE FROM fetch_subs WHERE source_id=?1", [id]).map_err(e)?;
     c.execute("DELETE FROM fetch_sources WHERE id=?1", [id]).map_err(e)?;
     Ok(())

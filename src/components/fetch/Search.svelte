@@ -319,7 +319,7 @@
       <div class="empty">没有找到结果。可以换个写法再试，或检查来源是否可用。</div>
     {/if}
     {#each out.groups as g (g.work + g.indices[0])}
-      <section class="grp">
+      <section class="hitgrp">
         <div class="grp-head">
           <b>{g.work}</b>
           <span class="badge2">{g.indices.length} 个版本</span>
@@ -341,7 +341,7 @@
           <div class="rs" class:on={picks[i] !== undefined || sel[i]}>
             <div class="rs-top">
               <input type="checkbox" class="mp-sw" aria-label="选中" bind:checked={sel[i]} />
-              {#if it?.cover}<img class="cv" src={it.cover} alt="" loading="lazy" referrerpolicy="no-referrer" />{/if}
+              {#if it?.cover}<img class="hitcover" src={it.cover} alt="" loading="lazy" referrerpolicy="no-referrer" />{/if}
               <b>{it ? it.title : h.title}</b>
               {#if picks[i] !== undefined}<span class="badge2 ai">推荐</span>{/if}
               {#if h.rule_updated}<span class="badge2">规则已更新</span>{/if}
@@ -397,8 +397,24 @@
   .spacer {
     flex: 1;
   }
-  .grp {
+  /* 不要用 .grp / .cv：全局样式里已有同名类（侧栏分组标题、设置页网格），会把结果组排成横向 flex */
+  .hitgrp {
+    display: block;
     margin-bottom: 14px;
+    min-width: 0;
+  }
+  .grp-head b {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hitgrp .mp-btn {
+    white-space: nowrap;
+    flex: none;
+  }
+  .qrow .sel {
+    max-width: 100%;
   }
   .grp-head {
     display: flex;
@@ -425,7 +441,7 @@
   .rs small {
     grid-column: 1 / -1;
   }
-  .cv {
+  .hitcover {
     width: 34px;
     height: 34px;
     border-radius: 6px;

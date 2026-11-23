@@ -23,6 +23,7 @@
   } from '../lib/shell.svelte';
   import HotkeyList from '../components/settings/HotkeyList.svelte';
   import LyricsSettings from '../components/settings/LyricsSettings.svelte';
+  import ArtworkSettings from '../components/settings/ArtworkSettings.svelte';
   import FxSettings from '../components/settings/FxSettings.svelte';
   import ReaderSettings from '../components/settings/ReaderSettings.svelte';
   import { updater } from '../lib/updater.svelte';
@@ -378,6 +379,7 @@
       </div>
     </div>
 
+    <ArtworkSettings />
   </div>
 
   <!-- 内容较宽的设置各占一整行 -->

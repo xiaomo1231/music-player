@@ -256,22 +256,36 @@ pub async fn media_series_cover(st: State<'_, AppState>, id: i64) -> Result<Seri
     let Some((first, duration)) = eps.into_iter().next() else {
         return Ok(SeriesCover::default());
     };
-    let name = frame_name(&first);
+    let name = portrait_frame(&st, &first, duration).await?;
+    st.db.lock().execute("UPDATE series SET frame=?1 WHERE id=?2", params![name, id]).map_err(err)?;
+    Ok(SeriesCover {
+        poster: None,
+        frame: Some(name),
+    })
+}
+
+/// 从视频中段挑一帧裁成 2:3，存进缩略图目录，返回文件名（已经有就直接返回）
+async fn portrait_frame(st: &AppState, path: &str, duration: f64) -> Result<String, String> {
+    let name = frame_name(path);
     let thumbs = st.dirs.thumbs.clone();
     if !thumbs.join(&name).exists() {
         let name = name.clone();
-        let src = PathBuf::from(&first);
+        let src = PathBuf::from(path);
         blocking(move || {
             let img = best_frame(&thumbs, &src, name.trim_end_matches(".jpg"), duration, 1280)?;
             artwork::save_jpg(&artwork::portrait_crop(&img), 720, &thumbs.join(&name))
         })
         .await?;
     }
-    st.db.lock().execute("UPDATE series SET frame=?1 WHERE id=?2", params![name, id]).map_err(err)?;
-    Ok(SeriesCover {
-        poster: None,
-        frame: Some(name),
-    })
+    Ok(name)
+}
+
+/// 电影卡片的竖版截帧（没有海报时用）
+#[tauri::command]
+pub async fn media_video_cover(st: State<'_, AppState>, id: i64) -> Result<String, String> {
+    let path = path_of(&st, id)?;
+    let duration = library::video(&st.db.lock(), id).map_err(err)?.map(|v| v.duration).unwrap_or(0.0);
+    portrait_frame(&st, &path, duration).await
 }
 
 #[tauri::command]

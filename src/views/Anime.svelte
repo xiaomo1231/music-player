@@ -11,7 +11,7 @@
   import { lib } from '../lib/library.svelte';
   import { ui } from '../lib/ui.svelte';
   import { invoke, inTauri, type Series } from '../lib/api';
-  import { seriesBadge, lazySeriesCover, type SeriesCover } from '../lib/media.svelte';
+  import { seriesBadge, lazySeriesCover, art, artPoster, loadArt, type SeriesCover } from '../lib/media.svelte';
 
   type Filter = 'all' | 'on' | 'done' | 'new' | 'nosub';
   const FILTERS: [Filter, string][] = [
@@ -49,6 +49,8 @@
     }
   }
 
+  /** 详情页横幅也用联网海报 */
+  const withArt = (s: Series): Series => ({ ...s, poster: s.poster ?? artPoster(art.series[s.id]), frame: covers[s.id]?.frame ?? s.frame });
   const pct = (s: Series) => (s.episodes ? (s.watched / s.episodes) * 100 : 0);
 
   async function load() {
@@ -58,6 +60,7 @@
     }
     list = await invoke<Series[]>('list_series', { kind: 'anime' });
     loaded = true;
+    loadArt();
   }
   $effect(() => {
     void lib.version;
@@ -108,7 +111,7 @@
 
 <section class="lib on" class:multi={sel.on}>
   {#if openSeries}
-    <SeriesDetail series={openSeries} kind="anime" onback={() => (openId = null)} onchanged={load} />
+    <SeriesDetail series={withArt(openSeries)} kind="anime" onback={() => (openId = null)} onchanged={load} />
   {:else}
     <header>
       <div>
@@ -139,8 +142,8 @@
     {:else}
       <div class="mp-grid">
         {#each shown as s (s.id)}
-          <div class="mp-card" class:picked={sel.has(s.id)} role="button" tabindex="0" onclick={e => clickS(e, s)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)} use:lazySeriesCover={{ id: s.id, has: !!(s.poster || s.frame), oncover: c => (covers[s.id] = c) }}>
-            <Poster poster={covers[s.id]?.poster ?? s.poster} frame={covers[s.id]?.frame ?? s.frame} thumb={s.thumb} name={s.title}>
+          <div class="mp-card" class:picked={sel.has(s.id)} role="button" tabindex="0" onclick={e => clickS(e, s)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)} use:lazySeriesCover={{ id: s.id, has: !!(s.poster || s.frame || artPoster(art.series[s.id])), oncover: c => (covers[s.id] = c) }}>
+            <Poster poster={covers[s.id]?.poster ?? s.poster ?? artPoster(art.series[s.id])} frame={covers[s.id]?.frame ?? s.frame} thumb={s.thumb} name={s.title}>
               <SelCheck card checked={sel.has(s.id)} onclick={e => (e.shiftKey ? sel.range(order, s.id, true) : sel.toggle(s.id))} />
               <span class="mp-badge">{seriesBadge(s)}</span>
               <span class="mp-pt">{s.title}</span>

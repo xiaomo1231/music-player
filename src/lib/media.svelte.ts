@@ -1,5 +1,5 @@
 // 视频与番剧模块的前端共享逻辑：缩略图目录、缩略图按需生成队列、字幕解析、类型
-import { invoke, inTauri, fileUrl, isAbs } from './api';
+import { invoke, listen, inTauri, fileUrl, isAbs } from './api';
 import { coverCSS, hueOf } from './util';
 
 export interface MediaTrack { index: number; lang: string; title: string; codec: string }
@@ -123,6 +123,75 @@ export function lazySeriesCover(node: HTMLElement, p: { id: number; has: boolean
       requestSeriesCover(p.id).then(c => {
         if (c && (c.poster || c.frame)) p.oncover(c);
       });
+    },
+    { rootMargin: '200px' },
+  );
+  io.observe(node);
+  return { destroy: () => io.disconnect() };
+}
+
+// ---------- 联网海报（Bangumi / TMDB），后端 artmeta.rs ----------
+
+/** 一部作品的联网匹配结果；state：auto 自动匹配 / pending 待确认 / locked 手动选的 / none 没有 */
+export interface ArtInfo {
+  kind: 'series' | 'video'; id: number; source: string | null; remote_id: string | null; title: string | null;
+  year: number | null; summary: string | null; poster: string | null; state: string;
+}
+
+class ArtState {
+  series = $state<Record<number, ArtInfo>>({});
+  video = $state<Record<number, ArtInfo>>({});
+}
+export const art = new ArtState();
+let artStarted = false;
+
+function putArt(a: ArtInfo) {
+  if (a.kind === 'series') art.series[a.id] = a;
+  else art.video[a.id] = a;
+}
+
+/** 读取已有的匹配结果，并让后台补全还没匹配过的（每次打开番剧 / 电影页调用，正在补全时后端直接返回） */
+export async function loadArt() {
+  if (!inTauri) return;
+  const [s, v] = await Promise.all([
+    invoke<ArtInfo[]>('art_list', { kind: 'series' }).catch(() => []),
+    invoke<ArtInfo[]>('art_list', { kind: 'video' }).catch(() => []),
+  ]);
+  art.series = Object.fromEntries(s.map(a => [a.id, a]));
+  art.video = Object.fromEntries(v.map(a => [a.id, a]));
+  if (!artStarted) {
+    artStarted = true;
+    listen<{ kind: 'series' | 'video'; id: number; poster: string | null; state: string }>('art://updated', p => {
+      const map = p.kind === 'series' ? art.series : art.video;
+      putArt({ ...(map[p.id] ?? { kind: p.kind, id: p.id, source: null, remote_id: null, title: null, year: null, summary: null }), poster: p.poster, state: p.state });
+    }).catch(() => {});
+  }
+  invoke('art_auto').catch(() => {});
+}
+
+/** 卡片该用的海报：手动指定 / 本地海报 > 联网海报（只有自动匹配或手动选的才用） */
+export function artPoster(a: ArtInfo | undefined): string | null {
+  return a && (a.state === 'auto' || a.state === 'locked') ? a.poster : null;
+}
+
+/** Svelte action：电影卡片进入可视范围、又没有海报时，生成竖版截帧 */
+export function lazyVideoCover(node: HTMLElement, p: { id: number; has: boolean; oncover: (frame: string) => void }) {
+  if (p.has || !inTauri || typeof IntersectionObserver === 'undefined') return {};
+  let done = false;
+  const io = new IntersectionObserver(
+    entries => {
+      if (done || !entries.some(e => e.isIntersecting)) return;
+      done = true;
+      io.disconnect();
+      thumbQueue.push(() => {
+        invoke<string>('media_video_cover', { id: p.id })
+          .then(p.oncover, () => {})
+          .finally(() => {
+            thumbRunning--;
+            pumpThumbs();
+          });
+      });
+      pumpThumbs();
     },
     { rootMargin: '200px' },
   );

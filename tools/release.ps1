@@ -35,7 +35,7 @@ Write-Host "== 发布 $tag =="
 $changelog = [IO.File]::ReadAllText((Join-Path $root 'CHANGELOG.md'))
 $m = [regex]::Match($changelog, "(?ms)^##\s+v?$([regex]::Escape($version))\b[^\n]*\n(.*?)(?=^##\s|\z)")
 if (-not $m.Success -or -not $m.Groups[1].Value.Trim()) { throw "CHANGELOG.md 里没有 ## $version 这一节（更新说明会显示在软件的更新弹窗里）" }
-$notes = $m.Groups[1].Value.Trim()
+$notes = $m.Groups[1].Value.Trim() -replace "`r`n", "`n"
 
 # ---- 发布前检查 ----
 # Windows PowerShell 5.1 在 Stop 模式下会把外部命令的 stderr 当成异常，这里临时放宽

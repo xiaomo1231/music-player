@@ -101,7 +101,9 @@ pub fn read_page(path: &Path, idx: usize) -> Result<(Vec<u8>, String)> {
     Ok((buf, mime(name)))
 }
 
-static RE_VOL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)(?:第\s*\d+\s*[卷话話册]|vol\.?\s*\d+|v\d+|\s\d{1,3}$)").unwrap());
+/// 卷号 / 话数：第3卷、第10.5話、Vol.2、番外、开头的排序号“12.5 ”
+static RE_VOL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(?:第\s*\d+(?:\.\d+)?\s*[卷话話册冊回]|vol\.?\s*\d+|v\d+|\s\d{1,3}$|^\s*\d+(?:\.\d+)?(?:\s|$)|番外\d*)").unwrap());
 
 pub fn inspect(path: &Path, cover_dir: &Path) -> ComicInfo {
     let stem = if path.is_dir() { path.file_name() } else { path.file_stem() }
@@ -150,5 +152,15 @@ mod tests {
         let mut v = vec!["p10.jpg", "p2.jpg", "p1.jpg"];
         v.sort_by_key(|s| super::natural_key(s));
         assert_eq!(v, vec!["p1.jpg", "p2.jpg", "p10.jpg"]);
+    }
+
+    /// 章节 pdf 放在作品文件夹里：系列名用文件夹名（含 10.5 话、番外、开头排序号）
+    #[test]
+    fn chapter_files_use_folder_series() {
+        let dir = std::env::temp_dir().join("mp-comic-test").join("廣井菊里的深酒日記");
+        for n in ["1 第01話.pdf", "10.5 第10.5話.pdf", "15.5 01卷番外.pdf", "32.5 2025新年賀圖.pdf"] {
+            let i = super::inspect(&dir.join(n), &std::env::temp_dir());
+            assert_eq!(i.series, "廣井菊里的深酒日記", "{n}");
+        }
     }
 }

@@ -156,7 +156,7 @@
   <button class="mp-chip" onclick={onback}>← 返回{kind === 'anime' ? '番剧' : '电视剧'}列表</button>
 
   <div class="banner" style:margin-top="12px" style:background-image={posterBg(series.poster, series.thumb, series.title)}>
-    <div class="pst" style:background-image={posterBg(series.poster, series.thumb, series.title, true)}></div>
+    <div class="pst" style:background-image={posterBg(series.poster, series.frame ?? series.thumb, series.title, true)}></div>
     <div>
       <h2>{series.title}</h2>
       <div class="acts" style="margin-bottom:10px">

@@ -30,6 +30,7 @@
   import FileInfoModal from './components/FileInfoModal.svelte';
   import ItemMenu from './components/ItemMenu.svelte';
   import UpdateModal from './components/UpdateModal.svelte';
+  import CloseModal from './components/CloseModal.svelte';
   import EmImportModal from './components/em/ImportModal.svelte';
   import { takeEm, startEm } from './lib/em.svelte';
   import { updater } from './lib/updater.svelte';
@@ -182,7 +183,7 @@
       player.toggleShuffle();
     } else if (c && k === 'r') {
       e.preventDefault();
-      player.cycleRepeat();
+      player.cycleMode();
     } else if (c && k === 'm') {
       e.preventDefault();
       setMini();
@@ -358,6 +359,7 @@
 
 <ItemMenu />
 {#if updater.show}<UpdateModal />{/if}
+<CloseModal />
 <EmImportModal />
 
 <div class="mp-dim"></div>

@@ -30,6 +30,8 @@ class UI {
   playlistId = $state<number | null>(null);
   /** 从别处带到转换页的文件 */
   convertPaths = $state<string[]>([]);
+  /** 点了关闭按钮 / 托盘退出，等用户选择（见 CloseModal） */
+  closeAsk = $state<{ ask: boolean; downloads: number } | null>(null);
   /** 从别处带到 AI 字幕页的视频 */
   subVideo = $state<number | null>(null);
 

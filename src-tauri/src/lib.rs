@@ -2,6 +2,9 @@
 
 pub mod adclean;
 pub mod ai;
+pub mod aiclassify;
+pub mod artmeta;
+pub mod artwork;
 pub mod comic;
 pub mod commands;
 pub mod convert;
@@ -36,6 +39,8 @@ pub mod tools;
 /// 各功能模块自己的表
 fn init_modules(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     adclean::init(conn)?;
+    aiclassify::init(conn)?;
+    artmeta::init(conn)?;
     // 视频归类规则更新后，已入库的视频按新规则重新归类（不用重新扫描）
     indexer::reclassify_videos(conn)?;
     convert::init(conn)?;
@@ -65,6 +70,8 @@ fn setup_modules(app: &tauri::AppHandle) {
     shell::setup(app);
     subtitle::setup(app);
     adclean::setup(app);
+    aiclassify::setup(app);
+    artmeta::setup(app);
     em::setup(app);
 }
 
@@ -215,6 +222,7 @@ pub fn run() {
             ai::ai_get_config,
             ai::ai_save_config,
             ai::ai_test,
+            aiclassify::ai_classify_now,
             player::mpv_load,
             player::mpv_pause,
             player::mpv_stop,
@@ -240,6 +248,18 @@ pub fn run() {
             media::media_probe,
             media::media_thumb,
             media::media_thumb_dir,
+            media::media_series_cover,
+            media::media_video_cover,
+            artmeta::art_list,
+            artmeta::art_auto,
+            artmeta::art_refresh_all,
+            artmeta::art_test,
+            artmeta::art_picker,
+            artmeta::art_search,
+            artmeta::art_choose,
+            artmeta::art_off,
+            artmeta::art_reset,
+            artmeta::art_comic_id,
             media::media_subtitles,
             media::media_sub_vtt,
             media::media_save_screenshot,
@@ -352,9 +372,12 @@ pub fn run() {
             shell::shell_hotkeys,
             shell::shell_set_hotkeys,
             shell::shell_hotkeys_reset,
+            shell::shell_hotkeys_suspend,
             shell::shell_show_main,
             shell::shell_tray_tooltip,
             shell::shell_startup_files,
+            shell::shell_close_ready,
+            shell::shell_close_choose,
             shell::shell_autostart_get,
             shell::shell_autostart_set,
             shell::shell_keep_awake,

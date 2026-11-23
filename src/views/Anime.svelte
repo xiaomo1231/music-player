@@ -7,11 +7,12 @@
   import { openMenu, mediaEntries, removeMany, deleteMany, subtitleMany, type MenuEntry } from '../lib/items.svelte';
   import { Selection, noTextSelect } from '../lib/select.svelte';
   import Poster from '../components/media/Poster.svelte';
+  import CoverPicker from '../components/media/CoverPicker.svelte';
   import SeriesDetail from '../components/media/SeriesDetail.svelte';
   import { lib } from '../lib/library.svelte';
   import { ui } from '../lib/ui.svelte';
   import { invoke, inTauri, type Series } from '../lib/api';
-  import { seriesBadge } from '../lib/media.svelte';
+  import { seriesBadge, lazySeriesCover, artPending, art, artPoster, loadArt, type SeriesCover } from '../lib/media.svelte';
 
   type Filter = 'all' | 'on' | 'done' | 'new' | 'nosub';
   const FILTERS: [Filter, string][] = [
@@ -25,6 +26,10 @@
   let filter = $state<Filter>('all');
   let list = $state<Series[]>([]);
   let loaded = $state(false);
+  /** 刚找到 / 生成的封面（不用整页重新读取） */
+  let covers = $state<Record<number, SeriesCover>>({});
+  /** 打开中的“选择官方海报”面板 */
+  let picker = $state<{ kind: 'series' | 'video'; id: number; title: string } | null>(null);
   let openId = $state<number | null>(null);
 
   const openSeries = $derived(openId == null ? null : (list.find(s => s.id === openId) ?? null));
@@ -47,6 +52,8 @@
     }
   }
 
+  /** 详情页横幅也用联网海报 */
+  const withArt = (s: Series): Series => ({ ...s, poster: s.poster ?? artPoster(art.series[s.id]), frame: covers[s.id]?.frame ?? s.frame });
   const pct = (s: Series) => (s.episodes ? (s.watched / s.episodes) * 100 : 0);
 
   async function load() {
@@ -56,6 +63,7 @@
     }
     list = await invoke<Series[]>('list_series', { kind: 'anime' });
     loaded = true;
+    loadArt();
   }
   $effect(() => {
     void lib.version;
@@ -96,6 +104,7 @@
   function seriesMenu(e: MouseEvent, s: Series) {
     if (sel.has(s.id) && sel.size > 1) return openMenu(e, `已选 ${sel.size} 部`, batch());
     openMenu(e, s.title, mediaEntries('series', s.id, s.title, [
+      { label: '选择官方海报…', run: () => (picker = { kind: 'series', id: s.id, title: s.title }) },
       { label: '打开详情', run: () => (openId = s.id) },
       ...(s.next_id != null ? [{ label: '继续观看', run: () => s.next_id != null && ui.openItem(s.next_id, 'anime') }] : []),
     ]));
@@ -106,7 +115,7 @@
 
 <section class="lib on" class:multi={sel.on}>
   {#if openSeries}
-    <SeriesDetail series={openSeries} kind="anime" onback={() => (openId = null)} onchanged={load} />
+    <SeriesDetail series={withArt(openSeries)} kind="anime" onback={() => (openId = null)} onchanged={load} />
   {:else}
     <header>
       <div>
@@ -137,10 +146,11 @@
     {:else}
       <div class="mp-grid">
         {#each shown as s (s.id)}
-          <div class="mp-card" class:picked={sel.has(s.id)} role="button" tabindex="0" onclick={e => clickS(e, s)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)}>
-            <Poster poster={s.poster} thumb={s.thumb} name={s.title}>
+          <div class="mp-card" class:picked={sel.has(s.id)} role="button" tabindex="0" onclick={e => clickS(e, s)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)} use:lazySeriesCover={{ id: s.id, has: !!(s.poster || s.frame || artPoster(art.series[s.id])), oncover: c => (covers[s.id] = c) }}>
+            <Poster poster={covers[s.id]?.poster ?? s.poster ?? artPoster(art.series[s.id])} frame={covers[s.id]?.frame ?? s.frame} thumb={s.thumb} name={s.title}>
               <SelCheck card checked={sel.has(s.id)} onclick={e => (e.shiftKey ? sel.range(order, s.id, true) : sel.toggle(s.id))} />
               <span class="mp-badge">{seriesBadge(s)}</span>
+                {#if artPending(art.series[s.id]) && !s.poster}<span class="mp-artq">封面待确认</span>{/if}
               <span class="mp-pt">{s.title}</span>
               <i class="mp-bar" style:width="{pct(s)}%"></i>
               <MoreButton onopen={e => seriesMenu(e, s)} />
@@ -155,6 +165,10 @@
     {/if}
   {/if}
 </section>
+
+{#if picker}
+  <CoverPicker {...picker} onclose={() => (picker = null)} />
+{/if}
 
 <style>
   .msel { display: inline-flex; align-items: center; gap: 5px; }

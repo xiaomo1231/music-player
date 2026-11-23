@@ -4,7 +4,7 @@
   import { COMIC_KEYS, COMIC_MOUSE, NOVEL_KEYS } from '../lib/readerprefs';
   const music: [string, string][] = [
     ['空格', '播放 / 暂停'], ['Ctrl + ← / →', '上一首 / 下一首'], ['← / →', '后退 / 前进 5 秒'], ['↑ / ↓', '音量'], ['M', '静音'],
-    ['Ctrl + D', '收藏当前歌曲'], ['Ctrl + Shift + D', '加入歌单'], ['Ctrl + H / Ctrl + R', '随机 / 循环模式'],
+    ['Ctrl + D', '收藏当前歌曲'], ['Ctrl + Shift + D', '加入歌单'], ['Ctrl + R', '切换播放模式（顺序 / 列表循环 / 单曲循环 / 随机）'], ['Ctrl + H', '随机播放开 / 关'],
     ['F', '沉浸模式'], ['Ctrl + M', '迷你播放器'], ['/ 或 Ctrl + F', '搜索'], ['Q', '播放队列'], ['E', '均衡器'], ['O', 'OLED 防烧屏'], ['?', '快捷键列表'],
   ];
   const multi: [string, string][] = [

@@ -84,9 +84,20 @@ export function accelFromEvent(e: KeyboardEvent): string | null {
 export const loadHotkeys = () => invoke<HotkeyStatus[]>('shell_hotkeys');
 export const saveHotkeys = (list: HotkeyCfg[]) => invoke<HotkeyStatus[]>('shell_set_hotkeys', { list });
 export const resetHotkeys = () => invoke<HotkeyStatus[]>('shell_hotkeys_reset');
+/** 录制新组合期间暂停全部全局热键（on=false 时按已保存的配置恢复），返回当前状态 */
+export const suspendHotkeys = (on: boolean) => invoke<HotkeyStatus[]>('shell_hotkeys_suspend', { on });
 
 export const autostartGet = () => invoke<AutostartInfo>('shell_autostart_get');
 export const autostartSet = (enabled: boolean, minimized: boolean) => invoke<void>('shell_autostart_set', { enabled, minimized });
+
+/** 关闭按钮行为：每次询问 / 最小化到托盘 / 直接退出 */
+export type CloseAction = 'ask' | 'tray' | 'quit';
+export async function getCloseAction(): Promise<CloseAction> {
+  const v = await getSetting<string | null>('close_action', null);
+  if (v === 'ask' || v === 'tray' || v === 'quit') return v;
+  return (await getSetting('close_to_tray', false)) ? 'tray' : 'ask';
+}
+export const closeChoose = (action: 'tray' | 'quit', remember: boolean) => invoke<void>('shell_close_choose', { action, remember });
 
 export const cacheSize = () => invoke<CacheInfo>('shell_cache_size');
 export const cacheClear = (covers: boolean) => invoke<number>('shell_cache_clear', { covers });
@@ -213,6 +224,9 @@ export function initShell(): () => void {
   offs.push(listen<string>('shell://cmd', onCmd));
   offs.push(listen<OpenPayload>('shell://open-files', p => openPaths(p.paths, p.addOnly).catch(e => toast(String(e)))));
   offs.push(listen<unknown>('lyrics://ask', () => pushLine(true)));
+  const closeOff = listen<{ ask: boolean; downloads: number }>('shell://close-ask', p => (ui.closeAsk = p));
+  offs.push(closeOff);
+  closeOff.then(() => invoke('shell_close_ready')).catch(() => {});
   lyricsfx.load();
 
   invoke<OpenPayload | null>('shell_startup_files')

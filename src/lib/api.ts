@@ -61,6 +61,8 @@ export interface Video {
 export interface Series {
   id: number; title: string; kind: string; poster: string | null; episodes: number; watched: number; seasons: number;
   missing_subs: number; last_played: number | null; next_id: number | null; next_label: string | null; thumb: string | null;
+  /** 竖版截帧（没有海报时卡片用） */
+  frame: string | null;
 }
 export interface BookItem {
   id: number; path: string; title: string; author: string; format: string; chapter: number; chapters: number;

@@ -30,6 +30,7 @@ tauri::Builder::default()
 shell::shell_hotkeys,
 shell::shell_set_hotkeys,
 shell::shell_hotkeys_reset,
+shell::shell_hotkeys_suspend,
 shell::shell_show_main,
 shell::shell_tray_tooltip,
 shell::shell_startup_files,
@@ -48,6 +49,7 @@ shell::shell_cache_clear,
 | `shell_hotkeys` | 无 | `[{action, accel, enabled, error?}]`，最近一次注册的结果 |
 | `shell_set_hotkeys` | `list: [{action, accel, enabled}]` | 同上（保存到设置 `hotkeys` 并重新注册） |
 | `shell_hotkeys_reset` | 无 | 同上（恢复默认） |
+| `shell_hotkeys_suspend` | `on` | 同上。设置页录制新组合期间暂停全部热键（`on: true`），取消录制时按已保存的配置恢复（`on: false`） |
 | `shell_show_main` | 无 | 显示主窗口并拉到前台 |
 | `shell_tray_tooltip` | `text` | 更新托盘提示 |
 | `shell_startup_files` | 无 | `{paths, addOnly} \| null`，启动时带来的文件，取走后清空 |
@@ -100,6 +102,7 @@ if (isLyricsWindow()) {
 
 `initShell()` 会做这些事：
 - 监听 `shell://cmd`：`toggle` / `next` / `prev` 调用 player；`vol_up` / `vol_down` 调音量；`fav` 收藏当前歌曲；`lyrics` 切换桌面歌词；`show` 显示主窗口（并退出迷你模式）；`mini` 进入迷你播放器。
+- 监听 `shell://close-ask`：`{ask, downloads}`，弹出 CloseModal（最小化到托盘 / 退出，可记住选择；有下载在进行时提醒），结果交给 `shell_close_choose`；监听挂上后调用 `shell_close_ready`，之前点关闭直接退出。
 - 监听 `shell://open-files`：`{paths, addOnly}`，调用 `add_files` 入库；`addOnly` 为假时播放第一首音乐，否则只提示。
 - 启动时取 `shell_startup_files`，并恢复设置 `default_volume`（固定音量）和 `desktop_lyrics`（桌面歌词）。
 - 挂上防休眠（视频播放器打开，或沉浸模式且在播放时）、托盘提示（当前歌曲）、桌面歌词推送。
@@ -112,7 +115,7 @@ if (isLyricsWindow()) {
 
 - 媒体库监控开关存在设置 `watch`（默认开）。改动后只保存设置，监控重启由集成负责人处理（可在 `set_setting` 时对 `watch` 调用 `commands::restart_watcher`）。
 - 联网补全开关存在设置 `metadata_online`（默认关）。
-- 设置键一览：`hotkeys`、`close_to_tray`、`autostart_minimized`、`default_volume`（null 表示沿用上次音量）、`desktop_lyrics`、`explorer_menu`、`watch`、`metadata_online`、`fade`（占位）。
+- 设置键一览：`hotkeys`、`close_action`（"ask" 每次询问 / "tray" 最小化到托盘 / "quit" 直接退出；没有时沿用旧的布尔键 `close_to_tray`）、`autostart_minimized`、`default_volume`（null 表示沿用上次音量）、`desktop_lyrics`、`explorer_menu`、`watch`、`metadata_online`、`fade`（占位）。
 - 资源管理器右键菜单：音频和视频扩展名下各加两项，命令为 `"<exe>" "%1"`；“加入媒体库”项为 `"<exe>" --add "%1"`。两者都通过单实例 / 启动参数把文件交给 `shell://open-files`。
 - 热键事件名：`shell://cmd` 的命令值有 `toggle`、`next`、`prev`、`vol_up`、`vol_down`、`fav`、`lyrics`、`show`、`mini`。`window`（Ctrl+Alt+P）由 Rust 直接切换主窗口，不发事件。
 - 桌面歌词：主窗口 emit `lyrics://line`（当前歌词文本），歌词窗口 emit `lyrics://ask` 请求当前行。

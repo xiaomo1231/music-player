@@ -63,17 +63,16 @@ pub fn looks_like_program(path: &str) -> bool {
         return false;
     }
     let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    if matches!(ext.as_str(), "exe" | "bat" | "cmd") {
-        return true;
-    }
+    let known = matches!(ext.as_str(), "exe" | "bat" | "cmd");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(m) = std::fs::metadata(p) {
-            return m.permissions().mode() & 0o111 != 0;
-        }
+        known || std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
     }
-    false
+    #[cfg(not(unix))]
+    {
+        known
+    }
 }
 
 /// id 只保留小写字母、数字和 `-`，再加上 `ext-` 前缀

@@ -20,7 +20,7 @@ pub fn open_memory() -> Result<Connection> {
     Ok(conn)
 }
 
-fn add_column(conn: &Connection, table: &str, col: &str, ty: &str) -> Result<()> {
+pub(crate) fn add_column(conn: &Connection, table: &str, col: &str, ty: &str) -> Result<()> {
     let exists: bool = conn
         .prepare(&format!("PRAGMA table_info({table})"))?
         .query_map([], |r| r.get::<_, String>(1))?

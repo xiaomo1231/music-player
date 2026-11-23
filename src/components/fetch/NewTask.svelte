@@ -1,8 +1,10 @@
 <script lang="ts">
   // 新建下载：粘贴磁力链接、种子地址、HTTP 直链（一行一个），或选本地种子文件
+  // 磁力 / 种子先弹确认页（列出种子里的文件和体积），勾选后只下载选中的文件
   import { inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, MEDIA_TEXT, taskTitleOf } from '../../lib/fetch';
+  import { fetchApi, isBtUrl, MEDIA_TEXT, taskTitleOf, type DlItem } from '../../lib/fetch';
+  import TorrentQueue from './TorrentQueue.svelte';
 
   // 只有这三类下完会自动整理入库
   const KINDS = ['video', 'anime', 'music'];
@@ -20,21 +22,39 @@
       .filter(Boolean),
   );
 
+  /** 等待确认的磁力 / 种子，由 TorrentQueue 一个一个弹确认页 */
+  let pending = $state<DlItem[]>([]);
+  let directCount = 0;
+
   async function start(urls: string[]) {
     if (urls.length === 0) return toast('先粘贴磁力链接、种子地址或下载直链');
     if (!inTauri) return toast('请在桌面程序里下载');
-    if (busy) return;
+    if (busy || pending.length) return;
     busy = true;
+    directCount = 0;
+    const direct = urls.filter(u => !isBtUrl(u));
+    const bt = urls.filter(isBtUrl);
     try {
-      const ids = await fetchApi.download(urls.map(url => ({ title: taskTitleOf(url), url, kind: '', mediaKind: mk, sourceId: null, size: null })));
-      toast(`已加入下载队列：${ids.length} 个`);
+      if (direct.length) {
+        const ids = await fetchApi.download(direct.map(url => ({ title: taskTitleOf(url), url, kind: '', mediaKind: mk, sourceId: null, size: null })));
+        directCount = ids.length;
+        onqueued?.();
+      }
       text = '';
-      onqueued?.();
+      // 种子标题留空：确认后用种子里的名字
+      if (bt.length) pending = bt.map(url => ({ title: '', url, kind: '', mediaKind: mk, sourceId: null, size: null }));
+      else if (directCount) toast(`已加入下载队列：${directCount} 个`);
     } catch (err) {
       toast(String(err));
     } finally {
       busy = false;
     }
+  }
+
+  function done(added: number) {
+    pending = [];
+    const n = added + directCount;
+    if (n) toast(`已加入下载队列：${n} 个`);
   }
 
   async function pickTorrent() {
@@ -57,10 +77,14 @@
       {/each}
     </select>
     <span class="spacer"></span>
-    <button class="mp-btn ghost" onclick={pickTorrent} disabled={busy}>选择种子文件…</button>
-    <button class="mp-btn" onclick={() => start(lines)} disabled={busy || lines.length === 0}>开始下载{lines.length > 1 ? `（${lines.length}）` : ''}</button>
+    <button class="mp-btn ghost" onclick={pickTorrent} disabled={busy || pending.length > 0}>选择种子文件…</button>
+    <button class="mp-btn" onclick={() => start(lines)} disabled={busy || pending.length > 0 || lines.length === 0}>开始下载{lines.length > 1 ? `（${lines.length}）` : ''}</button>
   </div>
 </div>
+
+{#if pending.length}
+  <TorrentQueue items={pending} ondone={done} {onqueued} />
+{/if}
 
 <style>
   .nt {

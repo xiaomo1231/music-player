@@ -194,6 +194,29 @@ fn is_companion(p: &Path) -> bool {
     parse::SUBS.contains(&e.as_str()) || parse::IMAGE.contains(&e.as_str()) || e == "lrc"
 }
 
+/// 单个文件旁边、以它的文件名（不含扩展名）开头的伴随文件（.lrc / 字幕 / 封面）
+fn sibling_companions(src: &Path) -> Vec<PathBuf> {
+    if !src.is_file() {
+        return vec![];
+    }
+    let (Some(dir), Some(stem)) = (src.parent(), src.file_stem().map(|s| s.to_string_lossy().into_owned())) else {
+        return vec![];
+    };
+    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    let mut out: Vec<PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.as_path() != src && is_companion(p))
+        .filter(|p| {
+            // 只认“同名”或“同名.语言”（如 曲.zh.lrc），不把“曲 (2).lrc”算成“曲”的
+            let cs = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            cs.strip_prefix(stem.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 /// 递归收集文件；可执行文件直接删除
 fn collect(p: &Path, depth: usize, out: &mut Vec<PathBuf>, removed: &mut usize) {
     if p.is_file() {
@@ -254,6 +277,8 @@ pub fn finish(app: &AppHandle, src: &Path, media_kind: &str, org_root: &Path, co
     let mut files = vec![];
     let mut removed = 0usize;
     collect(src, 0, &mut files, &mut removed);
+    // 单个文件下载到下载目录根部时，同名的歌词、字幕、封面是它旁边的兄弟文件，也要一起带走
+    files.extend(sibling_companions(src));
     let removed_note = if removed > 0 {
         format!("，已删除 {removed} 个可执行文件")
     } else {
@@ -414,6 +439,7 @@ mod tests {
         assert!(!is_main_media(Path::new("D:\\dl\\a.zip"), "video"));
         assert!(is_main_media(Path::new("D:\\dl\\a.zip"), "manga"));
         assert!(is_companion(Path::new("a.zh.srt")));
+        assert!(is_companion(Path::new("曲 - 艺人.lrc")));
         assert!(!is_companion(Path::new("a.zip")));
     }
 
@@ -430,5 +456,31 @@ mod tests {
     #[test]
     fn video_template() {
         assert_eq!(video_rel("电影", "电影.mp4"), PathBuf::from("视频").join("电影").join("电影.mp4"));
+    }
+
+    #[test]
+    fn siblings_of_single_file_download() {
+        let dir = std::env::temp_dir().join(format!("mp-org-sib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in [
+            "防波堤 - 林间信号.flac",
+            "防波堤 - 林间信号.lrc",
+            "防波堤 - 林间信号.jpg",
+            "别的歌.lrc",
+            "防波堤 - 林间信号 (2).lrc",
+            "防波堤 - 林间信号.zh.srt",
+            "防波堤 - 林间信号.txt",
+        ] {
+            std::fs::write(dir.join(n), b"x").unwrap();
+        }
+        let got: Vec<String> = sibling_companions(&dir.join("防波堤 - 林间信号.flac"))
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(got, vec!["防波堤 - 林间信号.jpg", "防波堤 - 林间信号.lrc", "防波堤 - 林间信号.zh.srt"]);
+        // 文件夹（BT / yt-dlp）由 collect 递归收集，不另外找兄弟文件
+        assert!(sibling_companions(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

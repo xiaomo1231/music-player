@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+pub const FORBIDDEN_MSG: &str = "网站拒绝了这次访问（HTTP 403）。可能需要登录，也可能是网站不允许程序访问（防火墙、地区或防盗链限制）。可以先在浏览器里打开这个地址确认；软件不会绕过登录或访问限制。";
 pub const LOGIN_MSG: &str = "需要登录或验证码：请在浏览器里打开这个网站，自己完成登录或验证后再来搜索。软件不会绕过登录或验证码。";
 pub const YTDLP_MISSING: &str = "没有找到 yt-dlp.exe。请在“自动获取 → B 站”里点“安装 yt-dlp”，或把 yt-dlp.exe 放到程序目录的 bin 文件夹 / 系统 PATH 后重试。";
 const USER_AGENT: &str = "MediaPlayerFetch/1.0";
@@ -49,8 +50,12 @@ pub fn with_auth(req: reqwest::RequestBuilder, url: &str) -> reqwest::RequestBui
 }
 
 pub fn check_status(s: reqwest::StatusCode) -> Result<(), String> {
-    if s == reqwest::StatusCode::UNAUTHORIZED || s == reqwest::StatusCode::FORBIDDEN {
+    if s == reqwest::StatusCode::UNAUTHORIZED {
         return Err(format!("{}（HTTP {}）", LOGIN_MSG, s.as_u16()));
+    }
+    // 403 不一定是要登录：很多网站会直接拒绝程序访问（防火墙、地区或防盗链限制）
+    if s == reqwest::StatusCode::FORBIDDEN {
+        return Err(FORBIDDEN_MSG.into());
     }
     if !s.is_success() {
         return Err(format!("网站返回 HTTP {}", s.as_u16()));

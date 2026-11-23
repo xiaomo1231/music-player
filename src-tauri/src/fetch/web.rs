@@ -163,12 +163,35 @@ pub fn simplify(html: &str) -> String {
     out
 }
 
-/// 页面是登录页（有密码输入框）
+/// 页面是登录页：有密码输入框，而且除了登录表单以外几乎没有别的内容。
+/// 很多正常网站在页头或弹窗里藏着登录框，只看“有没有密码框”会把它们误判成需要登录。
 pub fn looks_like_login(html: &str) -> bool {
     let doc = Html::parse_document(html);
-    let sel = Selector::parse("input[type=password]").unwrap();
-    doc.select(&sel).next().is_some()
+    let pw = Selector::parse("input[type=password]").unwrap();
+    if doc.select(&pw).next().is_none() {
+        return false;
+    }
+    let links = Selector::parse("a[href]").unwrap();
+    let forms = Selector::parse("form").unwrap();
+    let body = Selector::parse("body").unwrap();
+    let text_len = |t: String| t.chars().filter(|c| !c.is_whitespace()).count();
+    let all_text = doc.select(&body).next().map(|b| text_len(b.text().collect())).unwrap_or(0);
+    // 含密码框的表单里的文字不算“正文”
+    let form_text: usize = doc
+        .select(&forms)
+        .filter(|f| f.select(&pw).next().is_some())
+        .map(|f| text_len(f.text().collect()))
+        .sum();
+    let link_count = doc
+        .select(&links)
+        .filter(|a| !a.ancestors().any(|n| n.value().as_element().is_some_and(|e| e.name() == "form")))
+        .count();
+    all_text.saturating_sub(form_text) < LOGIN_MAX_TEXT && link_count < LOGIN_MAX_LINKS
 }
+
+/// 登录页判断：表单以外的正文少于这么多字、链接少于这么多个，才算登录页
+const LOGIN_MAX_TEXT: usize = 600;
+const LOGIN_MAX_LINKS: usize = 25;
 
 /// 页面明确写着没有结果（这时不应该当作“规则失效”）
 pub fn looks_empty(html: &str) -> bool {
@@ -536,6 +559,16 @@ mod tests {
     fn login_and_empty_pages() {
         assert!(looks_like_login(r#"<form><input type="password" name="p"></form>"#));
         assert!(!looks_like_login(PAGE));
+        // 正常页面的页头里藏着登录弹窗：不算登录页
+        let links: String = (0..30).map(|i| format!("<li><a href=\"/item/{i}\">第 {i} 个结果的标题文字</a></li>")).collect();
+        let with_modal = format!(
+            r#"<html><body><div class="modal" style="display:none"><form><input name="u"><input type="password" name="p"><button>登录</button></form></div><ul>{links}</ul></body></html>"#
+        );
+        assert!(!looks_like_login(&with_modal));
+        // 真正的登录页：只有表单和几个链接
+        assert!(looks_like_login(
+            r#"<html><body><h1>请先登录</h1><form><input name="u"><input type="password" name="p"><button>登录</button><a href="/forgot">忘记密码</a></form><a href="/">首页</a></body></html>"#
+        ));
         assert!(looks_empty("<p>没有找到相关结果</p>"));
         assert!(!looks_empty(PAGE));
     }

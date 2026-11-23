@@ -77,3 +77,10 @@ mangatr::mangatr_export,
 - 用量估算按每页约 1600px 图片粗估，实际以服务商计费为准。
 - 只有成功翻译的页才写入数据文件。中途失败的整页识别结果会丢弃，重试会再次识别（会再次消耗额度）。
 - 后台整话翻译没有断点续传。应用退出后需要重新开始，已完成的页会保留。
+
+## 本地文字识别（localocr.rs、textdet.rs）
+
+- 命令：`localocr::localocr_status`、`localocr_download`、`localocr_cancel`、`localocr_remove`、`localocr_test`；进度事件 `localocr://progress`。
+- 设置：`AiConfig.ocr_engine` 为 `local` 时，`mangatr::run_page` 改走 `detect_local`：`textdet::detect` 找气泡 → `textdet::crop_png` 裁图放大 → `localocr::recognize` 识别。翻译仍走云端文本模型。
+- 依赖：`tract-onnx`（检测模型推理）、Windows 下 `windows-sys`（作业对象，主程序退出时结束 llama-server）。
+- 随包文件：`bin\llama\`（llama-server 及其 dll）、`bin\ocr\ch_PP-OCRv4_det_infer.onnx`，见 `tools/bundled-tools.json`。

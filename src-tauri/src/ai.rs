@@ -23,6 +23,8 @@ pub struct AiConfig {
     pub vision_model: String,
     /// 每月 token 上限提醒（0 表示不限）
     pub monthly_token_limit: u64,
+    /// 漫画文字识别：cloud（用上面的图像识别模型）/ local（本机 Xiaomi-OCR-0，不上传图片）
+    pub ocr_engine: String,
 }
 
 impl Default for AiConfig {
@@ -33,6 +35,7 @@ impl Default for AiConfig {
             chat_model: "gpt-4o-mini".into(),
             vision_model: "gpt-4o-mini".into(),
             monthly_token_limit: 0,
+            ocr_engine: "cloud".into(),
         }
     }
 }

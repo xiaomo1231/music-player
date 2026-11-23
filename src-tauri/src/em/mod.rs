@@ -6,7 +6,9 @@
 //! - `comic` / `source` / `clean` / `organize`：各 kind 自己的检查、生效、测试
 pub mod clean;
 pub mod comic;
+pub mod expr;
 pub mod format;
+pub mod net;
 pub mod organize;
 pub mod source;
 

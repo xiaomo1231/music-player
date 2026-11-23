@@ -36,6 +36,7 @@ export interface Video {
   id: number; path: string; title: string; series_id: number | null; season: number | null; episode: number | null;
   group: string | null; resolution: string | null; duration: number; position: number; watched: boolean;
   last_played: number | null; subs: string; thumb: string | null; size: number; added_at: number;
+  movie: boolean;
 }
 export interface Series {
   id: number; title: string; kind: string; poster: string | null; episodes: number; watched: number; seasons: number;

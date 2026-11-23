@@ -124,21 +124,7 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
             set_search(conn, file_id, "music", &m.title, &format!("{} {}", m.artist, m.album))?;
         }
         "video" | "anime" => {
-            let info = parse::parse_episode(path);
-            let series_id: Option<i64> = if kind == "anime" || info.episode.is_some() {
-                let skind = if kind == "anime" { "anime" } else { "tv" };
-                conn.execute("INSERT OR IGNORE INTO series(title,kind) VALUES(?1,?2)", params![info.title, skind])?;
-                let sid: i64 = conn.query_row("SELECT id FROM series WHERE title=?1 AND kind=?2", params![info.title, skind], |r| r.get(0))?;
-                if let Some(img) = metadata::folder_cover(path) {
-                    conn.execute(
-                        "UPDATE series SET poster=?1 WHERE id=?2 AND poster IS NULL",
-                        params![img.to_string_lossy(), sid],
-                    )?;
-                }
-                Some(sid)
-            } else {
-                None
-            };
+            let vc = parse::video_class_as(path, kind);
             let subs = if has_external_subs(path) {
                 "external"
             } else if parse::ext(path) == "mkv" {
@@ -146,26 +132,11 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
             } else {
                 "none"
             };
-            let title = if info.episode.is_some() {
-                path.file_stem().unwrap().to_string_lossy().to_string()
-            } else {
-                info.title.clone()
-            };
             conn.execute(
-                "INSERT INTO videos(file_id,title,series_id,season,episode,release_group,resolution,subs) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
-                 ON CONFLICT(file_id) DO UPDATE SET title=excluded.title,series_id=excluded.series_id,season=excluded.season,episode=excluded.episode,
-                 release_group=excluded.release_group,resolution=excluded.resolution,subs=excluded.subs",
-                params![
-                    file_id,
-                    title,
-                    series_id,
-                    info.season.or(series_id.map(|_| 1)),
-                    info.episode,
-                    info.group,
-                    info.resolution,
-                    subs
-                ],
+                "INSERT INTO videos(file_id,title,subs) VALUES(?1,'',?2) ON CONFLICT(file_id) DO UPDATE SET subs=excluded.subs",
+                params![file_id, subs],
             )?;
+            let title = write_video_class(conn, file_id, path, &vc)?;
             // 时长、分辨率、编码（ffprobe 不在时跳过，播放器打开时还会再读）
             if let Ok(v) = crate::tools::probe(path) {
                 let dur: f64 = v["format"]["duration"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0);
@@ -177,8 +148,11 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
                     "UPDATE videos SET duration=?1, width=?2, height=?3, codec=?4 WHERE file_id=?5",
                     params![dur, vs["width"].as_i64(), vs["height"].as_i64(), vs["codec_name"].as_str(), file_id],
                 )?;
+                if vc.movie_guess && dur > 0.0 && dur < MOVIE_MIN_SECS {
+                    conn.execute("UPDATE videos SET movie=0 WHERE file_id=?1", [file_id])?;
+                }
             }
-            set_search(conn, file_id, kind, &info.title, &title)?;
+            set_search(conn, file_id, kind, &vc.info.title, &title)?;
         }
         "novel" => {
             let stem = path.file_stem().unwrap().to_string_lossy().to_string();
@@ -217,6 +191,115 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
     Ok(if existing.is_some() { Outcome::Updated } else { Outcome::Added })
 }
 
+/// 按文件名猜出来的电影，时长不到 40 分钟就不算
+const MOVIE_MIN_SECS: f64 = 40.0 * 60.0;
+
+/// 找同名（忽略标点、大小写）的番剧 / 剧集，没有就新建
+fn series_for(conn: &Connection, title: &str, kind: &str) -> Result<i64> {
+    let key = parse::title_key(title);
+    if !key.is_empty() {
+        let found = conn
+            .prepare("SELECT id,title FROM series WHERE kind=?1 ORDER BY id")?
+            .query_map([kind], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .filter_map(|r| r.ok())
+            .find(|(_, t)| parse::title_key(t) == key);
+        if let Some((id, _)) = found {
+            return Ok(id);
+        }
+    }
+    conn.execute("INSERT OR IGNORE INTO series(title,kind) VALUES(?1,?2)", params![title, kind])?;
+    Ok(conn.query_row("SELECT id FROM series WHERE title=?1 AND kind=?2", params![title, kind], |r| r.get(0))?)
+}
+
+/// 把归类结果写进 videos（标题、所属番剧 / 剧集、季、集、电影标记），返回这一条的标题
+fn write_video_class(conn: &Connection, file_id: i64, path: &Path, vc: &parse::VideoClass) -> Result<String> {
+    let info = &vc.info;
+    let series_id = if vc.series {
+        let skind = if vc.kind == "anime" { "anime" } else { "tv" };
+        let sid = series_for(conn, &info.title, skind)?;
+        if let Some(img) = metadata::folder_cover(path) {
+            conn.execute(
+                "UPDATE series SET poster=?1 WHERE id=?2 AND poster IS NULL",
+                params![img.to_string_lossy(), sid],
+            )?;
+        }
+        Some(sid)
+    } else {
+        None
+    };
+    // 番剧里的每一集用文件名当标题，独立视频和电影用解析出的名字
+    let title = if series_id.is_some() {
+        path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| info.title.clone())
+    } else {
+        info.title.clone()
+    };
+    conn.execute(
+        "UPDATE videos SET title=?1,series_id=?2,season=?3,episode=?4,release_group=?5,resolution=?6,movie=?7,rules=?8 WHERE file_id=?9",
+        params![
+            title,
+            series_id,
+            info.season.or(series_id.map(|_| 1)),
+            info.episode,
+            info.group,
+            info.resolution,
+            vc.movie as i64,
+            parse::VIDEO_RULES,
+            file_id
+        ],
+    )?;
+    Ok(title)
+}
+
+/// 归类规则升级后，按新规则重新归类已经入库的视频（只看路径，不读文件，不丢观看进度）。
+/// 碟片菜单这类现在不入库的文件直接移出媒体库
+pub fn reclassify_videos(conn: &Connection) -> Result<usize> {
+    let rows: Vec<(i64, String, String, f64)> = conn
+        .prepare(
+            "SELECT f.id,f.path,f.kind,v.duration FROM files f JOIN videos v ON v.file_id=f.id
+             WHERE f.kind IN ('video','anime') AND v.rules < ?1",
+        )?
+        .query_map([parse::VIDEO_RULES], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    conn.execute_batch("BEGIN")?;
+    let res = (|| -> Result<()> {
+        for (id, p, old_kind, dur) in &rows {
+            let path = Path::new(p);
+            let Some(vc) = parse::classify_video(path) else {
+                conn.execute("DELETE FROM search_idx WHERE file_id=?1", [id])?;
+                conn.execute("DELETE FROM files WHERE id=?1", [id])?;
+                continue;
+            };
+            // 以前就在番剧里的不往回挪（可能是下载时手动选的番剧库）
+            let kind = if old_kind == "anime" { "anime" } else { vc.kind };
+            let vc = if kind == vc.kind { vc } else { parse::video_class_as(path, kind) };
+            conn.execute("UPDATE files SET kind=?1 WHERE id=?2", params![kind, id])?;
+            let title = write_video_class(conn, *id, path, &vc)?;
+            if vc.movie_guess && *dur > 0.0 && *dur < MOVIE_MIN_SECS {
+                conn.execute("UPDATE videos SET movie=0 WHERE file_id=?1", [id])?;
+            }
+            set_search(conn, *id, kind, &vc.info.title, &title)?;
+        }
+        conn.execute(
+            "DELETE FROM series WHERE id NOT IN (SELECT DISTINCT series_id FROM videos WHERE series_id IS NOT NULL)",
+            [],
+        )?;
+        Ok(())
+    })();
+    match res {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(rows.len())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
+}
+
 pub fn has_external_subs(path: &Path) -> bool {
     let Some(dir) = path.parent() else { return false };
     let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
@@ -242,5 +325,62 @@ mod tests {
     fn pinyin_initials() {
         assert_eq!(super::initials("周杰伦"), "zjl");
         assert_eq!(super::initials("Dawn 协议"), "dawnxy");
+    }
+
+    /// 旧版本扫进来的数据：番剧全在“视频”里、碟片菜单成了一部叫 menu 的番剧。
+    /// 启动时按新规则重新归类，观看进度保留
+    #[test]
+    fn reclassify_old_library() {
+        use rusqlite::params;
+        let c = crate::db::open_memory().unwrap();
+        let mygo = r"F:\番\[DBD-Raws][BanG Dream! It's MyGO!!!!!][01-13TV全集][1080P][BDRip][HEVC-10bit][简繁日双语外挂][FLAC][MKV](1)";
+        let rows: Vec<(String, &str)> = vec![
+            (r"F:\番\孤独摇滚！\01.mp4".into(), "video"),
+            (r"F:\番\孤独摇滚！\02.mp4".into(), "video"),
+            (r"F:\番\0.孤独摇滚（上+下）2024【剧场总集篇】中字\孤独摇滚（上）劇場総集編.2024.HD1080P（中字）.mp4".into(), "video"),
+            (format!(r"{mygo}\Season 1\S01E01.mkv"), "video"),
+            (format!(r"{mygo}\menu\[DBD-Raws][BanG Dream! It's MyGO!!!!!][menu][01][1080P][BDRip][HEVC-10bit][FLAC].mkv"), "anime"),
+            (r"F:\电影\[阿甘正传][1994][中英双字][4K HDR][29.6G]\[阿甘正传][1994][中英双字][4K HDR][29.6G]\Forrest.Gump.1994.Bluray.2160p.x265.10bit.HDR.2Audio-MiniHD.mkv".into(), "video"),
+        ];
+        c.execute("INSERT INTO series(title,kind) VALUES('menu','anime')", []).unwrap();
+        for (i, (p, k)) in rows.iter().enumerate() {
+            c.execute("INSERT INTO files(path,kind,size,mtime,added_at) VALUES(?1,?2,1,1,1)", params![p, k])
+                .unwrap();
+            let id = c.last_insert_rowid();
+            let sid: Option<i64> = if *k == "anime" { Some(1) } else { None };
+            c.execute(
+                "INSERT INTO videos(file_id,title,series_id,position) VALUES(?1,?2,?3,?4)",
+                params![id, format!("{i:02}"), sid, 100.0],
+            )
+            .unwrap();
+        }
+        assert_eq!(super::reclassify_videos(&c).unwrap(), 6);
+        // 再跑一次什么都不做
+        assert_eq!(super::reclassify_videos(&c).unwrap(), 0);
+        let series: Vec<(String, String, i64)> = c
+            .prepare("SELECT s.title,s.kind,count(*) FROM series s JOIN videos v ON v.series_id=s.id GROUP BY s.id ORDER BY s.title")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            series,
+            vec![
+                ("BanG Dream! It's MyGO!!!!!".into(), "anime".into(), 1),
+                ("孤独摇滚！".into(), "anime".into(), 3)
+            ]
+        );
+        // 菜单移出媒体库，电影单独标出来，进度还在
+        let n: i64 = c.query_row("SELECT count(*) FROM files", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 5);
+        let (t, m, pos): (String, i64, f64) = c
+            .query_row("SELECT title,movie,position FROM videos WHERE series_id IS NULL", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap();
+        assert_eq!((t.as_str(), m, pos), ("阿甘正传", 1, 100.0));
+        let kinds: i64 = c.query_row("SELECT count(*) FROM files WHERE kind='anime'", [], |r| r.get(0)).unwrap();
+        assert_eq!(kinds, 4);
     }
 }

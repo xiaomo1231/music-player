@@ -33,6 +33,8 @@ pub mod tools;
 /// 各功能模块自己的表
 fn init_modules(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     adclean::init(conn)?;
+    // 视频归类规则更新后，已入库的视频按新规则重新归类（不用重新扫描）
+    indexer::reclassify_videos(conn)?;
     convert::init(conn)?;
     daily::init(conn)?;
     fetch::init(conn)?;

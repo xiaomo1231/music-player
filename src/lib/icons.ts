@@ -13,6 +13,7 @@ export const P: Record<string, string> = {
  expand:'<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
  mini:'<rect x="3" y="4" width="18" height="16" rx="2.5"/><rect x="12" y="12" width="6.5" height="5" rx="1" fill="currentColor"/>',
  music:'<path d="M9 18V6l11-2.5V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+ film:'<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M7.5 3.5v17M16.5 3.5v17M3.5 8h4M3.5 12h4M3.5 16h4M16.5 8h4M16.5 12h4M16.5 16h4"/>',
  video:'<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.5v5l4.5-2.5z" fill="currentColor"/>',
  book:'<path d="M5 4.5h10.5a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3zM5 17a3 3 0 0 1 3-3h10.5"/>',
  anime:'<path d="M12 3l2.2 5.6L20 9.3l-4.4 3.9 1.3 5.8-4.9-3-4.9 3 1.3-5.8L4 9.3l5.8-.7z"/>',

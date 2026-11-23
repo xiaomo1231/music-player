@@ -2,7 +2,7 @@
   import Icon from '../lib/Icon.svelte';
   import Slider from './Slider.svelte';
   import Cover from './Cover.svelte';
-  import { player } from '../lib/player.svelte';
+  import { player, PLAY_MODE_ICON, PLAY_MODE_LABEL } from '../lib/player.svelte';
   import { ui } from '../lib/ui.svelte';
   import { fmtT } from '../lib/util';
   const c = $derived(player.current);
@@ -18,12 +18,13 @@
   </div>
   <div class="mid">
     <div class="ctrl">
-      <button class:on={player.shuffle} title="随机播放 (Ctrl+H)" onclick={() => player.toggleShuffle()}><Icon name="shuffle" /></button>
+      <!-- 占位，让播放键保持居中（播放模式按钮在右侧） -->
+      <button style="visibility:hidden" tabindex="-1" aria-hidden="true"><Icon name="order" /></button>
       <button title="上一首 (Ctrl+←)" onclick={() => player.prev()}><Icon name="prev" /></button>
       <button class="pp" title={player.playing ? '暂停 (空格)' : '播放 (空格)'} onclick={() => player.toggle()}><Icon name={player.playing ? 'pause' : 'play'} /></button>
       <button title="下一首 (Ctrl+→)" onclick={() => player.next()}><Icon name="next" /></button>
-      <button class:on={player.repeat !== 'off'} title={{ all: '列表循环', one: '单曲循环', off: '不循环' }[player.repeat] + ' (Ctrl+R)'} onclick={() => player.cycleRepeat()} style="position:relative">
-        <Icon name="repeat" />{#if player.repeat === 'one'}<small style="position:absolute;right:-2px;top:-2px;font-size:9px">1</small>{/if}
+      <button class:on={player.mode !== 'order'} title={`${PLAY_MODE_LABEL[player.mode]}（点击切换，Ctrl+R）`} aria-label={'播放模式：' + PLAY_MODE_LABEL[player.mode]} onclick={() => player.cycleMode()}>
+        <Icon name={PLAY_MODE_ICON[player.mode]} />
       </button>
     </div>
     <div class="bar"><span>{fmtT(player.t)}</span><Slider value={player.dur ? player.t / player.dur : 0} onchange={v => player.seek(v * player.dur)} /><span>{fmtT(player.dur)}</span></div>

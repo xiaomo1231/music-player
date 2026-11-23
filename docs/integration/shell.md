@@ -30,6 +30,7 @@ tauri::Builder::default()
 shell::shell_hotkeys,
 shell::shell_set_hotkeys,
 shell::shell_hotkeys_reset,
+shell::shell_hotkeys_suspend,
 shell::shell_show_main,
 shell::shell_tray_tooltip,
 shell::shell_startup_files,
@@ -48,6 +49,7 @@ shell::shell_cache_clear,
 | `shell_hotkeys` | 无 | `[{action, accel, enabled, error?}]`，最近一次注册的结果 |
 | `shell_set_hotkeys` | `list: [{action, accel, enabled}]` | 同上（保存到设置 `hotkeys` 并重新注册） |
 | `shell_hotkeys_reset` | 无 | 同上（恢复默认） |
+| `shell_hotkeys_suspend` | `on` | 同上。设置页录制新组合期间暂停全部热键（`on: true`），取消录制时按已保存的配置恢复（`on: false`） |
 | `shell_show_main` | 无 | 显示主窗口并拉到前台 |
 | `shell_tray_tooltip` | `text` | 更新托盘提示 |
 | `shell_startup_files` | 无 | `{paths, addOnly} \| null`，启动时带来的文件，取走后清空 |

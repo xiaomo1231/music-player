@@ -332,6 +332,7 @@ pub fn run() {
             shell::shell_hotkeys,
             shell::shell_set_hotkeys,
             shell::shell_hotkeys_reset,
+            shell::shell_hotkeys_suspend,
             shell::shell_show_main,
             shell::shell_tray_tooltip,
             shell::shell_startup_files,

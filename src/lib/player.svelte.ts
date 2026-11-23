@@ -33,6 +33,21 @@ const save = (k: string, v: unknown) => {
   } catch {}
 };
 
+/** 播放模式：顺序播放（播完停）→ 列表循环 → 单曲循环 → 随机（整张列表随机并循环） */
+export type PlayMode = 'order' | 'all' | 'one' | 'shuffle';
+export const PLAY_MODES: PlayMode[] = ['order', 'all', 'one', 'shuffle'];
+export const PLAY_MODE_LABEL: Record<PlayMode, string> = { order: '顺序播放', all: '列表循环', one: '单曲循环', shuffle: '随机播放' };
+export const PLAY_MODE_ICON: Record<PlayMode, string> = { order: 'order', all: 'repeat', one: 'repeat1', shuffle: 'shuffle' };
+
+/** 读出播放模式；旧版本分开存的 shuffle / repeat 迁移过来（两个都开时以随机为准） */
+export function migrateMode(mode: unknown, shuffle: unknown, repeat: unknown): PlayMode {
+  if (typeof mode === 'string' && (PLAY_MODES as string[]).includes(mode)) return mode as PlayMode;
+  if (shuffle === true) return 'shuffle';
+  if (repeat === 'off') return 'order';
+  if (repeat === 'one') return 'one';
+  return 'all';
+}
+
 class Player {
   queue = $state<Track[]>([]);
   order = $state<number[]>([]); // 随机模式下的播放顺序（queue 的下标）
@@ -43,8 +58,9 @@ class Player {
   vol = $state(load('vol', 0.8));
   muted = $state(false);
   speed = $state(1);
-  shuffle = $state(load('shuffle', false));
-  repeat = $state<'off' | 'all' | 'one'>(load('repeat', 'all'));
+  mode = $state<PlayMode>(migrateMode(load<unknown>('mode', null), load<unknown>('shuffle', false), load<unknown>('repeat', 'all')));
+  /** 从随机切回时回到的模式（Ctrl+H 用） */
+  private lastSeq: PlayMode = this.mode === 'shuffle' ? 'all' : this.mode;
   lyrics = $state<LyricLine[]>([]);
   eq = $state<number[]>(load('eq', [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
   error = $state('');
@@ -60,6 +76,14 @@ class Player {
   private listened = 0;
   private lastTick = 0;
   private fbuf: Uint8Array<ArrayBuffer> | null = null;
+
+  get shuffle() {
+    return this.mode === 'shuffle';
+  }
+  /** 播完一首后的行为：随机模式整张列表循环 */
+  get repeat(): 'off' | 'all' | 'one' {
+    return this.mode === 'order' ? 'off' : this.mode === 'one' ? 'one' : 'all';
+  }
 
   get current(): Track | null {
     const i = this.order[this.pos];
@@ -366,18 +390,26 @@ class Player {
     save('eq', gains);
   }
 
-  toggleShuffle() {
-    this.shuffle = !this.shuffle;
-    save('shuffle', this.shuffle);
-    const cur = this.order[this.pos];
-    if (cur != null) this.buildOrder(cur);
-    toast(this.shuffle ? '随机播放' : '顺序播放');
+  setMode(m: PlayMode, quiet = false) {
+    const wasShuffle = this.shuffle;
+    if (m !== 'shuffle') this.lastSeq = m;
+    this.mode = m;
+    save('mode', m);
+    if (wasShuffle !== this.shuffle) {
+      const cur = this.order[this.pos];
+      if (cur != null) this.buildOrder(cur);
+    }
+    if (!quiet) toast(PLAY_MODE_LABEL[m]);
   }
 
-  cycleRepeat() {
-    this.repeat = this.repeat === 'all' ? 'one' : this.repeat === 'one' ? 'off' : 'all';
-    save('repeat', this.repeat);
-    toast({ all: '列表循环', one: '单曲循环', off: '不循环' }[this.repeat]);
+  /** 播放模式按钮 / Ctrl+R：顺序 → 列表循环 → 单曲循环 → 随机 → 顺序 */
+  cycleMode() {
+    this.setMode(PLAY_MODES[(PLAY_MODES.indexOf(this.mode) + 1) % PLAY_MODES.length]);
+  }
+
+  /** Ctrl+H：在随机和上一次的非随机模式之间切换 */
+  toggleShuffle() {
+    this.setMode(this.shuffle ? this.lastSeq : 'shuffle');
   }
 
   /** 切歌或播完时把这次收听写进播放记录 */

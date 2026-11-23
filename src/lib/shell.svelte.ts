@@ -83,6 +83,8 @@ export function accelFromEvent(e: KeyboardEvent): string | null {
 export const loadHotkeys = () => invoke<HotkeyStatus[]>('shell_hotkeys');
 export const saveHotkeys = (list: HotkeyCfg[]) => invoke<HotkeyStatus[]>('shell_set_hotkeys', { list });
 export const resetHotkeys = () => invoke<HotkeyStatus[]>('shell_hotkeys_reset');
+/** 录制新组合期间暂停全部全局热键（on=false 时按已保存的配置恢复），返回当前状态 */
+export const suspendHotkeys = (on: boolean) => invoke<HotkeyStatus[]>('shell_hotkeys_suspend', { on });
 
 export const autostartGet = () => invoke<AutostartInfo>('shell_autostart_get');
 export const autostartSet = (enabled: boolean, minimized: boolean) => invoke<void>('shell_autostart_set', { enabled, minimized });

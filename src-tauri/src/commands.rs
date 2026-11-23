@@ -277,37 +277,40 @@ pub fn scan_status(st: State<AppState>) -> (bool, scanner::Progress) {
 /// 拖进来或“打开文件”：入库并返回 (file_id, kind)
 #[tauri::command]
 pub async fn add_files(app: AppHandle, st: State<'_, AppState>, paths: Vec<String>) -> R<Vec<(i64, String)>> {
+    let out = add_paths(&st.db.lock(), &st.dirs, paths);
+    let _ = app.emit("library://changed", ());
+    Ok(out)
+}
+
+/// 把文件 / 文件夹加入媒体库（add_files 和其他模块共用；不发 library://changed）
+pub fn add_paths(conn: &rusqlite::Connection, dirs: &indexer::Dirs, paths: Vec<String>) -> Vec<(i64, String)> {
     let mut out = vec![];
-    {
-        let conn = st.db.lock();
-        for p in paths {
-            // 用户主动添加的文件，即使以前“从媒体库移除”过也重新入库
-            let _ = conn.execute("DELETE FROM excluded WHERE path=?1 OR path LIKE ?1 || '%'", [&p]);
-            let pb = PathBuf::from(&p);
-            let mut files = vec![];
-            if pb.is_dir() {
-                scanner::enumerate(&pb, &Default::default(), |f, k| files.push((f.to_path_buf(), k)));
-            } else if let Some(k) = parse::classify(&pb).or_else(|| {
-                // 小 txt、普通 zip 拖进来也允许
-                match parse::ext(&pb).as_str() {
-                    "txt" => Some("novel"),
-                    "zip" | "cbz" | "pdf" => Some("manga"),
-                    _ => None,
-                }
-            }) {
-                files.push((pb, k));
+    for p in paths {
+        // 用户主动添加的文件，即使以前“从媒体库移除”过也重新入库
+        let _ = conn.execute("DELETE FROM excluded WHERE path=?1 OR path LIKE ?1 || '%'", [&p]);
+        let pb = PathBuf::from(&p);
+        let mut files = vec![];
+        if pb.is_dir() {
+            scanner::enumerate(&pb, &Default::default(), |f, k| files.push((f.to_path_buf(), k)));
+        } else if let Some(k) = parse::classify(&pb).or_else(|| {
+            // 小 txt、普通 zip 拖进来也允许
+            match parse::ext(&pb).as_str() {
+                "txt" => Some("novel"),
+                "zip" | "cbz" | "pdf" => Some("manga"),
+                _ => None,
             }
-            for (f, k) in files {
-                if indexer::index_file(&conn, &f, k, &st.dirs).is_ok() {
-                    if let Ok(id) = conn.query_row("SELECT id FROM files WHERE path=?1", [f.to_string_lossy()], |r| r.get::<_, i64>(0)) {
-                        out.push((id, k.to_string()));
-                    }
+        }) {
+            files.push((pb, k));
+        }
+        for (f, k) in files {
+            if indexer::index_file(conn, &f, k, dirs).is_ok() {
+                if let Ok(id) = conn.query_row("SELECT id FROM files WHERE path=?1", [f.to_string_lossy()], |r| r.get::<_, i64>(0)) {
+                    out.push((id, k.to_string()));
                 }
             }
         }
     }
-    let _ = app.emit("library://changed", ());
-    Ok(out)
+    out
 }
 
 #[tauri::command]

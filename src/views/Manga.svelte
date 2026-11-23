@@ -8,11 +8,19 @@
   import { Selection, noTextSelect } from '../lib/select.svelte';
   import { invoke, inTauri, type ComicItem } from '../lib/api';
   import { lib } from '../lib/library.svelte';
-  import { ui } from '../lib/ui.svelte';
+  import { ui, toast } from '../lib/ui.svelte';
   import Cover from '../components/Cover.svelte';
+  import ComicExportModal from '../components/em/ComicExportModal.svelte';
 
   let comics = $state<ComicItem[]>([]);
   let loaded = $state(false);
+  /** 按规则导出：选中的漫画 */
+  let exportIds = $state.raw<number[] | null>(null);
+  function exportByRule(ids: number[]) {
+    const v = ids.filter(id => comics.find(c => c.id === id)?.format !== 'pdf');
+    if (v.length) exportIds = v;
+    else toast('PDF 不能按规则导出');
+  }
 
   $effect(() => {
     void lib.version;
@@ -75,6 +83,8 @@
     const ids = sel.ids(order);
     const done = (ok: boolean) => ok && sel.clear();
     return [
+      { label: '按规则导出…', run: () => exportByRule(ids) },
+      'sep',
       { label: '从媒体库移除…', run: async () => done(await removeMany('comic', ids)) },
       { label: '删除文件…', danger: true, run: async () => done(await deleteMany('comic', ids)) },
     ];
@@ -128,6 +138,10 @@
     {/each}
   {/if}
 </section>
+
+{#if exportIds}
+  <ComicExportModal ids={exportIds} onclose={() => (exportIds = null)} ondone={r => r.outputs.length && sel.clear()} />
+{/if}
 
 <style>
   .msel { display: inline-flex; align-items: center; gap: 5px; }

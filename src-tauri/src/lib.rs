@@ -121,10 +121,13 @@ fn comic_protocol(app: &tauri::AppHandle, req: &tauri::http::Request<Vec<u8>>) -
         return resp(400, "text/plain", b"bad request".to_vec());
     };
     let state = app.state::<AppState>();
-    let Ok(file) = library::file_path(&state.db.lock(), id) else {
-        return resp(404, "text/plain", b"not found".to_vec());
-    };
-    match comic::read_page(std::path::Path::new(&file), page) {
+    // 有漫画排版规则时按规则处理过的页面；`?rule=<id>` 指定只用某个规则（规则测试面板）
+    let only = req
+        .uri()
+        .query()
+        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("rule=")))
+        .map(String::from);
+    match em::comic::read_page_with(&state, id, page, only.as_deref()) {
         Ok((bytes, mime)) => resp(200, &mime, bytes),
         Err(e) => resp(404, "text/plain", e.to_string().into_bytes()),
     }
@@ -146,7 +149,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .register_uri_scheme_protocol("mpc", |ctx, req| comic_protocol(ctx.app_handle(), &req))
+        .register_asynchronous_uri_scheme_protocol("mpc", |ctx, req, responder| {
+            // 按规则处理页面要解码、编码图片，放到后台线程，不卡界面
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn_blocking(move || responder.respond(comic_protocol(&app, &req)));
+        })
         .setup(|app| {
             let state = init_state(app.handle()).map_err(|e| format!("初始化失败：{e}"))?;
             app.manage(state);
@@ -243,6 +250,8 @@ pub fn run() {
             em::em_export,
             em::em_test,
             em::em_open,
+            em::comic::em_comic_view,
+            em::comic::em_comic_export,
             adclean::adclean_scan,
             adclean::adclean_find_similar,
             adclean::adclean_estimate,

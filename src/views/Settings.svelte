@@ -205,6 +205,45 @@
   </header>
 
   <div class="set-grid">
+    <!-- 关于 -->
+    <div class="card">
+      <h5>关于与更新</h5>
+      <div class="mp-opt">
+        <div>
+          检查更新
+          <small>
+            {#if updater.phase === 'checking'}
+              正在检查…
+            {:else if updater.update}
+              有新版本 {updater.version}
+            {:else if updater.phase === 'error'}
+              检查失败，请检查网络后重试
+            {:else if updater.lastChecked}
+              已经是最新版本
+            {:else}
+              从 GitHub 获取最新版本；有新版本时会先询问再更新
+            {/if}
+          </small>
+        </div>
+        {#if updater.update && !updater.busy}
+          <button class="mp-btn" onclick={() => (updater.show = true)}>查看更新</button>
+        {:else}
+          <button class="mp-btn ghost" disabled={!inTauri || updater.busy} onclick={() => updater.check(true)}>
+            {updater.phase === 'checking' ? '检查中…' : '检查更新'}
+          </button>
+        {/if}
+      </div>
+      <label class="mp-opt">
+        <div>启动时自动检查更新<small>只检查，不会自动下载；有新版本时弹窗让你选择</small></div>
+        <input type="checkbox" class="mp-sw" checked={autoUpdate} onchange={flag('update_auto_check', v => (autoUpdate = v))} />
+      </label>
+      <div class="kv">
+        <span>版本</span><span>{engine.version || '—'}</span>
+        <span>播放引擎</span><span>{engine.mpv ? 'libmpv' : 'WebView2'}</span>
+      </div>
+      <p class="note">开源组件：FFmpeg（音视频转换、截取封面，许可取决于构建配置，LGPL 或 GPL）；libmpv（播放引擎，LGPL 2.1 或更高）。使用这些组件时请保留其许可声明。</p>
+    </div>
+
     <!-- 播放 -->
     <div class="card">
       <h5>播放</h5>
@@ -287,19 +326,6 @@
       </label>
     </div>
 
-    <LyricsSettings />
-    <FxSettings />
-    <ReaderSettings />
-
-    <!-- 快捷键 -->
-    <div class="card card-wide">
-      <h5>全局热键</h5>
-      <p class="note">软件在后台或最小化时也有效。点“修改”后按下新的组合，按 Esc 取消；被其他软件占用的会标红。</p>
-      <HotkeyList />
-      <div class="rowbtns">
-        <button class="mp-btn ghost" onclick={() => ui.open('keys')}>查看应用内快捷键</button>
-      </div>
-    </div>
 
     <!-- 系统集成 -->
     <div class="card">
@@ -332,8 +358,9 @@
         <div>同时清理封面缓存<small>封面会在下次需要时重新生成；不影响媒体库和数据库</small></div>
         <input type="checkbox" class="mp-sw" checked={clearCovers} onchange={e => (clearCovers = inp(e).checked)} />
       </label>
-      <div class="rowbtns">
-        <button class="mp-btn" disabled={!inTauri || clearing} onclick={clearCache}>{clearing ? '清理中…' : '清理缓存'}</button>
+      <div class="mp-opt">
+        <div>清理缓存<small>删除缩略图缓存，需要时会重新生成</small></div>
+        <button class="mp-btn ghost" disabled={!inTauri || clearing} onclick={clearCache}>{clearing ? '清理中…' : '清理缓存'}</button>
       </div>
       <div class="mp-opt">
         <div>清空媒体库<small>删除库里所有条目和记录，从头开始；不删硬盘上的任何文件</small></div>
@@ -345,56 +372,40 @@
       </div>
     </div>
 
-    <!-- 关于 -->
+  </div>
+
+  <!-- 内容较宽的设置各占一整行 -->
+  <div class="set-wide">
+    <LyricsSettings />
+    <FxSettings />
+    <ReaderSettings />
+
+    <!-- 快捷键 -->
     <div class="card">
-      <h5>关于</h5>
-      <div class="kv">
-        <span>版本</span><span>{engine.version || '—'}</span>
-        <span>播放引擎</span><span>{engine.mpv ? 'libmpv' : 'WebView2'}</span>
+      <h5>全局热键</h5>
+      <p class="note">软件在后台或最小化时也有效。点“修改”后按下新的组合，按 Esc 取消；被其他软件占用的会标红。</p>
+      <HotkeyList />
+      <div class="rowbtns">
+        <button class="mp-btn ghost" onclick={() => ui.open('keys')}>查看应用内快捷键</button>
       </div>
-      <div class="mp-opt">
-        <div>
-          检查更新
-          <small>
-            {#if updater.phase === 'checking'}
-              正在检查…
-            {:else if updater.update}
-              有新版本 {updater.version}
-            {:else if updater.phase === 'error'}
-              检查失败，请检查网络后重试
-            {:else if updater.lastChecked}
-              已经是最新版本
-            {:else}
-              从 GitHub 获取最新版本；有新版本时会先询问再更新
-            {/if}
-          </small>
-        </div>
-        {#if updater.update && !updater.busy}
-          <button class="mp-btn" onclick={() => (updater.show = true)}>查看更新</button>
-        {:else}
-          <button class="mp-btn ghost" disabled={!inTauri || updater.busy} onclick={() => updater.check(true)}>
-            {updater.phase === 'checking' ? '检查中…' : '检查更新'}
-          </button>
-        {/if}
-      </div>
-      <label class="mp-opt">
-        <div>启动时自动检查更新<small>只检查，不会自动下载；有新版本时弹窗让你选择</small></div>
-        <input type="checkbox" class="mp-sw" checked={autoUpdate} onchange={flag('update_auto_check', v => (autoUpdate = v))} />
-      </label>
-      <p class="note">开源组件：FFmpeg（音视频转换、截取封面，许可取决于构建配置，LGPL 或 GPL）；libmpv（播放引擎，LGPL 2.1 或更高）。使用这些组件时请保留其许可声明。</p>
     </div>
   </div>
 </section>
 
 <style>
+  /* 瀑布流：卡片按列依次排下去，高度不同也不会留空 */
   .set-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 14px;
-    align-items: start;
+    columns: 340px;
+    column-gap: 14px;
   }
-  .card-wide {
-    grid-column: 1 / -1;
+  .set-grid > :global(*) {
+    break-inside: avoid;
+    margin: 0 0 14px;
+  }
+  .set-wide {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
   }
   .note {
     color: var(--mp-sub);
@@ -405,10 +416,5 @@
   input[type='range'] {
     flex: 1;
     min-width: 120px;
-  }
-  @media (max-width: 720px) {
-    .set-grid {
-      grid-template-columns: 1fr;
-    }
   }
 </style>

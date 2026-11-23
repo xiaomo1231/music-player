@@ -220,7 +220,8 @@ fn write_video_class(conn: &Connection, file_id: i64, path: &Path, vc: &parse::V
     let series_id = if vc.series {
         let skind = if vc.kind == "anime" { "anime" } else { "tv" };
         let sid = series_for(conn, &info.title, skind)?;
-        if let Some(img) = metadata::folder_cover(path) {
+        let roots: Vec<std::path::PathBuf> = crate::library::roots(conn)?.into_iter().map(|r| std::path::PathBuf::from(r.path)).collect();
+        if let Some(img) = crate::artwork::local_poster(path, &roots) {
             conn.execute(
                 "UPDATE series SET poster=?1 WHERE id=?2 AND poster IS NULL",
                 params![img.to_string_lossy(), sid],

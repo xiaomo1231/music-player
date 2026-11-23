@@ -3,6 +3,7 @@
 pub mod adclean;
 pub mod ai;
 pub mod aiclassify;
+pub mod artwork;
 pub mod comic;
 pub mod commands;
 pub mod convert;
@@ -234,6 +235,7 @@ pub fn run() {
             media::media_probe,
             media::media_thumb,
             media::media_thumb_dir,
+            media::media_series_cover,
             media::media_subtitles,
             media::media_sub_vtt,
             media::media_save_screenshot,

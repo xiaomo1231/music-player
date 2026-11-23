@@ -529,9 +529,21 @@ fn register_one(app: &AppHandle, action: &str, accel: &str, seen: &mut Vec<Strin
                 hotkey_fired(app, cmd);
             }
         })
-        .map_err(|e| format!("注册失败，可能被其他软件占用：{e}"))?;
+        .map_err(|e| hotkey_error_text(&e.to_string()))?;
     seen.push(canon.clone());
     Ok(canon)
+}
+
+/// 把插件返回的英文调试信息换成给用户看的中文提示
+fn hotkey_error_text(raw: &str) -> String {
+    let l = raw.to_ascii_lowercase();
+    if l.contains("already registered") || l.contains("already in use") {
+        "已被其他软件占用，请换一个组合".into()
+    } else if l.contains("couldn't recognize") || l.contains("unexpected") || l.contains("unsupported") {
+        "系统不支持这个组合，请换一个".into()
+    } else {
+        "注册失败，请换一个组合或稍后再试".into()
+    }
 }
 
 #[tauri::command]
@@ -539,15 +551,27 @@ pub fn shell_hotkeys() -> Vec<HotkeyStatus> {
     HK_STATUS.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// 设置页录制新组合期间先注销全部热键，避免按下的组合被系统拦截（界面收不到按键、反而触发了动作）；
+/// on=false 时按已保存的配置重新注册。异步命令不占主线程，注册期间界面照常刷新。
 #[tauri::command]
-pub fn shell_set_hotkeys(app: AppHandle, list: Vec<HotkeyCfg>) -> Result<Vec<HotkeyStatus>, String> {
+pub async fn shell_hotkeys_suspend(app: AppHandle, on: bool) -> Result<Vec<HotkeyStatus>, String> {
+    if on {
+        let _ = app.global_shortcut().unregister_all();
+        Ok(shell_hotkeys())
+    } else {
+        Ok(apply_hotkeys(&app, &merge_hotkeys(get_setting(&app, HOTKEYS_KEY).as_ref())))
+    }
+}
+
+#[tauri::command]
+pub async fn shell_set_hotkeys(app: AppHandle, list: Vec<HotkeyCfg>) -> Result<Vec<HotkeyStatus>, String> {
     let merged = merge_hotkeys(Some(&serde_json::to_value(&list).map_err(|e| e.to_string())?));
     save_setting(&app, HOTKEYS_KEY, &serde_json::to_value(&merged).map_err(|e| e.to_string())?)?;
     Ok(apply_hotkeys(&app, &merged))
 }
 
 #[tauri::command]
-pub fn shell_hotkeys_reset(app: AppHandle) -> Result<Vec<HotkeyStatus>, String> {
+pub async fn shell_hotkeys_reset(app: AppHandle) -> Result<Vec<HotkeyStatus>, String> {
     let list = default_hotkeys();
     save_setting(&app, HOTKEYS_KEY, &serde_json::to_value(&list).map_err(|e| e.to_string())?)?;
     Ok(apply_hotkeys(&app, &list))
@@ -910,6 +934,18 @@ pub fn shell_cache_clear(app: AppHandle, covers: bool) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hotkey_error_text_is_friendly() {
+        use super::hotkey_error_text;
+        let raw = "HotKey already registered: HotKey { mods: Modifiers(ALT | CONTROL), key: KeyP, id: 589858 }";
+        assert_eq!(hotkey_error_text(raw), "已被其他软件占用，请换一个组合");
+        assert_eq!(hotkey_error_text("Unable to register hotkey: 1409"), "注册失败，请换一个组合或稍后再试");
+        assert_eq!(
+            hotkey_error_text("Couldn't recognize \"Foo\" as a valid HotKey Code"),
+            "系统不支持这个组合，请换一个"
+        );
+    }
+
     use super::*;
 
     fn s(v: &[&str]) -> Vec<String> {

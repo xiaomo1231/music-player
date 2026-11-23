@@ -181,7 +181,7 @@
       player.toggleShuffle();
     } else if (c && k === 'r') {
       e.preventDefault();
-      player.cycleRepeat();
+      player.cycleMode();
     } else if (c && k === 'm') {
       e.preventDefault();
       setMini();

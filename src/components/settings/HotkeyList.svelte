@@ -1,9 +1,9 @@
 <script lang="ts">
   // 全局热键列表：可开关、点击“录制”后按下新组合、占用的标红、恢复默认
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
-  import { accelFromEvent, HOTKEY_LABEL, loadHotkeys, resetHotkeys, saveHotkeys, type HotkeyStatus } from '../../lib/shell.svelte';
+  import { accelFromEvent, HOTKEY_LABEL, loadHotkeys, resetHotkeys, saveHotkeys, suspendHotkeys, type HotkeyStatus } from '../../lib/shell.svelte';
 
   let rows = $state<HotkeyStatus[]>([]);
   let recording = $state<string | null>(null);
@@ -33,6 +33,8 @@
     busy = true;
     try {
       rows = await saveHotkeys(next.map(({ action, accel, enabled }) => ({ action, accel, enabled })));
+      // 保存会重新注册全部热键；此时若又在录制，重新暂停
+      if (recording != null) await suspendHotkeys(true);
     } catch (e) {
       toast('保存快捷键失败：' + String(e));
     } finally {
@@ -53,7 +55,35 @@
   }
 
   function setEnabled(i: number, on: boolean) {
+    recording = null;
     save(rows.map((r, k) => (k === i ? { ...r, enabled: on } : r)));
+  }
+
+  // 录制期间暂停全部全局热键：否则按下的组合若已被注册，会被系统直接拦下（界面收不到按键、反而触发了动作）
+  function startRecording(action: string) {
+    commitPending();
+    if (recording === action) return stopRecording();
+    const was = recording;
+    recording = action;
+    if (was == null && inTauri) suspendHotkeys(true).catch(() => {});
+  }
+
+  /** 取消录制并恢复热键 */
+  function stopRecording() {
+    if (recording == null) return;
+    recording = null;
+    if (inTauri) suspendHotkeys(false).then(r => (rows = r)).catch(() => {});
+  }
+
+  /** 已录到、等松开按键再保存的组合（按住时就注册，自动重复的按键会被系统当成热键触发） */
+  let pending: { next: HotkeyStatus[]; code: string; timer: ReturnType<typeof setTimeout> } | null = null;
+
+  function commitPending() {
+    if (!pending) return;
+    const { next, timer } = pending;
+    clearTimeout(timer);
+    pending = null;
+    save(next);
   }
 
   // 录制时在捕获阶段拦截按键，避免同时触发应用内快捷键
@@ -61,19 +91,31 @@
     if (recording == null) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    if (e.key === 'Escape') {
-      recording = null;
-      return;
-    }
+    if (e.key === 'Escape') return stopRecording();
     const accel = accelFromEvent(e);
     if (!accel) return; // 只按了修饰键，继续等待
     const action = recording;
     recording = null;
-    save(rows.map(r => (r.action === action ? { ...r, accel, enabled: true } : r)));
+    // 先把新组合显示出来，松开按键后再保存注册
+    const next = rows.map(r => (r.action === action ? { ...r, accel, enabled: true, error: undefined } : r));
+    rows = next;
+    pending = { next, code: e.code, timer: setTimeout(commitPending, 1500) };
   }
+
+  function onKeyUp(e: KeyboardEvent) {
+    if (!pending) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.code === pending.code || !(e.ctrlKey || e.altKey || e.metaKey)) commitPending();
+  }
+
+  onDestroy(() => {
+    if (pending) commitPending();
+    else if (recording != null && inTauri) suspendHotkeys(false).catch(() => {});
+  });
 </script>
 
-<svelte:window onkeydowncapture={onKey} />
+<svelte:window onkeydowncapture={onKey} onkeyupcapture={onKeyUp} />
 
 <div class="hk">
   {#each rows as r, i (r.action)}
@@ -83,7 +125,7 @@
         {#if r.error}<small class="err">{r.error}</small>{/if}
       </div>
       <kbd class:dim={!r.enabled}>{pretty(r.accel)}</kbd>
-      <button class="mp-btn ghost" disabled={busy} onclick={() => (recording = recording === r.action ? null : r.action)}>
+      <button class="mp-btn ghost" disabled={busy} onclick={() => startRecording(r.action)}>
         {recording === r.action ? '按下新组合…' : '修改'}
       </button>
       <input type="checkbox" class="mp-sw" checked={r.enabled} disabled={busy} onchange={e => setEnabled(i, e.currentTarget.checked)} aria-label="启用" />
@@ -94,7 +136,7 @@
   {/if}
 </div>
 <div class="rowbtns">
-  <button class="mp-btn ghost" disabled={busy || !rows.length} onclick={reset}>恢复默认</button>
+  <button class="mp-btn ghost" disabled={busy || !rows.length} onclick={() => { recording = null; reset(); }}>恢复默认</button>
   {#if recording}<small class="hint">按 Esc 取消；按下 Ctrl / Alt / Win 加按键的组合</small>{/if}
 </div>
 

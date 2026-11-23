@@ -6,6 +6,8 @@ export const P: Record<string, string> = {
  prev:'<path d="M19 5v14L9 12zM4.5 5H7v14H4.5z" fill="currentColor" stroke="none"/>',
  shuffle:'<path d="M3 7h3.5c5 0 6 10 11 10H21M3 17h3.5c1.6 0 2.8-1 3.8-2.4M21 7h-3.5c-1.6 0-2.8 1-3.8 2.4M18 4l3 3-3 3M18 14l3 3-3 3"/>',
  repeat:'<path d="M4 11V9a3 3 0 0 1 3-3h12M16 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H5M8 21l-3-3 3-3"/>',
+ repeat1:'<path d="M4 11V9a3 3 0 0 1 3-3h12M16 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H5M8 21l-3-3 3-3"/><path d="M11 10.5l1.5-1v5"/>',
+ order:'<path d="M4 6.5h11M4 12h11M4 17.5h7M18.5 6v12M15.5 15l3 3 3-3"/>',
  vol:'<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z" fill="currentColor" stroke="none"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
  scan:'<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M11 7.5V11l2.2 1.6"/>',
  oled:'<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M9 20h6M12 16.5V20M8 10.5l2.5-2.5M11.5 12.5l4-4"/>',

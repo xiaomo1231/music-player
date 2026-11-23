@@ -177,7 +177,7 @@
   }
   function playGroup(tracks: Track[], shuffle = false) {
     if (!tracks.length) return toast('这一组还没有歌曲');
-    if (shuffle && !player.shuffle) player.toggleShuffle();
+    if (shuffle && !player.shuffle) player.setMode('shuffle');
     player.playList(tracks, shuffle ? Math.floor(Math.random() * tracks.length) : 0, filter);
     toast(`开始播放：${tracks.length} 首`);
   }

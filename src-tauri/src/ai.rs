@@ -25,6 +25,8 @@ pub struct AiConfig {
     pub monthly_token_limit: u64,
     /// 漫画文字识别：cloud（用上面的图像识别模型）/ local（本机 Xiaomi-OCR-0，不上传图片）
     pub ocr_engine: String,
+    /// 扫描后把规则拿不准的视频交给 AI 识别（只发文件夹名和文件名）
+    pub classify_media: bool,
 }
 
 impl Default for AiConfig {
@@ -36,6 +38,7 @@ impl Default for AiConfig {
             vision_model: "gpt-4o-mini".into(),
             monthly_token_limit: 0,
             ocr_engine: "cloud".into(),
+            classify_media: true,
         }
     }
 }

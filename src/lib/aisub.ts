@@ -20,6 +20,8 @@ export interface AiConfig {
   base_url: string; asr_model: string; chat_model: string; vision_model: string; monthly_token_limit: number;
   /** 漫画文字识别：cloud 用图像识别模型，local 用本机 Xiaomi-OCR-0 */
   ocr_engine: 'cloud' | 'local';
+  /** 扫描后把规则拿不准的视频交给 AI 识别 */
+  classify_media: boolean;
 }
 export interface AiUsage {
   month: string; prompt_tokens: number; completion_tokens: number; audio_seconds: number; requests: number;

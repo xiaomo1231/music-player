@@ -42,9 +42,13 @@ pub fn classify(p: &Path) -> Option<&'static str> {
     }
     if COMIC.contains(&e) {
         if e == "zip" || e == "pdf" {
-            // zip / pdf 只有在“漫画”类路径下才算漫画，避免把普通压缩包和文档拉进来
+            // zip / pdf 只有在“漫画”类路径下、或文件名像漫画章节 / 卷时才算漫画，避免把普通压缩包和文档拉进来
             let s = p.to_string_lossy().to_lowercase();
-            if !(s.contains("漫画") || s.contains("comic") || s.contains("manga") || s.contains("漫畫")) {
+            let (dirs, stem) = split_path(p);
+            let comic_path = s.contains("漫画") || s.contains("comic") || s.contains("manga") || s.contains("漫畫");
+            // 放在“番”这类动漫文件夹里的 pdf / zip 基本是漫画（如 F:\番\某作品\1 第01話.pdf）
+            let anime_dir = dirs.iter().any(|d| ANIME_DIRS.contains(&d.trim().to_lowercase().as_str()));
+            if !(comic_path || anime_dir || RE_COMIC_CHAPTER.is_match(&stem)) {
                 return None;
             }
         }
@@ -74,6 +78,8 @@ static RE_TAGS: Lazy<Regex> = Lazy::new(|| {
 });
 static RE_SPECIAL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(OVA|OAD|SP|Special|Specials|剧场版|劇場版|Movie|NCOP|NCED|OP|ED|PV|CM|Menu)\b").unwrap());
 
+/// 漫画章节 / 卷的文件名：第01話、第3卷、Vol.2、Ch.15、番外
+static RE_COMIC_CHAPTER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)第\s*\d+(?:\.\d+)?\s*[话話回卷册冊]|番外|\bvol\.?\s*\d|\bch(?:apter)?\.?\s*\d").unwrap());
 static RE_SPECIAL_CJK: Lazy<Regex> = Lazy::new(|| Regex::new(r"剧场版|劇場版|剧场|劇場|总集篇|總集篇|総集編|剧版|劇版|特典|特别篇|特別篇|番外").unwrap());
 static RE_EP_ONLY: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*(\d{1,3}(?:\.\d)?)\s*$").unwrap());
 static RE_EP_LEAD: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*[\[【](\d{1,3})(?:[^\d\]】.p][^\]】]*)?[\]】]").unwrap());
@@ -660,6 +666,12 @@ mod tests {
         assert_eq!(classify(&p(r"D:\Movies\x.mkv")), Some("video"));
         assert_eq!(classify(&p(r"D:\漫画\x.cbz")), Some("manga"));
         assert_eq!(classify(&p(r"D:\docs\x.zip")), None);
+        assert_eq!(classify(&p(r"D:\docs\报告.pdf")), None);
+        // 用户的 F:\番\廣井菊里的深酒日記：章节 pdf
+        assert_eq!(classify(&p(r"F:\番\廣井菊里的深酒日記\1 第01話.pdf")), Some("manga"));
+        assert_eq!(classify(&p(r"F:\番\廣井菊里的深酒日記\32.5 2025新年賀圖.pdf")), Some("manga"));
+        assert_eq!(classify(&p(r"D:\下载\某漫画\第12話.pdf")), Some("manga"));
+        assert_eq!(classify(&p(r"D:\下载\Some Manga Vol.3.zip")), Some("manga"));
     }
 
     fn vc(s: &str) -> VideoClass {

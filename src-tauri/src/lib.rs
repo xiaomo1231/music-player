@@ -2,6 +2,7 @@
 
 pub mod adclean;
 pub mod ai;
+pub mod aiclassify;
 pub mod artwork;
 pub mod comic;
 pub mod commands;
@@ -36,6 +37,7 @@ pub mod tools;
 /// 各功能模块自己的表
 fn init_modules(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     adclean::init(conn)?;
+    aiclassify::init(conn)?;
     // 视频归类规则更新后，已入库的视频按新规则重新归类（不用重新扫描）
     indexer::reclassify_videos(conn)?;
     convert::init(conn)?;
@@ -64,6 +66,7 @@ fn setup_modules(app: &tauri::AppHandle) {
     shell::setup(app);
     subtitle::setup(app);
     adclean::setup(app);
+    aiclassify::setup(app);
 }
 
 use parking_lot::Mutex;
@@ -206,6 +209,7 @@ pub fn run() {
             ai::ai_get_config,
             ai::ai_save_config,
             ai::ai_test,
+            aiclassify::ai_classify_now,
             player::mpv_load,
             player::mpv_pause,
             player::mpv_stop,

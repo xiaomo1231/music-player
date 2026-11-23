@@ -124,7 +124,10 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
             set_search(conn, file_id, "music", &m.title, &format!("{} {}", m.artist, m.album))?;
         }
         "video" | "anime" => {
-            let vc = parse::video_class_as(path, kind);
+            let vc = crate::aiclassify::apply(conn, &p, parse::video_class_as(path, kind));
+            if vc.kind != kind {
+                conn.execute("UPDATE files SET kind=?1 WHERE id=?2", params![vc.kind, file_id])?;
+            }
             let subs = if has_external_subs(path) {
                 "external"
             } else if parse::ext(path) == "mkv" {
@@ -152,7 +155,7 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
                     conn.execute("UPDATE videos SET movie=0 WHERE file_id=?1", [file_id])?;
                 }
             }
-            set_search(conn, file_id, kind, &vc.info.title, &title)?;
+            set_search(conn, file_id, vc.kind, &vc.info.title, &title)?;
         }
         "novel" => {
             let stem = path.file_stem().unwrap().to_string_lossy().to_string();
@@ -251,6 +254,46 @@ fn write_video_class(conn: &Connection, file_id: i64, path: &Path, vc: &parse::V
     Ok(title)
 }
 
+/// 按规则（再叠加 AI 的结果）重新归类一个视频并写库；碟片菜单这类不该入库的直接移除
+fn reclassify_one(conn: &Connection, id: i64, p: &str, old_kind: &str, dur: f64) -> Result<()> {
+    let path = Path::new(p);
+    let Some(vc) = parse::classify_video(path) else {
+        conn.execute("DELETE FROM search_idx WHERE file_id=?1", [id])?;
+        conn.execute("DELETE FROM files WHERE id=?1", [id])?;
+        return Ok(());
+    };
+    // 以前就在番剧里的不往回挪（可能是下载时手动选的番剧库）
+    let kind = if old_kind == "anime" { "anime" } else { vc.kind };
+    let vc = if kind == vc.kind { vc } else { parse::video_class_as(path, kind) };
+    let vc = crate::aiclassify::apply(conn, p, vc);
+    conn.execute("UPDATE files SET kind=?1 WHERE id=?2", params![vc.kind, id])?;
+    let title = write_video_class(conn, id, path, &vc)?;
+    if vc.movie_guess && dur > 0.0 && dur < MOVIE_MIN_SECS {
+        conn.execute("UPDATE videos SET movie=0 WHERE file_id=?1", [id])?;
+    }
+    set_search(conn, id, vc.kind, &vc.info.title, &title)
+}
+
+/// AI 给出结果后重新归类这一条，并清掉没有集了的番剧 / 剧集
+pub fn reapply_video(conn: &Connection, id: i64, p: &str) -> Result<()> {
+    let Some((kind, dur)) = conn
+        .query_row(
+            "SELECT f.kind,v.duration FROM files f JOIN videos v ON v.file_id=f.id WHERE f.id=?1",
+            [id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)),
+        )
+        .optional()?
+    else {
+        return Ok(());
+    };
+    reclassify_one(conn, id, p, &kind, dur)?;
+    conn.execute(
+        "DELETE FROM series WHERE id NOT IN (SELECT DISTINCT series_id FROM videos WHERE series_id IS NOT NULL)",
+        [],
+    )?;
+    Ok(())
+}
+
 /// 归类规则升级后，按新规则重新归类已经入库的视频（只看路径，不读文件，不丢观看进度）。
 /// 碟片菜单这类现在不入库的文件直接移出媒体库
 pub fn reclassify_videos(conn: &Connection) -> Result<usize> {
@@ -267,21 +310,7 @@ pub fn reclassify_videos(conn: &Connection) -> Result<usize> {
     conn.execute_batch("BEGIN")?;
     let res = (|| -> Result<()> {
         for (id, p, old_kind, dur) in &rows {
-            let path = Path::new(p);
-            let Some(vc) = parse::classify_video(path) else {
-                conn.execute("DELETE FROM search_idx WHERE file_id=?1", [id])?;
-                conn.execute("DELETE FROM files WHERE id=?1", [id])?;
-                continue;
-            };
-            // 以前就在番剧里的不往回挪（可能是下载时手动选的番剧库）
-            let kind = if old_kind == "anime" { "anime" } else { vc.kind };
-            let vc = if kind == vc.kind { vc } else { parse::video_class_as(path, kind) };
-            conn.execute("UPDATE files SET kind=?1 WHERE id=?2", params![kind, id])?;
-            let title = write_video_class(conn, *id, path, &vc)?;
-            if vc.movie_guess && *dur > 0.0 && *dur < MOVIE_MIN_SECS {
-                conn.execute("UPDATE videos SET movie=0 WHERE file_id=?1", [id])?;
-            }
-            set_search(conn, *id, kind, &vc.info.title, &title)?;
+            reclassify_one(conn, *id, p, old_kind, *dur)?;
         }
         conn.execute(
             "DELETE FROM series WHERE id NOT IN (SELECT DISTINCT series_id FROM videos WHERE series_id IS NOT NULL)",

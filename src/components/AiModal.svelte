@@ -2,7 +2,7 @@
   // AI 服务设置：接口地址、密钥（存在 Windows 凭据管理器）、三个模型、每月上限、用量、测试连接
   import Modal from './Modal.svelte';
   import { ui, toast } from '../lib/ui.svelte';
-  import { inTauri } from '../lib/api';
+  import { inTauri, invoke } from '../lib/api';
   import { aiApi, localOcrApi, type AiConfig, type AiUsage, type LocalOcrStatus, type LocalOcrProgress } from '../lib/aisub';
   import { onDestroy } from 'svelte';
 
@@ -24,6 +24,8 @@
   let visionModel = $state('');
   let limit = $state(0);
   let ocrEngine = $state<'cloud' | 'local'>('cloud');
+  let classifyMedia = $state(true);
+  let classifying = $state(false);
   let local = $state<LocalOcrStatus | null>(null);
   let dl = $state<LocalOcrProgress | null>(null);
   let localMsg = $state('');
@@ -32,7 +34,7 @@
   let testResult = $state('');
   let saved = $state('');
 
-  const form = $derived(JSON.stringify([baseUrl, asrModel, chatModel, visionModel, limit, ocrEngine]));
+  const form = $derived(JSON.stringify([baseUrl, asrModel, chatModel, visionModel, limit, ocrEngine, classifyMedia]));
   const dirty = $derived(loaded && form !== saved);
 
   function presetOf(url: string): string {
@@ -59,6 +61,7 @@
       visionModel = c.vision_model;
       limit = c.monthly_token_limit;
       ocrEngine = c.ocr_engine === 'local' ? 'local' : 'cloud';
+      classifyMedia = c.classify_media !== false;
       hasKey = st.has_key;
       usage = st.usage;
       preset = presetOf(c.base_url);
@@ -78,6 +81,7 @@
       vision_model: visionModel.trim(),
       monthly_token_limit: Math.max(0, Math.round(Number(limit) || 0)),
       ocr_engine: ocrEngine,
+      classify_media: classifyMedia,
     };
     // 密钥留空表示不改；清除时传空串
     const k = clearKey ? '' : key.trim() ? key.trim() : null;
@@ -166,6 +170,21 @@
     }
   }
 
+  // 立即把规则拿不准的视频交给 AI 识别
+  async function classifyNow() {
+    if (!inTauri) return toast('请在桌面程序中使用');
+    if ((dirty || key.trim()) && !(await save())) return;
+    classifying = true;
+    try {
+      const n = await invoke<number>('ai_classify_now');
+      toast(n ? `AI 重新识别了 ${n} 个视频` : '没有需要 AI 识别的视频');
+    } catch (e) {
+      toast(String(e));
+    } finally {
+      classifying = false;
+    }
+  }
+
   function mb(n: number): string {
     return (n / 1048576).toFixed(0) + ' MB';
   }
@@ -221,6 +240,18 @@
     <div>图像识别模型<small>用于识别漫画里的文字，需要支持图片输入</small></div>
     <input bind:value={visionModel} style="flex:1.4;min-width:0" />
   </label>
+  <label class="mp-opt">
+    <div>
+      AI 辅助识别媒体库
+      <small>扫描后把规则拿不准的视频（是番剧、电视剧还是电影，作品名、第几集）交给翻译模型判断。只发文件夹名和文件名，同一个文件只问一次</small>
+    </div>
+    <input type="checkbox" bind:checked={classifyMedia} />
+  </label>
+  {#if classifyMedia}
+    <div style="text-align:right;margin:-4px 0 8px">
+      <button class="mp-btn ghost" style="font-size:12px;padding:3px 10px" onclick={classifyNow} disabled={classifying}>{classifying ? '正在识别…' : '现在识别一遍'}</button>
+    </div>
+  {/if}
   <label class="mp-opt">
     <div>
       漫画文字识别

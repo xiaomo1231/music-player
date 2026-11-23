@@ -1,5 +1,5 @@
 //! 视频信息、缩略图、字幕提取（ffprobe / ffmpeg）
-use crate::{danmaku, library, reader, tools, AppState};
+use crate::{artwork, danmaku, library, reader, tools, AppState};
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use rusqlite::params;
@@ -128,39 +128,42 @@ pub fn thumb_name(path: &str) -> String {
     format!("{}.jpg", &blake3::hash(path.as_bytes()).to_hex()[..24])
 }
 
-/// 在 10% 和 25% 处各截一帧，取 JPEG 体积较大的那张（纯黑、纯白的画面压缩后很小）
-fn make_thumb(thumbs: &Path, src: &Path, name: &str, duration: f64) -> Result<String> {
-    let out = thumbs.join(name);
+/// 在 at 秒处截一帧，宽度不超过 width
+fn grab_frame(dir: &Path, src: &Path, tag: &str, at: f64, width: u32) -> Result<image::DynamicImage> {
+    let tmp = dir.join(format!("{tag}.tmp.jpg"));
+    let mut c = tools::ffmpeg_cmd()?;
+    c.args(["-y", "-ss", &format!("{at:.2}"), "-i"])
+        .arg(src)
+        .args(["-frames:v", "1", "-vf", &format!("scale='min({width},iw)':-2"), "-q:v", "3"])
+        .arg(&tmp);
+    let res = tools::run(c).and_then(|_| Ok(image::open(&tmp)?));
+    let _ = std::fs::remove_file(&tmp);
+    res
+}
+
+/// 在正片中段截几帧，挑最合适的一张（避开黑屏、白屏、大片单色），去掉黑边
+fn best_frame(dir: &Path, src: &Path, tag: &str, duration: f64, width: u32) -> Result<image::DynamicImage> {
     let duration = if duration > 0.0 {
         duration
     } else {
         tools::probe(src).map(|v| parse_probe(&v).duration).unwrap_or(0.0)
     };
-    let stamps = if duration > 0.0 { vec![duration * 0.10, duration * 0.25] } else { vec![10.0] };
-    let stem = name.trim_end_matches(".jpg");
-    let mut best: Option<(usize, Vec<u8>)> = None;
+    let mut frames = vec![];
     let mut last_err: Option<anyhow::Error> = None;
-    for (i, ts) in stamps.iter().enumerate() {
-        let tmp = thumbs.join(format!("{stem}.{i}.tmp.jpg"));
-        let mut c = tools::ffmpeg_cmd()?;
-        c.args(["-ss", &format!("{ts:.2}"), "-i"])
-            .arg(src)
-            .args(["-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4"])
-            .arg(&tmp);
-        match tools::run(c) {
-            Ok(_) => {
-                if let Ok(bytes) = std::fs::read(&tmp) {
-                    if best.as_ref().map_or(true, |b| bytes.len() > b.0) {
-                        best = Some((bytes.len(), bytes));
-                    }
-                }
-            }
+    for (i, at) in artwork::sample_times(duration, 6).into_iter().enumerate() {
+        match grab_frame(dir, src, &format!("{tag}.{i}"), at, width) {
+            Ok(f) => frames.push(f),
             Err(e) => last_err = Some(e),
         }
-        let _ = std::fs::remove_file(&tmp);
     }
-    let (_, bytes) = best.ok_or_else(|| last_err.unwrap_or_else(|| anyhow!("截取缩略图失败")))?;
-    std::fs::write(&out, bytes)?;
+    let best = artwork::pick_best(frames).ok_or_else(|| last_err.unwrap_or_else(|| anyhow!("截取画面失败")))?;
+    Ok(artwork::crop_bars(&best))
+}
+
+fn make_thumb(thumbs: &Path, src: &Path, name: &str, duration: f64) -> Result<String> {
+    let stem = name.trim_end_matches(".jpg");
+    let img = best_frame(thumbs, src, stem, duration, 480)?;
+    artwork::save_jpg(&img, 480, &thumbs.join(name))?;
     Ok(name.to_string())
 }
 
@@ -175,6 +178,12 @@ fn save_thumb_name(st: &AppState, id: i64, name: &str) -> Result<(), String> {
 #[tauri::command]
 pub async fn media_thumb(st: State<'_, AppState>, id: i64) -> Result<String, String> {
     let path = path_of(&st, id)?;
+    // 视频旁边有同名截图就直接用
+    if let Some(side) = artwork::sidecar_thumb(Path::new(&path)) {
+        let side = side.to_string_lossy().into_owned();
+        save_thumb_name(&st, id, &side)?;
+        return Ok(side);
+    }
     let name = thumb_name(&path);
     let thumbs = st.dirs.thumbs.clone();
     if thumbs.join(&name).exists() {
@@ -192,6 +201,77 @@ pub async fn media_thumb(st: State<'_, AppState>, id: i64) -> Result<String, Str
     };
     save_thumb_name(&st, id, &made)?;
     Ok(made)
+}
+
+/// 番剧 / 剧集卡片的封面：本地海报（poster 是绝对路径）或竖版截帧（frame 是缩略图目录里的文件名）
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+pub struct SeriesCover {
+    pub poster: Option<String>,
+    pub frame: Option<String>,
+}
+
+/// 竖版截帧的文件名
+pub fn frame_name(path: &str) -> String {
+    format!("v{}.jpg", &blake3::hash(path.as_bytes()).to_hex()[..24])
+}
+
+/// 卡片还没有封面时调用：先在作品文件夹里找海报，找不到就从第一集正片里截一帧裁成 2:3
+#[tauri::command]
+pub async fn media_series_cover(st: State<'_, AppState>, id: i64) -> Result<SeriesCover, String> {
+    let (poster, eps, roots) = {
+        let c = st.db.lock();
+        let poster: Option<String> = c
+            .query_row("SELECT coalesce(custom_cover,poster) FROM series WHERE id=?1", [id], |r| r.get(0))
+            .map_err(err)?;
+        let eps: Vec<(String, f64)> = c
+            .prepare(
+                "SELECT f.path,v.duration FROM videos v JOIN files f ON f.id=v.file_id
+                 WHERE v.series_id=?1 AND f.missing=0
+                 ORDER BY coalesce(v.season,1)=0, v.season, v.episode, f.path LIMIT 50",
+            )
+            .and_then(|mut s| s.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect())
+            .map_err(err)?;
+        let roots: Vec<PathBuf> = library::roots(&c).map_err(err)?.into_iter().map(|r| PathBuf::from(r.path)).collect();
+        (poster, eps, roots)
+    };
+    if poster.is_some() {
+        return Ok(SeriesCover { poster, frame: None });
+    }
+    // 各集所在目录（季目录可能不止一个）挨个找海报
+    let mut seen = std::collections::HashSet::new();
+    for (p, _) in &eps {
+        let dir = Path::new(p).parent().map(|d| d.to_path_buf());
+        if !seen.insert(dir) {
+            continue;
+        }
+        if let Some(img) = artwork::local_poster(Path::new(p), &roots) {
+            let img = img.to_string_lossy().into_owned();
+            st.db.lock().execute("UPDATE series SET poster=?1 WHERE id=?2", params![img, id]).map_err(err)?;
+            return Ok(SeriesCover {
+                poster: Some(img),
+                frame: None,
+            });
+        }
+    }
+    let Some((first, duration)) = eps.into_iter().next() else {
+        return Ok(SeriesCover::default());
+    };
+    let name = frame_name(&first);
+    let thumbs = st.dirs.thumbs.clone();
+    if !thumbs.join(&name).exists() {
+        let name = name.clone();
+        let src = PathBuf::from(&first);
+        blocking(move || {
+            let img = best_frame(&thumbs, &src, name.trim_end_matches(".jpg"), duration, 1280)?;
+            artwork::save_jpg(&artwork::portrait_crop(&img), 720, &thumbs.join(&name))
+        })
+        .await?;
+    }
+    st.db.lock().execute("UPDATE series SET frame=?1 WHERE id=?2", params![name, id]).map_err(err)?;
+    Ok(SeriesCover {
+        poster: None,
+        frame: Some(name),
+    })
 }
 
 #[tauri::command]

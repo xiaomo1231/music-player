@@ -147,12 +147,15 @@ pub struct Series {
     pub next_id: Option<i64>,
     pub next_label: Option<String>,
     pub thumb: Option<String>,
+    /// 竖版截帧（缩略图目录里的文件名），没有海报时卡片用它
+    pub frame: Option<String>,
 }
 
 pub fn series(conn: &Connection, kind: &str) -> Result<Vec<Series>> {
     let mut st = conn.prepare(
         "SELECT s.id,coalesce(s.custom_title,s.title),s.kind,coalesce(s.custom_cover,s.poster),count(v.file_id),sum(v.watched),count(DISTINCT v.season),sum(v.subs='none'),max(v.last_played),
-                (SELECT v2.thumb FROM videos v2 WHERE v2.series_id=s.id AND v2.thumb IS NOT NULL LIMIT 1)
+                (SELECT v2.thumb FROM videos v2 WHERE v2.series_id=s.id AND v2.thumb IS NOT NULL
+                 ORDER BY coalesce(v2.season,1)=0, v2.season, v2.episode LIMIT 1),s.frame
          FROM series s JOIN videos v ON v.series_id=s.id JOIN files f ON f.id=v.file_id
          WHERE f.missing=0 AND s.kind=?1 GROUP BY s.id ORDER BY max(coalesce(v.last_played,0)) DESC, s.title",
     )?;
@@ -171,6 +174,7 @@ pub fn series(conn: &Connection, kind: &str) -> Result<Vec<Series>> {
                 next_id: None,
                 next_label: None,
                 thumb: r.get(9)?,
+                frame: r.get(10)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;

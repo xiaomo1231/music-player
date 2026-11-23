@@ -3,7 +3,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use std::path::Path;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 pub fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
@@ -54,6 +54,10 @@ fn migrate(conn: &Connection) -> Result<()> {
         // v4：电影标记；rules 记录这条视频按哪一版归类规则处理过，规则更新后启动时重新归类
         add_column(conn, "videos", "movie", "INTEGER NOT NULL DEFAULT 0")?;
         add_column(conn, "videos", "rules", "INTEGER NOT NULL DEFAULT 0")?;
+    }
+    if v < 5 {
+        // v5：番剧 / 剧集卡片的竖版截帧（没有海报时用）
+        add_column(conn, "series", "frame", "TEXT")?;
     }
     conn.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION}"))?;
     Ok(())

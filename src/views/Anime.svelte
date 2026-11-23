@@ -11,7 +11,7 @@
   import { lib } from '../lib/library.svelte';
   import { ui } from '../lib/ui.svelte';
   import { invoke, inTauri, type Series } from '../lib/api';
-  import { seriesBadge } from '../lib/media.svelte';
+  import { seriesBadge, lazySeriesCover, type SeriesCover } from '../lib/media.svelte';
 
   type Filter = 'all' | 'on' | 'done' | 'new' | 'nosub';
   const FILTERS: [Filter, string][] = [
@@ -25,6 +25,8 @@
   let filter = $state<Filter>('all');
   let list = $state<Series[]>([]);
   let loaded = $state(false);
+  /** 刚找到 / 生成的封面（不用整页重新读取） */
+  let covers = $state<Record<number, SeriesCover>>({});
   let openId = $state<number | null>(null);
 
   const openSeries = $derived(openId == null ? null : (list.find(s => s.id === openId) ?? null));
@@ -137,8 +139,8 @@
     {:else}
       <div class="mp-grid">
         {#each shown as s (s.id)}
-          <div class="mp-card" class:picked={sel.has(s.id)} role="button" tabindex="0" onclick={e => clickS(e, s)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)}>
-            <Poster poster={s.poster} thumb={s.thumb} name={s.title}>
+          <div class="mp-card" class:picked={sel.has(s.id)} role="button" tabindex="0" onclick={e => clickS(e, s)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)} use:lazySeriesCover={{ id: s.id, has: !!(s.poster || s.frame), oncover: c => (covers[s.id] = c) }}>
+            <Poster poster={covers[s.id]?.poster ?? s.poster} frame={covers[s.id]?.frame ?? s.frame} thumb={s.thumb} name={s.title}>
               <SelCheck card checked={sel.has(s.id)} onclick={e => (e.shiftKey ? sel.range(order, s.id, true) : sel.toggle(s.id))} />
               <span class="mp-badge">{seriesBadge(s)}</span>
               <span class="mp-pt">{s.title}</span>

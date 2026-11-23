@@ -87,6 +87,49 @@ export function requestThumb(id: number): Promise<string | null> {
   return p;
 }
 
+/** 番剧 / 剧集卡片封面：本地海报或竖版截帧（media_series_cover） */
+export interface SeriesCover { poster: string | null; frame: string | null }
+const coverCache = new Map<number, Promise<SeriesCover | null>>();
+
+export function requestSeriesCover(id: number): Promise<SeriesCover | null> {
+  if (!inTauri) return Promise.resolve(null);
+  let p = coverCache.get(id);
+  if (!p) {
+    p = new Promise<SeriesCover | null>(resolve => {
+      thumbQueue.push(() => {
+        invoke<SeriesCover>('media_series_cover', { id })
+          .then(resolve, () => resolve(null))
+          .finally(() => {
+            thumbRunning--;
+            pumpThumbs();
+          });
+      });
+      pumpThumbs();
+    });
+    coverCache.set(id, p);
+  }
+  return p;
+}
+
+/** Svelte action：卡片进入可视范围时，如果还没有海报和竖版截帧就去找 / 生成 */
+export function lazySeriesCover(node: HTMLElement, p: { id: number; has: boolean; oncover: (c: SeriesCover) => void }) {
+  if (p.has || !inTauri || typeof IntersectionObserver === 'undefined') return {};
+  let done = false;
+  const io = new IntersectionObserver(
+    entries => {
+      if (done || !entries.some(e => e.isIntersecting)) return;
+      done = true;
+      io.disconnect();
+      requestSeriesCover(p.id).then(c => {
+        if (c && (c.poster || c.frame)) p.oncover(c);
+      });
+    },
+    { rootMargin: '200px' },
+  );
+  io.observe(node);
+  return { destroy: () => io.disconnect() };
+}
+
 /** Svelte action：元素进入可视范围时，如果还没有缩略图就生成 */
 export function lazyThumb(node: HTMLElement, p: { id: number; thumb: string | null; onthumb: (name: string) => void }) {
   if (p.thumb || !inTauri || typeof IntersectionObserver === 'undefined') return {};

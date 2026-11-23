@@ -3,6 +3,7 @@
   // 番剧 / 漫画 / 小说 / 音乐 / 视频共用；有资料源时在结果上方显示作品资料卡
   import { onMount } from 'svelte';
   import { inTauri } from '../../lib/api';
+  import TorrentQueue from './TorrentQueue.svelte';
   import { toast } from '../../lib/ui.svelte';
   import {
     fetchApi,
@@ -10,6 +11,7 @@
     fmtDur,
     epText,
     hitKindText,
+    isBtUrl,
     MEDIA_TEXT,
     metaApi,
     supportsKind,
@@ -181,15 +183,34 @@
     return [it.series, season, epText(it.media_kind, it.episode), it.artist, it.year, fmtDur(it.duration)].filter(Boolean).join(' · ');
   }
 
+  /** 磁力 / 种子先弹确认页（TorrentQueue），勾选后只下载选中的文件 */
+  let btQueue = $state<DlItem[]>([]);
+  let directCount = 0;
+  const isBtItem = (it: DlItem) => it.kind === 'magnet' || it.kind === 'torrent' || (!it.kind && isBtUrl(it.url));
+
   async function download(hits: Hit[]) {
     if (hits.length === 0) return toast('没有可下载的条目');
+    if (btQueue.length) return toast('还有种子在等你确认');
+    const items = hits.map(toItem);
+    const direct = items.filter(it => !isBtItem(it));
+    const bt = items.filter(isBtItem);
+    directCount = 0;
     try {
-      const ids = await fetchApi.download(hits.map(toItem));
-      toast(`已加入下载队列：${ids.length} 个`);
-      onqueued?.();
+      if (direct.length) {
+        directCount = (await fetchApi.download(direct)).length;
+        onqueued?.();
+      }
     } catch (err) {
       toast(String(err));
     }
+    if (bt.length) btQueue = bt;
+    else if (directCount) toast(`已加入下载队列：${directCount} 个`);
+  }
+
+  function btDone(added: number) {
+    btQueue = [];
+    const n = added + directCount;
+    if (n) toast(`已加入下载队列：${n} 个`);
   }
 
   /** 整季：优先下载 AI 推荐的版本，没有推荐就下第一个 */
@@ -387,6 +408,10 @@
     </div>
     <div class="note" style="margin-top:8px">追更每 30 分钟检查一次，新出现的集会自动加入下载队列。</div>
   </div>
+{/if}
+
+{#if btQueue.length}
+  <TorrentQueue items={btQueue} ondone={btDone} {onqueued} />
 {/if}
 
 <style>

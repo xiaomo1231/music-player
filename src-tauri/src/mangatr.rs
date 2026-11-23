@@ -1,9 +1,10 @@
-//! 漫画 AI 翻译嵌字：识别气泡（图像识别模型一次完成检测 + OCR）、结合上下文翻译、导出 CBZ
+//! 漫画 AI 翻译嵌字：识别气泡（云端图像识别模型一次完成检测 + OCR，或本地检测 + 本地 Xiaomi-OCR-0 逐块识别）、
+//! 结合上下文翻译、导出 CBZ
 //!
 //! 数据：应用数据目录 `mangatr/<comic_id>.json`，结构 `{pages:{"<页号>":{blocks:[…]}}, glossary:[{src,tr}]}`。
 //! 页号从 0 开始，与前端 `comicPage(id, page)` 一致。
 //! 只保存在本机，只把页面图片和文字发给用户配置的 AI 服务。
-use crate::{ai, db, library, parse, AppState};
+use crate::{ai, db, library, localocr, parse, textdet, AppState};
 use anyhow::{anyhow, Result};
 use base64::Engine as _;
 use image::{imageops::FilterType, ImageEncoder, RgbImage};
@@ -449,10 +450,61 @@ pub fn prepare_image(bytes: &[u8]) -> Result<(Vec<u8>, RgbImage)> {
     Ok((out, img))
 }
 
-/// 每页大约用量（粗略估算，实际以服务商计费为准）
-fn per_page_tokens() -> u64 {
+/// 每页大约用量（粗略估算，实际以服务商计费为准）。本地识别时只有翻译用云端。
+fn per_page_tokens(local: bool) -> u64 {
     // 图片约 1600px 时视觉输入按 1500 token 左右估
-    1500 + ai::estimate_tokens(VISION_SYSTEM) + ai::estimate_tokens(VISION_PROMPT) + 600 + ai::estimate_tokens(TRANSLATE_SYSTEM) + 800 + 400
+    let vision = 1500 + ai::estimate_tokens(VISION_SYSTEM) + ai::estimate_tokens(VISION_PROMPT) + 600;
+    (if local { 0 } else { vision }) + ai::estimate_tokens(TRANSLATE_SYSTEM) + 800 + 400
+}
+
+fn use_local_ocr(app: &AppHandle) -> bool {
+    ai::load_config(&app.state::<AppState>().db.lock()).ocr_engine == "local"
+}
+
+/// 本地 OCR 的输出整理成一句：日文、中文的换行直接拼起来，英文等用空格连接
+pub fn join_ocr_lines(s: &str) -> String {
+    let mut out = String::new();
+    for line in s.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let cjk = |c: char| matches!(c as u32, 0x3000..=0x9fff | 0xf900..=0xfaff | 0xff00..=0xffef);
+        let glue = match (out.chars().last(), line.chars().next()) {
+            (Some(a), Some(b)) => !(cjk(a) || cjk(b)),
+            _ => false,
+        };
+        if glue {
+            out.push(' ');
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+/// 识别结果里至少要有一个字母、数字或汉字假名，否则当作误检丢掉
+pub fn meaningful(s: &str) -> bool {
+    s.chars().any(|c| c.is_alphanumeric())
+}
+
+/// 本地识别：检测文字块 → 每块裁出来交给 Xiaomi-OCR-0
+async fn detect_local(app: &AppHandle, c: Ctx, page: u32, original: Vec<u8>, cancel: Option<&AtomicBool>) -> Result<Vec<Block>> {
+    let (img, found) = tauri::async_runtime::spawn_blocking(move || -> Result<_> {
+        let img = image::load_from_memory(&original)?.to_rgb8();
+        let found = textdet::detect(&img)?;
+        Ok((img, found))
+    })
+    .await
+    .map_err(|e| anyhow!("文字检测失败：{e}"))??;
+    let total = found.len();
+    let mut blocks = vec![];
+    for (i, b) in found.into_iter().enumerate() {
+        cancelled(cancel)?;
+        emit(app, c, page, "detect", &format!("本地识别文字 {}/{}", i + 1, total));
+        let png = textdet::crop_png(&img, b.bbox)?;
+        let text = join_ocr_lines(&localocr::recognize(app, &png, localocr::PROMPT_TEXT, 512).await?);
+        if !meaningful(&text) {
+            continue;
+        }
+        blocks.push(serde_json::json!({"bbox": b.bbox, "vertical": b.vertical, "text": text, "kind": "bubble"}));
+    }
+    Ok(parse_detect(page, &Value::Array(blocks)))
 }
 
 // ---------- 文件与状态 ----------
@@ -630,13 +682,19 @@ async fn run_page(app: &AppHandle, c: Ctx, page: u32, cancel: Option<&AtomicBool
             .0;
         (bytes, book_file(&st.dirs.data, c.comic_id))
     };
+    let local = use_local_ocr(app);
+    let original = if local { bytes.clone() } else { Vec::new() };
     let (jpeg, rgb) = tauri::async_runtime::spawn_blocking(move || prepare_image(&bytes))
         .await
         .map_err(|e| anyhow!("图片处理失败：{e}"))??;
     cancelled(cancel)?;
 
     emit(app, c, page, "detect", "识别文字区域");
-    let mut blocks = detect(app, &jpeg, page).await?;
+    let mut blocks = if local {
+        detect_local(app, c, page, original, cancel).await?
+    } else {
+        detect(app, &jpeg, page).await?
+    };
     for b in blocks.iter_mut().filter(|b| !b.skipped) {
         b.bg = sample_bg(&rgb, b.bbox);
     }
@@ -808,12 +866,17 @@ pub fn mangatr_estimate(st: State<AppState>, comic_id: i64, from: u32, to: u32) 
         return Err(format!("这本书只有 {count} 页"));
     }
     let n = to - from + 1;
-    let per_page = per_page_tokens();
+    let local = ai::load_config(&st.db.lock()).ocr_engine == "local";
+    let per_page = per_page_tokens(local);
     Ok(Estimate {
         pages: n,
         per_page,
         total: per_page * n as u64,
-        note: "按每页约 1600 像素的图片和一次上下文翻译估算，实际以服务商计费为准".into(),
+        note: if local {
+            "文字在本机识别，不上传图片；只有翻译用云端，按每页一次上下文翻译估算。本地识别每页约十几秒到一分钟（有显卡会快很多）".into()
+        } else {
+            "按每页约 1600 像素的图片和一次上下文翻译估算，实际以服务商计费为准".into()
+        },
     })
 }
 
@@ -1082,6 +1145,16 @@ mod tests {
 
     #[test]
     fn per_page_estimate_is_positive() {
-        assert!(per_page_tokens() > 1000);
+        assert!(per_page_tokens(false) > 1000);
+        assert!(per_page_tokens(true) < per_page_tokens(false));
+    }
+
+    #[test]
+    fn ocr_lines_joined() {
+        assert_eq!(join_ocr_lines("立川で見た\n“穴”の下の\n巨大な眼は…"), "立川で見た“穴”の下の巨大な眼は…");
+        assert_eq!(join_ocr_lines("HELLO\nWORLD"), "HELLO WORLD");
+        assert_eq!(join_ocr_lines("LINK！\n私達"), "LINK！私達");
+        assert!(meaningful("ギャッ"));
+        assert!(!meaningful("…！？"));
     }
 }

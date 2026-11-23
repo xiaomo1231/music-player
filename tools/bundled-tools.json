@@ -1,5 +1,5 @@
 {
-  "_说明": "随安装包一起分发的外部程序。改版本时同时改 url 和 sha256，然后运行 node tools/fetch-tools.mjs 验证。下载的文件放在 src-tauri/bin/（不提交到 git），打包时整个文件夹装到程序目录的 bin\\。",
+  "_说明": "随安装包一起分发的外部程序和小模型。改版本时同时改 url 和 sha256，然后运行 node tools/fetch-tools.mjs 验证。下载的文件放在 src-tauri/bin/（不提交到 git），打包时整个文件夹装到程序目录的 bin\\。",
   "tools": [
     {
       "name": "yt-dlp",
@@ -7,7 +7,9 @@
       "license": "Unlicense（附带的 Python 运行库等第三方组件见 THIRD_PARTY_LICENSES.txt）",
       "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp.exe",
       "sha256": "f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d",
-      "files": { "yt-dlp.exe": "yt-dlp.exe" },
+      "files": {
+        "yt-dlp.exe": "yt-dlp.exe"
+      },
       "licenses": {
         "LICENSE": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.10.26/LICENSE",
         "THIRD_PARTY_LICENSES.txt": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.10.26/THIRD_PARTY_LICENSES.txt"
@@ -21,9 +23,72 @@
       "url": "https://github.com/GyanD/codexffmpeg/releases/download/8.1.1/ffmpeg-8.1.1-essentials_build.zip",
       "sha256": "6f58ce889f59c311410f7d2b18895b33c03456463486f3b1ebc93d97a0f54541",
       "zipRoot": "ffmpeg-8.1.1-essentials_build",
-      "files": { "bin/ffmpeg.exe": "ffmpeg.exe", "bin/ffprobe.exe": "ffprobe.exe" },
-      "licenseFiles": { "LICENSE": "LICENSE", "README.txt": "README.txt" },
+      "files": {
+        "bin/ffmpeg.exe": "ffmpeg.exe",
+        "bin/ffprobe.exe": "ffprobe.exe"
+      },
+      "licenseFiles": {
+        "LICENSE": "LICENSE",
+        "README.txt": "README.txt"
+      },
       "source": "https://github.com/FFmpeg/FFmpeg/commit/239f2c733d （FFmpeg 源码）；各依赖库的版本和源码地址见 README.txt；编译脚本和发布页 https://www.gyan.dev/ffmpeg/builds/ 、https://github.com/GyanD/codexffmpeg/releases/tag/8.1.1"
+    },
+    {
+      "name": "llama.cpp",
+      "version": "b12359",
+      "license": "MIT（附带的 libomp.dll 为 Apache-2.0 WITH LLVM-exception，许可文本 LICENSE-LLVM-OpenMP 一起放在 llama\\ 里）",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12359/llama-b12359-bin-win-vulkan-x64.zip",
+      "sha256": "e8d18c6e4210cca87e7307c2ea78363ac8d158e4e1397358ec96ab70b53a0d5e",
+      "zipRoot": "",
+      "dir": "llama",
+      "include": [
+        "llama-server.exe",
+        "llama-server-impl.dll",
+        "llama.dll",
+        "llama-common.dll",
+        "mtmd.dll",
+        "ggml.dll",
+        "ggml-base.dll",
+        "ggml-vulkan.dll",
+        "ggml-cpu-*.dll",
+        "libomp.dll",
+        "LICENSE-LLVM-OpenMP"
+      ],
+      "required": [
+        "llama-server.exe",
+        "llama-server-impl.dll",
+        "llama.dll",
+        "llama-common.dll",
+        "mtmd.dll",
+        "ggml.dll",
+        "ggml-base.dll",
+        "ggml-vulkan.dll",
+        "ggml-cpu-x64.dll",
+        "libomp.dll"
+      ],
+      "licenses": {
+        "LICENSE": "https://raw.githubusercontent.com/ggml-org/llama.cpp/b12359/LICENSE"
+      },
+      "source": "https://github.com/ggml-org/llama.cpp/tree/b12359 （本地文字识别用的 llama-server，Vulkan 版：有显卡用显卡，没有就用 CPU）"
+    },
+    {
+      "name": "ppocr-det",
+      "version": "PP-OCRv4 det（rapidocr_onnxruntime 1.4.4 里的 ONNX 版）",
+      "license": "Apache-2.0",
+      "url": "https://files.pythonhosted.org/packages/ba/12/1e5497183bdbe782dbb91bad1d0d2297dba4d2831b2652657f7517bfc6df/rapidocr_onnxruntime-1.4.4-py3-none-any.whl",
+      "sha256": "971d7d5f223a7a808662229df1ef69893809d8457d834e6373d3854bc1782cbf",
+      "zipRoot": "rapidocr_onnxruntime/models",
+      "dir": "ocr",
+      "include": [
+        "ch_PP-OCRv4_det_infer.onnx"
+      ],
+      "required": [
+        "ch_PP-OCRv4_det_infer.onnx"
+      ],
+      "licenses": {
+        "LICENSE": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/LICENSE"
+      },
+      "source": "https://github.com/PaddlePaddle/PaddleOCR （模型）；ONNX 转换 https://github.com/RapidAI/RapidOCR （漫画翻译本地识别用的文字检测模型）"
     }
   ]
 }

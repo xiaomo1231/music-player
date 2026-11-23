@@ -1,6 +1,6 @@
 name: 打包检查
 
-# 改了随包分发的外部程序（yt-dlp、ffmpeg）或打包配置时，真打一次安装包，确认它们装进去了且能运行。
+# 改了随包分发的外部程序（yt-dlp、ffmpeg、llama.cpp）或打包配置时，真打一次安装包，确认它们装进去了且能运行。
 # 不签名、不上传；也可以在 Actions 页面手动运行。
 on:
   pull_request:
@@ -45,7 +45,7 @@ jobs:
           Start-Process -Wait -FilePath $setup.FullName -ArgumentList '/S', "/D=$dir"
           $bin = Join-Path $dir 'bin'
           Get-ChildItem -Recurse $bin | Select-Object FullName, Length | Format-Table -AutoSize
-          foreach ($f in 'ffmpeg.exe', 'ffprobe.exe', 'yt-dlp.exe', 'versions.json', 'licenses/THIRD-PARTY-NOTICES.txt', 'licenses/ffmpeg/LICENSE', 'licenses/yt-dlp/LICENSE') {
+          foreach ($f in 'ffmpeg.exe', 'ffprobe.exe', 'yt-dlp.exe', 'versions.json', 'licenses/THIRD-PARTY-NOTICES.txt', 'licenses/ffmpeg/LICENSE', 'licenses/yt-dlp/LICENSE', 'llama/llama-server.exe', 'licenses/llama.cpp/LICENSE') {
             if (-not (Test-Path (Join-Path $bin $f))) { throw "安装后缺少 bin/$f" }
           }
           # 先完整收集输出再检查退出码：管道里用 Select-Object -First 提前结束会让程序非 0 退出
@@ -61,3 +61,4 @@ jobs:
           }
           Run 'ffprobe.exe' '-hide_banner', '-version' | Select-Object -First 1
           Run 'yt-dlp.exe' '--version'
+          Run 'llama/llama-server.exe' '--version' | Select-Object -Last 2

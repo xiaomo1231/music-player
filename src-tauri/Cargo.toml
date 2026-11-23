@@ -1,6 +1,6 @@
 [package]
 name = "music-player"
-version = "0.3.1"
+version = "0.4.0"
 description = "Windows 综合媒体播放 / 管理软件"
 edition = "2021"
 rust-version = "1.80"
@@ -64,3 +64,7 @@ sha2 = "0.10"
 librqbit = { version = "9", default-features = false, features = ["default-tls"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tract-onnx = "0.23"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

@@ -7,12 +7,13 @@
   import { openMenu, mediaEntries, removeMany, deleteMany, subtitleMany, type MenuEntry } from '../lib/items.svelte';
   import { Selection, claim, noTextSelect } from '../lib/select.svelte';
   import Poster from '../components/media/Poster.svelte';
+  import CoverPicker from '../components/media/CoverPicker.svelte';
   import SeriesDetail from '../components/media/SeriesDetail.svelte';
   import { lib } from '../lib/library.svelte';
   import { ui } from '../lib/ui.svelte';
   import { invoke, inTauri, type Series, type Video } from '../lib/api';
   import { fmtT } from '../lib/util';
-  import { lazyThumb, seriesBadge, lazySeriesCover, lazyVideoCover, art, artPoster, loadArt, type SeriesCover } from '../lib/media.svelte';
+  import { lazyThumb, seriesBadge, lazySeriesCover, artPending, lazyVideoCover, art, artPoster, loadArt, type SeriesCover } from '../lib/media.svelte';
 
   // movies：“电影”分类页，只列电影；否则是“视频”页（电视剧 + 独立视频）
   let { movies = false }: { movies?: boolean } = $props();
@@ -23,6 +24,8 @@
   let loaded = $state(false);
   /** 刚找到 / 生成的封面（不用整页重新读取） */
   let covers = $state<Record<number, SeriesCover>>({});
+  /** 打开中的“选择官方海报”面板 */
+  let picker = $state<{ kind: 'series' | 'video'; id: number; title: string } | null>(null);
   let openId = $state<number | null>(null);
   let thumbs = $state<Record<number, string>>({});
   /** 电影的竖版截帧（没有海报时） */
@@ -118,6 +121,7 @@
   function seriesMenu(e: MouseEvent, s: Series) {
     if (selS.has(s.id) && selS.size > 1) return openMenu(e, `已选 ${selS.size} 部`, seriesBatch());
     openMenu(e, s.title, mediaEntries('series', s.id, s.title, [
+      { label: '选择官方海报…', run: () => (picker = { kind: 'series', id: s.id, title: s.title }) },
       { label: '打开详情', run: () => (openId = s.id) },
       ...(s.next_id != null ? [{ label: '继续观看', run: () => s.next_id != null && ui.openItem(s.next_id, 'video') }] : []),
     ]));
@@ -126,6 +130,7 @@
     if (selV.has(v.id) && selV.size > 1) return openMenu(e, `已选 ${selV.size} ${unit}`, videoBatch());
     openMenu(e, v.title, mediaEntries('video', v.id, v.title, [
       { label: '播放', run: () => playVideo(v) },
+      ...(movies ? [{ label: '选择官方海报…', run: () => (picker = { kind: 'video', id: v.id, title: v.title }) }] : []),
       { label: '生成 AI 字幕', run: () => { ui.subVideo = v.id; ui.go('aisub'); } },
       { label: '转换格式…', run: () => { ui.convertPaths = [v.path]; ui.go('convert'); } },
       { label: '整理文件…', run: () => ui.go('org') },
@@ -174,6 +179,7 @@
               <Poster poster={covers[s.id]?.poster ?? s.poster ?? artPoster(art.series[s.id])} frame={covers[s.id]?.frame ?? s.frame} thumb={s.thumb} name={s.title}>
                 <SelCheck card checked={selS.has(s.id)} onclick={e => { claim(selS, selV); if (e.shiftKey) selS.range(sOrder, s.id, true); else selS.toggle(s.id); }} />
                 <span class="mp-badge">{seriesBadge(s)}</span>
+                {#if artPending(art.series[s.id]) && !s.poster}<span class="mp-artq">封面待确认</span>{/if}
                 <span class="mp-pt">{s.title}</span>
                 <i class="mp-bar" style:width="{pct(s)}%"></i>
                 <MoreButton onopen={e => seriesMenu(e, s)} />
@@ -204,6 +210,7 @@
               <Poster poster={movies ? artPoster(art.video[v.id]) : null} frame={movies ? frames[v.id] : null} thumb={thumbs[v.id] ?? v.thumb} name={v.title}>
                 <SelCheck card checked={selV.has(v.id)} onclick={e => { claim(selV, selS); if (e.shiftKey) selV.range(vOrder, v.id, true); else selV.toggle(v.id); }} />
                 <span class="mp-badge">{vBadge(v)}</span>
+                {#if movies && artPending(art.video[v.id])}<span class="mp-artq">封面待确认</span>{/if}
                 <i class="mp-bar" style:width="{vPct(v)}%"></i>
                 <MoreButton onopen={e => videoMenu(e, v)} />
               </Poster>
@@ -216,6 +223,10 @@
     {/if}
   {/if}
 </section>
+
+{#if picker}
+  <CoverPicker {...picker} onclose={() => (picker = null)} />
+{/if}
 
 <style>
   .msel { display: inline-flex; align-items: center; gap: 5px; }

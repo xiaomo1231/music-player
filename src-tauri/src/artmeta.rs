@@ -240,6 +240,56 @@ fn tmdb_item(it: &Value, movie: bool) -> Option<Candidate> {
     })
 }
 
+/// AniList（GraphQL，不需要 key）；manga 为 true 时搜漫画
+pub async fn anilist_search(http: &reqwest::Client, query: &str, manga: bool) -> Result<Vec<Candidate>> {
+    const Q: &str = "query($s:String,$t:MediaType){Page(perPage:10){media(search:$s,type:$t){id format episodes chapters \
+        title{romaji english native} synonyms startDate{year} coverImage{extraLarge large} description(asHtml:false)}}}";
+    let r = http
+        .post("https://graphql.anilist.co")
+        .json(&json!({ "query": Q, "variables": { "s": query, "t": if manga { "MANGA" } else { "ANIME" } } }))
+        .send()
+        .await?;
+    if !r.status().is_success() {
+        return Err(anyhow!("AniList 返回 {}", r.status()));
+    }
+    let v: Value = r.json().await?;
+    Ok(v["data"]["Page"]["media"]
+        .as_array()
+        .map(|a| a.iter().filter_map(anilist_item).collect())
+        .unwrap_or_default())
+}
+
+fn anilist_item(it: &Value) -> Option<Candidate> {
+    let id = it["id"].as_i64()?;
+    let t = &it["title"];
+    let mut names: Vec<String> = ["native", "romaji", "english"].iter().filter_map(|k| t[k].as_str().map(String::from)).collect();
+    if let Some(a) = it["synonyms"].as_array() {
+        names.extend(a.iter().filter_map(|x| x.as_str().map(String::from)));
+    }
+    let title = t["native"].as_str().or(t["romaji"].as_str()).unwrap_or("").to_string();
+    let format = match it["format"].as_str().unwrap_or("") {
+        "MOVIE" => "剧场版".to_string(),
+        f => f.to_string(),
+    };
+    Some(Candidate {
+        source: "anilist".into(),
+        remote_id: id.to_string(),
+        title,
+        names,
+        year: it["startDate"]["year"].as_i64(),
+        format,
+        episodes: it["episodes"].as_i64().or(it["chapters"].as_i64()).filter(|n| *n > 0),
+        image: it["coverImage"]["extraLarge"]
+            .as_str()
+            .or(it["coverImage"]["large"].as_str())
+            .unwrap_or("")
+            .to_string(),
+        summary: it["description"].as_str().unwrap_or("").chars().take(600).collect(),
+        score: 0.0,
+        name_score: 0.0,
+    })
+}
+
 // ---------------------------------------------------------------- 匹配打分
 
 /// 比较用的名字：小写、全角转半角、去掉空白和标点
@@ -315,6 +365,8 @@ pub struct Local {
     /// 只有特别篇 / 剧场版（或者本身是电影）
     pub movie: bool,
     pub year: Option<i64>,
+    /// 偏好的条目形式（漫画：Bangumi 书籍里优先“漫画”，不要小说）
+    pub want: String,
 }
 
 pub fn name_score(c: &Candidate, local: &Local) -> f64 {
@@ -327,6 +379,9 @@ pub fn name_score(c: &Candidate, local: &Local) -> f64 {
 
 pub fn score(c: &Candidate, local: &Local) -> f64 {
     let mut s = name_score(c, local) * 0.75;
+    if !local.want.is_empty() && c.format.contains(local.want.as_str()) {
+        s += 0.05;
+    }
     // 类型对得上
     let f = c.format.to_lowercase();
     let is_movie = f.contains("剧场") || f.contains("movie") || f.contains("电影");
@@ -458,6 +513,7 @@ fn jobs(conn: &Connection, only: Option<(&str, i64)>, force: bool) -> Result<Vec
                 episodes: s1,
                 movie,
                 year,
+                want: String::new(),
             },
         });
     }
@@ -494,10 +550,46 @@ fn jobs(conn: &Connection, only: Option<(&str, i64)>, force: bool) -> Result<Vec
                 episodes: 0,
                 movie: true,
                 year,
+                want: String::new(),
+            },
+        });
+    }
+    // 漫画：按系列（一个系列一张海报）
+    let series: Vec<String> = conn
+        .prepare("SELECT DISTINCT c.series FROM comics c JOIN files f ON f.id=c.file_id WHERE f.missing=0 AND c.series<>''")?
+        .query_map([], |r| r.get(0))?
+        .flatten()
+        .collect();
+    for name in series {
+        let id = comic_id(&name);
+        let (state, query, at): (Option<String>, Option<String>, Option<i64>) = conn
+            .query_row("SELECT state,query,checked_at FROM art_match WHERE kind='comic' AND id=?1", [id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .optional()?
+            .unwrap_or((None, None, None));
+        if !due(only, ("comic", id), force, &name, state.as_deref(), query.as_deref(), at) {
+            continue;
+        }
+        out.push(Job {
+            kind: "comic",
+            id,
+            title: name.clone(),
+            what: "comic",
+            local: Local {
+                names: query_names(&name),
+                want: "漫画".into(),
+                ..Default::default()
             },
         });
     }
     Ok(out)
+}
+
+/// 漫画系列没有自己的表，用系列名的哈希当编号（只取 52 位，前端 JS 数字也能精确表示）
+pub fn comic_id(series: &str) -> i64 {
+    let h = blake3::hash(series.as_bytes());
+    i64::from_le_bytes(h.as_bytes()[..8].try_into().unwrap_or([0; 8])) & ((1 << 52) - 1)
 }
 
 fn movie_year(title: &str) -> Option<i64> {
@@ -517,14 +609,14 @@ fn strip_year(title: &str) -> String {
 
 /// 要不要（重新）匹配这一项
 fn due(only: Option<(&str, i64)>, me: (&str, i64), force: bool, title: &str, state: Option<&str>, query: Option<&str>, at: Option<i64>) -> bool {
+    // 指定了某一项（手动更换、恢复自动）时不看状态
     if let Some(o) = only {
-        if o != me {
-            return false;
-        }
+        return o == me;
     }
     match state {
         None => true,
-        Some("locked") => false,
+        // 手动选的、手动关掉联网封面的都不再自动匹配
+        Some("locked") | Some("off") => false,
         _ if force => true,
         // 作品改名（重新归类）了就重新匹配
         _ if query != Some(title) => true,
@@ -574,9 +666,17 @@ async fn run_jobs(app: &AppHandle, cfg: &ArtSettings, list: Vec<Job>) -> Result<
             // 网络不通：这次先不记，下次启动再试
             continue;
         };
-        let (cands, auto) = rank(cands, &job.local);
+        let (mut cands, mut auto) = rank(cands, &job.local);
+        // 拿不准时，配置了 AI 并打开了“AI 辅助识别”就让 AI 从候选里挑
+        if !auto && cands.len() > 1 && !cands.first().is_none_or_low() {
+            if let Some(i) = ai_pick(app, &job, &cands).await {
+                let c = cands.remove(i);
+                cands.insert(0, c);
+                auto = true;
+            }
+        }
         // 最像的也差得远：当作没搜到（候选还留着，手动更换时可以看）
-        let mut state = if cands.first().is_none_or_low() {
+        let mut state = if cands.first().is_none_or_low() && !auto {
             "none"
         } else if auto {
             "auto"
@@ -618,8 +718,16 @@ async fn search(bgm: &reqwest::Client, tmdb: &reqwest::Client, cfg: &ArtSettings
     for q in job.local.names.iter().take(2) {
         let r = match job.what {
             "anime" | "anime-movie" => match bangumi_search(bgm, q, 2).await {
-                Ok(v) if v.is_empty() && has_tmdb => tmdb_search(tmdb, &cfg.tmdb_key, q, job.what == "anime-movie").await,
-                r => r,
+                // Bangumi 没有结果（或连不上）时退到 AniList，再退到 TMDB
+                Ok(v) if !v.is_empty() => Ok(v),
+                _ => match anilist_search(bgm, q, false).await {
+                    Ok(v) if v.is_empty() && has_tmdb => tmdb_search(tmdb, &cfg.tmdb_key, q, job.what == "anime-movie").await,
+                    r => r,
+                },
+            },
+            "comic" => match bangumi_search(bgm, q, 1).await {
+                Ok(v) if !v.is_empty() => Ok(v),
+                _ => anilist_search(bgm, q, true).await,
             },
             "tv" if has_tmdb => tmdb_search(tmdb, &cfg.tmdb_key, q, false).await,
             "movie" if has_tmdb => tmdb_search(tmdb, &cfg.tmdb_key, q, true).await,
@@ -642,6 +750,32 @@ async fn search(bgm: &reqwest::Client, tmdb: &reqwest::Client, cfg: &ArtSettings
         (true, Some(e)) => Err(e),
         _ => Ok(all),
     }
+}
+
+const AI_SYSTEM: &str = r#"你帮本地媒体库给作品配官方海报。用户给出本地作品名、类型、本地集数，以及资料库搜到的候选条目。
+请选出和本地作品是同一部作品的那一个（整部作品优先选第一季 / 正篇，本地是剧场版时选剧场版）。都不是就回答 null。
+只输出 JSON：{"pick":候选编号或null}"#;
+
+/// AI 从候选里挑一个，返回下标；没配置 AI、没打开 AI 辅助识别或 AI 也拿不准时返回 None
+async fn ai_pick(app: &AppHandle, job: &Job, cands: &[Candidate]) -> Option<usize> {
+    {
+        let st = app.state::<AppState>();
+        if !crate::ai::load_config(&st.db.lock()).classify_media {
+            return None;
+        }
+    }
+    crate::ai::ready(app).ok()?;
+    let list: Vec<Value> = cands
+        .iter()
+        .take(6)
+        .enumerate()
+        .map(|(i, c)| json!({"n": i, "names": c.names.iter().take(4).collect::<Vec<_>>(), "year": c.year, "format": c.format, "episodes": c.episodes}))
+        .collect();
+    let user = json!({"local": {"title": job.title, "type": job.what, "episodes": job.local.episodes}, "candidates": list}).to_string();
+    let reply = crate::ai::chat_simple(app, AI_SYSTEM, &user, true).await.ok()?;
+    let v = crate::ai::extract_json(&reply).ok()?;
+    let i = v["pick"].as_u64()? as usize;
+    (i < cands.len().min(6)).then_some(i)
 }
 
 /// 下载海报，缩到长边 900 像素存成 jpg，返回本地路径
@@ -698,6 +832,8 @@ pub struct ArtInfo {
     pub summary: Option<String>,
     pub poster: Option<String>,
     pub state: String,
+    /// 本地作品名（漫画按系列名对应）
+    pub query: Option<String>,
 }
 
 fn row_info(r: &rusqlite::Row) -> rusqlite::Result<ArtInfo> {
@@ -711,10 +847,11 @@ fn row_info(r: &rusqlite::Row) -> rusqlite::Result<ArtInfo> {
         summary: r.get(6)?,
         poster: r.get(7)?,
         state: r.get(8)?,
+        query: r.get(9)?,
     })
 }
 
-const INFO_COLS: &str = "kind,id,source,remote_id,title,year,summary,poster,state";
+const INFO_COLS: &str = "kind,id,source,remote_id,title,year,summary,poster,state,query";
 
 /// 某一类（series / video）全部的匹配结果
 #[tauri::command]
@@ -756,6 +893,156 @@ pub async fn art_test(st: State<'_, AppState>) -> Result<Vec<String>, String> {
         }
     }
     Ok(out)
+}
+
+/// 更换封面面板：当前结果和上次搜到的候选
+#[derive(Serialize)]
+pub struct Picker {
+    pub info: Option<ArtInfo>,
+    pub candidates: Vec<Candidate>,
+    /// 搜索框里默认填的名字
+    pub query: String,
+    /// 这一项默认用哪个来源搜：bangumi / tmdb
+    pub source: String,
+}
+
+fn job_for(conn: &Connection, kind: &str, id: i64) -> Result<Job> {
+    jobs(conn, Some((kind, id)), true)?.into_iter().next().ok_or_else(|| anyhow!("找不到这部作品"))
+}
+
+fn default_source(what: &str) -> &'static str {
+    match what {
+        "tv" | "movie" => "tmdb",
+        _ => "bangumi",
+    }
+}
+
+#[tauri::command]
+pub fn art_picker(st: State<AppState>, kind: String, id: i64) -> Result<Picker, String> {
+    let conn = st.db.lock();
+    let job = job_for(&conn, &kind, id).map_err(err)?;
+    Ok(Picker {
+        info: info(&conn, &kind, id).map_err(err)?,
+        candidates: candidates(&conn, &kind, id).map_err(err)?,
+        query: job.local.names.first().cloned().unwrap_or(job.title),
+        source: default_source(job.what).into(),
+    })
+}
+
+/// 手动搜索：source 为 bangumi / anilist / tmdb
+#[tauri::command]
+pub async fn art_search(st: State<'_, AppState>, kind: String, id: i64, query: String, source: String) -> Result<Vec<Candidate>, String> {
+    let (cfg, job) = {
+        let conn = st.db.lock();
+        (settings(&conn), job_for(&conn, &kind, id).map_err(err)?)
+    };
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(vec![]);
+    }
+    let comic = job.what == "comic";
+    let movie = matches!(job.what, "movie" | "anime-movie");
+    let r = match source.as_str() {
+        "anilist" => anilist_search(&client("").map_err(err)?, q, comic).await,
+        "tmdb" => {
+            if cfg.tmdb_key.trim().is_empty() {
+                return Err("还没有填 TMDB API Key（设置 → 封面与资料）".into());
+            }
+            tmdb_search(&client(&cfg.proxy).map_err(err)?, &cfg.tmdb_key, q, movie).await
+        }
+        _ => bangumi_search(&client("").map_err(err)?, q, if comic { 1 } else { 2 }).await,
+    };
+    let local = Local {
+        names: vec![q.to_string()],
+        ..job.local
+    };
+    Ok(rank(r.map_err(err)?, &local).0)
+}
+
+/// 选定一个候选：下载海报并锁定，以后不再自动匹配
+#[tauri::command]
+pub async fn art_choose(app: AppHandle, kind: String, id: i64, candidate: Candidate) -> Result<ArtInfo, String> {
+    let (cfg, job, dir) = {
+        let st = app.state::<AppState>();
+        let conn = st.db.lock();
+        (settings(&conn), job_for(&conn, &kind, id).map_err(err)?, posters_dir(&st))
+    };
+    let poster = download_poster(&client("").map_err(err)?, &client(&cfg.proxy).map_err(err)?, &candidate, &dir)
+        .await
+        .map_err(|e| format!("下载海报失败：{e}"))?;
+    let st = app.state::<AppState>();
+    let conn = st.db.lock();
+    let mut cands = candidates(&conn, &kind, id).map_err(err)?;
+    cands.retain(|c| !(c.source == candidate.source && c.remote_id == candidate.remote_id));
+    cands.insert(0, candidate);
+    save(&conn, &job, &cands, "locked", Some(&poster)).map_err(err)?;
+    let info = info(&conn, &kind, id).map_err(err)?.unwrap_or_default();
+    let _ = app.emit(
+        "art://updated",
+        Updated {
+            kind: job.kind,
+            id,
+            poster: Some(poster),
+            state: "locked".into(),
+        },
+    );
+    Ok(info)
+}
+
+/// 漫画系列的编号（漫画没有系列表，按名字算）
+#[tauri::command]
+pub fn art_comic_id(series: String) -> i64 {
+    comic_id(&series)
+}
+
+/// 这部作品不要联网海报（用本地图或截帧）
+#[tauri::command]
+pub fn art_off(app: AppHandle, st: State<AppState>, kind: String, id: i64) -> Result<(), String> {
+    let conn = st.db.lock();
+    let job = job_for(&conn, &kind, id).map_err(err)?;
+    let cands = candidates(&conn, &kind, id).map_err(err)?;
+    save(&conn, &job, &cands, "off", None).map_err(err)?;
+    let _ = app.emit(
+        "art://updated",
+        Updated {
+            kind: job.kind,
+            id,
+            poster: None,
+            state: "off".into(),
+        },
+    );
+    Ok(())
+}
+
+/// 恢复自动匹配：清掉手动选择，马上重新匹配这一项
+#[tauri::command]
+pub async fn art_reset(app: AppHandle, kind: String, id: i64) -> Result<Option<ArtInfo>, String> {
+    let kind_s: &'static str = match kind.as_str() {
+        "series" => "series",
+        "video" => "video",
+        _ => "comic",
+    };
+    {
+        let st = app.state::<AppState>();
+        st.db
+            .lock()
+            .execute("DELETE FROM art_match WHERE kind=?1 AND id=?2", params![kind_s, id])
+            .map_err(err)?;
+    }
+    let _ = app.emit(
+        "art://updated",
+        Updated {
+            kind: kind_s,
+            id,
+            poster: None,
+            state: "none".into(),
+        },
+    );
+    // 后台批量补全正在跑时会顺带处理到；否则单独跑这一项
+    run_some(&app, Some((kind_s, id)), true).await.map_err(err)?;
+    let st = app.state::<AppState>();
+    let r = info(&st.db.lock(), kind_s, id).map_err(err)?;
+    Ok(r)
 }
 
 pub fn info(conn: &Connection, kind: &str, id: i64) -> Result<Option<ArtInfo>> {
@@ -827,6 +1114,7 @@ mod tests {
             episodes: 12,
             movie: false,
             year: None,
+            want: String::new(),
         };
         let cands = vec![
             cand("孤独摇滚！第二季", &["ぼっち・ざ・ろっく！ 2nd Season", "孤独摇滚！第二季"], "TV", Some(12)),
@@ -850,6 +1138,7 @@ mod tests {
             episodes: 1,
             movie: true,
             year: None,
+            want: String::new(),
         };
         let cands = vec![
             cand("辉夜大小姐想让我告白", &["かぐや様は告らせたい"], "TV", Some(12)),
@@ -903,6 +1192,7 @@ mod tests {
                     episodes: eps,
                     movie,
                     year: None,
+                    want: String::new(),
                 },
             );
             (r[0].remote_id.clone(), auto && !Some(&r[0]).is_none_or_low())
@@ -991,6 +1281,21 @@ mod tests {
             },
         );
         assert!(Some(&r[0]).is_none_or_low());
+    }
+
+    #[test]
+    fn anilist_json_and_comic_id() {
+        let v: Value = serde_json::from_str(
+            r#"{"id":130003,"format":"TV","episodes":12,"title":{"romaji":"Bocchi the Rock!","english":"BOCCHI THE ROCK!","native":"ぼっち・ざ・ろっく！"},
+                "synonyms":["BTR"],"startDate":{"year":2022},"coverImage":{"extraLarge":"https://s4.anilist.co/x.png"}}"#,
+        )
+        .unwrap();
+        let c = anilist_item(&v).unwrap();
+        assert_eq!((c.title.as_str(), c.year, c.episodes), ("ぼっち・ざ・ろっく！", Some(2022), Some(12)));
+        assert!(c.names.contains(&"BTR".to_string()));
+        let id = comic_id("孤独摇滚");
+        assert_eq!(id, comic_id("孤独摇滚"));
+        assert!((0..(1 << 52)).contains(&id));
     }
 
     #[test]

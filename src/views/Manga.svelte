@@ -6,13 +6,22 @@
   import Icon from '../lib/Icon.svelte';
   import { openMenu, mediaEntries, removeMany, deleteMany, type MenuEntry } from '../lib/items.svelte';
   import { Selection, noTextSelect } from '../lib/select.svelte';
-  import { invoke, inTauri, type ComicItem } from '../lib/api';
+  import { invoke, inTauri, fileUrl, type ComicItem } from '../lib/api';
   import { lib } from '../lib/library.svelte';
   import { ui } from '../lib/ui.svelte';
   import Cover from '../components/Cover.svelte';
+  import CoverPicker from '../components/media/CoverPicker.svelte';
+  import { art, artPoster, artPending, loadArt } from '../lib/media.svelte';
 
   let comics = $state<ComicItem[]>([]);
   let loaded = $state(false);
+  /** 打开中的“选择官方海报”面板（漫画按系列） */
+  let picker = $state<{ kind: 'comic'; id: number; title: string } | null>(null);
+
+  async function pickSeries(name: string) {
+    const id = art.comicByName[name]?.id ?? (await invoke<number>('art_comic_id', { series: name }));
+    picker = { kind: 'comic', id, title: name };
+  }
 
   $effect(() => {
     void lib.version;
@@ -26,6 +35,7 @@
     }
     try {
       comics = await invoke<ComicItem[]>('list_comics');
+      loadArt();
     } catch {
       comics = [];
     }
@@ -109,11 +119,18 @@
     <p class="empty">{inTauri ? '还没有漫画。把 CBZ、ZIP、PDF 文件或图片文件夹拖进窗口，或者添加媒体库目录。' : '在桌面程序中查看漫画书架。'}</p>
   {:else}
     {#each groups as g (g.name)}
-      <h3 class="series">{g.name} <small>{g.items.length} 卷</small></h3>
+      {@const sp = g.name !== '未分类' ? artPoster(art.comicByName[g.name]) : null}
+      <h3 class="series">
+        {#if sp}<button class="cs-poster" style:background-image={`url("${fileUrl(sp)}")`} title="更换系列海报" onclick={() => pickSeries(g.name)} aria-label="更换系列海报"></button>{/if}
+        {g.name} <small>{g.items.length} 卷</small>
+        {#if g.name !== '未分类'}
+          <button class="mp-chip cs-pick" onclick={() => pickSeries(g.name)}>{artPending(art.comicByName[g.name]) ? '海报待确认' : sp ? '更换海报' : '选择海报'}</button>
+        {/if}
+      </h3>
       <div class="mp-grid">
         {#each g.items as c (c.id)}
           <div class="mp-card mp-book" class:picked={sel.has(c.id)} role="button" tabindex="0" onclick={e => clickItem(e, c.id)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && open(c.id)} oncontextmenu={e => comicMenu(e, c)}>
-            <Cover cover={c.cover} name={c.title} tag="div" cls="mp-poster">
+            <Cover cover={c.cover ?? (c.series ? artPoster(art.comicByName[c.series]) : null)} name={c.title} tag="div" cls="mp-poster">
             <SelCheck card checked={sel.has(c.id)} onclick={e => (e.shiftKey ? sel.range(order, c.id, true) : sel.toggle(c.id))} />
               <span class="mp-badge">{fmt(c)}</span>
               {#if !c.cover}<span class="mp-pt">{c.title}</span>{/if}
@@ -129,7 +146,14 @@
   {/if}
 </section>
 
+{#if picker}
+  <CoverPicker {...picker} onclose={() => (picker = null)} />
+{/if}
+
 <style>
+  .series { display: flex; align-items: center; gap: 10px; }
+  .cs-poster { all: unset; cursor: pointer; width: 30px; aspect-ratio: 2 / 3; border-radius: 5px; background: center / cover no-repeat; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+  .cs-pick { margin-left: auto; font-size: 12px; padding: 3px 10px; }
   .msel { display: inline-flex; align-items: center; gap: 5px; }
   .mp-card {
     background: none;

@@ -133,21 +133,29 @@ export function lazySeriesCover(node: HTMLElement, p: { id: number; has: boolean
 // ---------- 联网海报（Bangumi / TMDB），后端 artmeta.rs ----------
 
 /** 一部作品的联网匹配结果；state：auto 自动匹配 / pending 待确认 / locked 手动选的 / none 没有 */
+export type ArtKind = 'series' | 'video' | 'comic';
 export interface ArtInfo {
-  kind: 'series' | 'video'; id: number; source: string | null; remote_id: string | null; title: string | null;
+  kind: ArtKind; id: number; query?: string | null; source: string | null; remote_id: string | null; title: string | null;
   year: number | null; summary: string | null; poster: string | null; state: string;
 }
 
 class ArtState {
   series = $state<Record<number, ArtInfo>>({});
   video = $state<Record<number, ArtInfo>>({});
+  comic = $state<Record<number, ArtInfo>>({});
+  /** 漫画系列名 → 匹配结果 */
+  comicByName = $derived(Object.fromEntries(Object.values(this.comic).filter(a => a.query).map(a => [a.query as string, a])));
 }
 export const art = new ArtState();
 let artStarted = false;
 
 function putArt(a: ArtInfo) {
-  if (a.kind === 'series') art.series[a.id] = a;
-  else art.video[a.id] = a;
+  art[a.kind][a.id] = a;
+}
+
+async function loadComicArt() {
+  const c = await invoke<ArtInfo[]>('art_list', { kind: 'comic' }).catch(() => []);
+  art.comic = Object.fromEntries(c.map(a => [a.id, a]));
 }
 
 /** 读取已有的匹配结果，并让后台补全还没匹配过的（每次打开番剧 / 电影页调用，正在补全时后端直接返回） */
@@ -159,15 +167,21 @@ export async function loadArt() {
   ]);
   art.series = Object.fromEntries(s.map(a => [a.id, a]));
   art.video = Object.fromEntries(v.map(a => [a.id, a]));
+  await loadComicArt();
   if (!artStarted) {
     artStarted = true;
-    listen<{ kind: 'series' | 'video'; id: number; poster: string | null; state: string }>('art://updated', p => {
-      const map = p.kind === 'series' ? art.series : art.video;
+    listen<{ kind: ArtKind; id: number; poster: string | null; state: string }>('art://updated', p => {
+      const map = art[p.kind];
+      // 新匹配上的漫画系列不知道名字，重新读一次
+      if (p.kind === 'comic' && !map[p.id]) return void loadComicArt();
       putArt({ ...(map[p.id] ?? { kind: p.kind, id: p.id, source: null, remote_id: null, title: null, year: null, summary: null }), poster: p.poster, state: p.state });
     }).catch(() => {});
   }
   invoke('art_auto').catch(() => {});
 }
+
+/** 拿不准、等用户确认的 */
+export const artPending = (a: ArtInfo | undefined) => a?.state === 'pending';
 
 /** 卡片该用的海报：手动指定 / 本地海报 > 联网海报（只有自动匹配或手动选的才用） */
 export function artPoster(a: ArtInfo | undefined): string | null {

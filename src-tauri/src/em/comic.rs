@@ -26,6 +26,74 @@ use view::View;
 /// 导出进度事件
 pub const EXPORT_EVENT: &str = "em://comic-export";
 
+/// 记录每本漫画是从哪个下载源下载的（match: source 用）
+pub fn init(conn: &rusqlite::Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS em_comic_sources(
+            path TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            at INTEGER NOT NULL
+        );",
+    )?;
+    Ok(())
+}
+
+fn source_of(conn: &rusqlite::Connection, path: &str) -> Option<String> {
+    use rusqlite::OptionalExtension;
+    conn.query_row("SELECT source FROM em_comic_sources WHERE path=?1", [path], |r| r.get(0))
+        .optional()
+        .ok()
+        .flatten()
+}
+
+fn set_source(conn: &rusqlite::Connection, path: &str, source: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO em_comic_sources(path,source,at) VALUES(?1,?2,?3) ON CONFLICT(path) DO UPDATE SET source=?2, at=?3",
+        rusqlite::params![path, source, crate::db::now()],
+    )?;
+    Ok(())
+}
+
+/// 下载源下载完成、整理入库后调用：记下来源；匹配的规则写了 `export.auto: true` 时自动导出排版好的 CBZ，
+/// 替换刚下载的文件（刚下载的原文件可以重新下载，直接删除，不进回收站）
+pub fn after_download(app: &AppHandle, path: &str, provider: &str) {
+    if !matches!(crate::parse::ext(Path::new(path)).as_str(), "cbz" | "zip") {
+        return;
+    }
+    let st = app.state::<AppState>();
+    let id: Option<i64> = {
+        let conn = st.db.lock();
+        if let Err(e) = set_source(&conn, path, provider) {
+            eprintln!("记录漫画来源失败：{e}");
+        }
+        conn.query_row("SELECT id FROM files WHERE path=?1", [path], |r| r.get(0)).ok()
+    };
+    let Some(id) = id else { return };
+    view::forget(Some(id));
+    let Ok(t) = target(&st, id) else { return };
+    let Some((_, spec)) = pick(&t, None) else { return };
+    if !spec.export.auto {
+        return;
+    }
+    match export_one(app, id, Mode::Delete, 0, 1) {
+        Ok(_) => {
+            let _ = app.emit("library://changed", ());
+        }
+        Err(e) => eprintln!("自动排版导出失败：{e}"),
+    }
+}
+
+/// 导出后原文件怎么处理
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    /// 另存为新文件
+    Side,
+    /// 原文件进回收站，新文件放在原位置
+    Trash,
+    /// 原文件直接删除（刚下载的文件），新文件放在原位置
+    Delete,
+}
+
 /// 检查正文；返回导入确认框里显示的摘要（每行一句）
 pub fn check(rule: &Rule) -> Result<Vec<String>, Vec<Issue>> {
     spec::compile(rule).map(|s| s.summary)
@@ -72,6 +140,8 @@ struct Target {
     title: String,
     series: String,
     format: String,
+    /// 从哪个下载源下载的
+    source: Option<String>,
 }
 
 fn target(st: &AppState, id: i64) -> Result<Target> {
@@ -84,9 +154,16 @@ fn target(st: &AppState, id: i64) -> Result<Target> {
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
         )
         .unwrap_or_default();
+    let source = source_of(&conn, &path);
     let path = PathBuf::from(path);
     let format = if format.is_empty() { crate::parse::ext(&path) } else { format };
-    Ok(Target { path, title, series, format })
+    Ok(Target {
+        path,
+        title,
+        series,
+        format,
+        source,
+    })
 }
 
 /// 适用的规则：指定了 id 就用它（测试），否则按 id 顺序第一个匹配的
@@ -104,7 +181,7 @@ fn pick(t: &Target, only: Option<&str>) -> Option<(Arc<Rule>, Arc<Spec>)> {
         None => crate::em::enabled(Kind::Comic)
             .into_iter()
             .filter_map(|r| spec_of(&r).map(|s| (r, s)))
-            .find(|(_, s)| s.matches(&t.series, &path)),
+            .find(|(_, s)| s.matches(&t.series, &path, t.source.as_deref())),
     }
 }
 
@@ -262,7 +339,7 @@ fn is_archive(p: &Path) -> bool {
     p.is_file() && matches!(crate::parse::ext(p).as_str(), "cbz" | "zip")
 }
 
-fn export_one(app: &AppHandle, id: i64, replace: bool, done: usize, total: usize) -> Result<String> {
+fn export_one(app: &AppHandle, id: i64, mode: Mode, done: usize, total: usize) -> Result<String> {
     let st = app.state::<AppState>();
     let t = target(&st, id)?;
     let name = if t.title.is_empty() {
@@ -298,8 +375,12 @@ fn export_one(app: &AppHandle, id: i64, replace: bool, done: usize, total: usize
             },
         );
     })?;
-    if replace && is_archive(&t.path) {
-        trash::delete(&t.path).map_err(|e| anyhow!("「{name}」已另存为 {}，但原文件没能移到回收站：{e}", side.display()))?;
+    if mode != Mode::Side && is_archive(&t.path) {
+        if mode == Mode::Delete {
+            std::fs::remove_file(&t.path).map_err(|e| anyhow!("「{name}」已另存为 {}，但原文件没能删除：{e}", side.display()))?;
+        } else {
+            trash::delete(&t.path).map_err(|e| anyhow!("「{name}」已另存为 {}，但原文件没能移到回收站：{e}", side.display()))?;
+        }
         std::fs::rename(&side, &t.path)?;
         let p = t.path.to_string_lossy().into_owned();
         {
@@ -311,7 +392,13 @@ fn export_one(app: &AppHandle, id: i64, replace: bool, done: usize, total: usize
         return Ok(p);
     }
     let p = side.to_string_lossy().into_owned();
-    crate::commands::add_paths(&st.db.lock(), &st.dirs, vec![p.clone()]);
+    {
+        let conn = st.db.lock();
+        if let Some(s) = &t.source {
+            let _ = set_source(&conn, &p, s);
+        }
+        crate::commands::add_paths(&conn, &st.dirs, vec![p.clone()]);
+    }
     Ok(p)
 }
 
@@ -323,7 +410,8 @@ pub async fn em_comic_export(app: AppHandle, ids: Vec<i64>, replace: bool) -> R<
         let mut rep = ExportReport::default();
         let total = ids.len();
         for (i, id) in ids.into_iter().enumerate() {
-            match export_one(&a, id, replace, i, total) {
+            let mode = if replace { Mode::Trash } else { Mode::Side };
+            match export_one(&a, id, mode, i, total) {
                 Ok(p) => rep.outputs.push(p),
                 Err(e) => rep.failed.push(e.to_string()),
             }
@@ -425,11 +513,22 @@ pub async fn test(app: AppHandle, rule: Arc<Rule>, arg: Value) -> Result<Value, 
     let Some(id) = arg.get("comic_id").and_then(|v| v.as_i64()) else {
         let spec = spec_of(&rule).ok_or("规则有错误")?;
         let st = app.state::<AppState>();
-        let list = crate::library::comics(&st.db.lock()).map_err(es)?;
+        let (list, sources) = {
+            let conn = st.db.lock();
+            let list = crate::library::comics(&conn).map_err(es)?;
+            let sources: HashMap<String, String> = conn
+                .prepare("SELECT path, source FROM em_comic_sources")
+                .and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect())
+                .unwrap_or_default();
+            (list, sources)
+        };
         let v: Vec<Value> = list
             .into_iter()
             .filter(|c| c.format != "pdf")
-            .map(|c| json!({"id": c.id, "title": c.title, "series": c.series, "matched": spec.matches(&c.series, &c.path)}))
+            .map(|c| {
+                let matched = spec.matches(&c.series, &c.path, sources.get(&c.path).map(|s| s.as_str()));
+                json!({"id": c.id, "title": c.title, "series": c.series, "matched": matched})
+            })
             .collect();
         return Ok(json!({ "comics": v }));
     };
@@ -440,7 +539,7 @@ pub async fn test(app: AppHandle, rule: Arc<Rule>, arg: Value) -> Result<Value, 
             return Err(anyhow!("PDF 不支持排版规则"));
         }
         let spec = spec_of(&rule).ok_or_else(|| anyhow!("规则有错误"))?;
-        let matched = spec.matches(&t.series, &t.path.to_string_lossy());
+        let matched = spec.matches(&t.series, &t.path.to_string_lossy(), t.source.as_deref());
         let (_, v) = view_for(&t, id, Some(rule.id()))?.ok_or_else(|| anyhow!("规则没有生效"))?;
         let mut out = test_view(&v);
         out["matched"] = json!(matched);

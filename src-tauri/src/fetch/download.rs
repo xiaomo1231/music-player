@@ -208,6 +208,13 @@ async fn run(app: &AppHandle, id: i64, ctl: &Arc<Ctl>) -> Result<Option<organize
     let org_root = PathBuf::from(&settings.organize_dir);
     let app2 = app.clone();
     let out = tokio::task::spawn_blocking(move || organize::finish(&app2, &path, &media_kind, &org_root, false)).await??;
+    // 下载源下好的漫画：记下来源（漫画排版规则的 match: source），规则要求时自动导出排版好的 CBZ
+    if task.kind == "provider" && !out.manual {
+        if let Some((pid, _, _)) = provider::parse_task_url(&task.url) {
+            let (app3, saved) = (app.clone(), out.save_path.clone());
+            let _ = tokio::task::spawn_blocking(move || crate::em::comic::after_download(&app3, &saved, &pid)).await;
+        }
+    }
     Ok(Some(out))
 }
 

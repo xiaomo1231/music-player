@@ -9,7 +9,7 @@ version: 1.0.0
 match:
   - series: '.*'                 # 作品名正则
   - path: '\\漫画\\日漫\\'        # 文件路径正则
-  - source: em-archive-books     # 从某个下载源下来的
+  - source: my-comics            # 从某个下载源下载的（写下载源规则的 id）
 
 # 一、阅读排版：打开时生效，不改文件
 read:
@@ -42,5 +42,6 @@ export:
   quality: 90
   max_height: 3000      # 超过就等比缩小
   rename: '{序号:03}.{ext}'
+  auto: false           # true：从下载源下载完成后自动导出，替换刚下载的文件
   comicinfo:            # 写入 ComicInfo.xml，其他阅读器也能认出右开
     manga: YesAndRightToLeft

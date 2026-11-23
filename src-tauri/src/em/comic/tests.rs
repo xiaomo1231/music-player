@@ -291,14 +291,30 @@ fn summary_lines() {
     assert!(all.contains("每边最多 8%"));
     assert!(all.contains("每话最后 1 页"));
     assert!(all.contains("导出：JPG 90、最大高度 3000"));
-    assert!(s.matches("任意", "D:\\x.cbz"));
+    assert!(s.matches("任意", "D:\\x.cbz", None));
 
     let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../tools/em-examples/webtoon-strip.em")).unwrap();
     let s = spec::compile(&format::parse(&text).unwrap()).unwrap();
-    assert!(s.matches("", "D:\\漫画\\条漫\\a.cbz"));
-    assert!(s.matches("", "/mnt/漫画/条漫/a.cbz"), "斜杠方向不同也能匹配");
-    assert!(!s.matches("", "D:\\漫画\\日漫\\a.cbz"));
+    assert!(s.matches("", "D:\\漫画\\条漫\\a.cbz", None));
+    assert!(s.matches("", "/mnt/漫画/条漫/a.cbz", None), "斜杠方向不同也能匹配");
+    assert!(!s.matches("", "D:\\漫画\\日漫\\a.cbz", None));
     assert!(s.summary.iter().any(|l| l.contains("只裁左右")));
+}
+
+#[test]
+fn match_by_source_and_auto_export() {
+    let text = "em: 1\nkind: comic\nid: from-src\nname: x\nmatch:\n  - source: my-comics\nread: { dir: rtl }\nexport: { auto: true }\n";
+    let s = spec::compile(&format::parse(text).unwrap()).unwrap();
+    assert!(s.export.auto);
+    assert!(s.summary.iter().any(|l| l.contains("下载完成后自动导出")), "{:?}", s.summary);
+    assert!(s.summary.iter().any(|l| l.contains("从下载源 my-comics 下载")), "{:?}", s.summary);
+    // 规则 id 或 provider id（em-前缀）都算
+    assert!(s.matches("", "D:\\a.cbz", Some("em-my-comics")));
+    assert!(s.matches("", "D:\\a.cbz", Some("my-comics")));
+    assert!(!s.matches("", "D:\\a.cbz", Some("em-other")));
+    assert!(!s.matches("", "D:\\a.cbz", None));
+    let bad = "em: 1\nkind: comic\nid: from-src\nname: x\nexport: { auto: maybe }\n";
+    assert!(spec::compile(&format::parse(bad).unwrap()).is_err());
 }
 
 #[test]

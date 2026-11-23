@@ -93,6 +93,8 @@ pub struct ExportOpt {
     pub slice: Option<Slice>,
     /// ComicInfo.xml 的 Manga 字段
     pub manga: Option<String>,
+    /// 从下载源下载完成后自动导出（替换刚下载的文件）
+    pub auto: bool,
 }
 
 impl Default for ExportOpt {
@@ -104,6 +106,7 @@ impl Default for ExportOpt {
             rename: vec![Part::Num(4), Part::Text(".".into()), Part::Ext],
             slice: None,
             manga: None,
+            auto: false,
         }
     }
 }
@@ -127,7 +130,8 @@ impl Spec {
     }
 
     /// 这本漫画是否适用。match 为空表示所有漫画
-    pub fn matches(&self, series: &str, path: &str) -> bool {
+    /// source：这本漫画是从哪个下载源下载的（provider id，如 `em-my-comics`），不知道时为 None
+    pub fn matches(&self, series: &str, path: &str, source: Option<&str>) -> bool {
         if self.matchers.is_empty() {
             return true;
         }
@@ -141,7 +145,7 @@ impl Spec {
                 && conds.iter().all(|c| match c {
                     Cond::Series(re) => re.is_match(series),
                     Cond::Path(re) => re.is_match(path) || re.is_match(&alt),
-                    Cond::Source(_) => false,
+                    Cond::Source(s) => source.is_some_and(|x| x == s || x.strip_prefix("em-") == Some(s.as_str())),
                 })
         })
     }
@@ -320,7 +324,7 @@ pub fn compile(rule: &Rule) -> Result<Spec, Vec<Issue>> {
                         }
                         "source" => match v.as_str() {
                             Some(s) if !s.trim().is_empty() => {
-                                used.push(format!("来自下载源 {s}（暂未生效）"));
+                                used.push(format!("从下载源 {s} 下载的漫画"));
                                 conds.push(Cond::Source(s.to_string()));
                             }
                             _ => ck.err("match", "source", "source 应该写下载源规则的 id"),
@@ -613,7 +617,10 @@ pub fn compile(rule: &Rule) -> Result<Spec, Vec<Issue>> {
     let mut export = ExportOpt::default();
     let mut ex_parts = vec![];
     if let Some(m) = body.get("export").and_then(|v| ck.obj("export", "", v)) {
-        ck.unknown("export", m, &["format", "quality", "max_height", "rename", "slice", "comicinfo"]);
+        ck.unknown("export", m, &["format", "quality", "max_height", "rename", "slice", "comicinfo", "auto"]);
+        if let Some(v) = m.get("auto") {
+            export.auto = ck.boolean("export", "auto", v).unwrap_or(false);
+        }
         if let Some(v) = m.get("format") {
             if v.as_str() == Some("webp") {
                 ck.err("export", "format", "暂不支持导出 webp，请用 keep / jpg / png");
@@ -701,6 +708,9 @@ pub fn compile(rule: &Rule) -> Result<Spec, Vec<Issue>> {
     }
     if !ex_parts.is_empty() {
         summary.push(format!("导出：{}", ex_parts.join("、")));
+    }
+    if export.auto {
+        summary.push("从下载源下载完成后自动导出排版好的 CBZ（替换刚下载的文件）".into());
     }
     summary.extend(warnings);
 

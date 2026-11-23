@@ -52,6 +52,7 @@ pub fn init(conn: &Connection) -> Result<()> {
             updated_at INTEGER NOT NULL
         );",
     )?;
+    comic::init(conn)?;
     Ok(())
 }
 

@@ -12,7 +12,7 @@
   import { ui } from '../lib/ui.svelte';
   import { invoke, inTauri, type Series, type Video } from '../lib/api';
   import { fmtT } from '../lib/util';
-  import { lazyThumb, seriesBadge, lazySeriesCover, type SeriesCover } from '../lib/media.svelte';
+  import { lazyThumb, seriesBadge, lazySeriesCover, lazyVideoCover, art, artPoster, loadArt, type SeriesCover } from '../lib/media.svelte';
 
   // movies：“电影”分类页，只列电影；否则是“视频”页（电视剧 + 独立视频）
   let { movies = false }: { movies?: boolean } = $props();
@@ -25,8 +25,12 @@
   let covers = $state<Record<number, SeriesCover>>({});
   let openId = $state<number | null>(null);
   let thumbs = $state<Record<number, string>>({});
+  /** 电影的竖版截帧（没有海报时） */
+  let frames = $state<Record<number, string>>({});
 
   const openSeries = $derived(openId == null ? null : (shows.find(s => s.id === openId) ?? null));
+  /** 详情页横幅也用联网海报 */
+  const withArt = (s: Series): Series => ({ ...s, poster: s.poster ?? artPoster(art.series[s.id]), frame: covers[s.id]?.frame ?? s.frame });
   const pct = (s: Series) => (s.episodes ? (s.watched / s.episodes) * 100 : 0);
   const vBadge = (v: Video) => (v.watched ? '已看完' : v.position > 5 ? `看到 ${fmtT(v.position)}` : '未观看');
   const vPct = (v: Video) => (v.watched ? 100 : v.duration > 0 ? Math.min(100, (v.position / v.duration) * 100) : 0);
@@ -40,6 +44,7 @@
     videos = v.filter(x => !!x.movie === movies);
     shows = s;
     loaded = true;
+    loadArt();
   }
   $effect(() => {
     void lib.version;
@@ -132,7 +137,7 @@
 
 <section class="lib on" class:multi={selS.on || selV.on}>
   {#if openSeries}
-    <SeriesDetail series={openSeries} kind="tv" onback={() => (openId = null)} onchanged={load} />
+    <SeriesDetail series={withArt(openSeries)} kind="tv" onback={() => (openId = null)} onchanged={load} />
   {:else}
     <header>
       <div>
@@ -165,8 +170,8 @@
         <div class="grp">电视剧</div>
         <div class="mp-grid">
           {#each shows as s (s.id)}
-            <div class="mp-card" class:picked={selS.has(s.id)} role="button" tabindex="0" onclick={e => clickS(e, s)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)} use:lazySeriesCover={{ id: s.id, has: !!(s.poster || s.frame), oncover: c => (covers[s.id] = c) }}>
-              <Poster poster={covers[s.id]?.poster ?? s.poster} frame={covers[s.id]?.frame ?? s.frame} thumb={s.thumb} name={s.title}>
+            <div class="mp-card" class:picked={selS.has(s.id)} role="button" tabindex="0" onclick={e => clickS(e, s)} onmousedown={noTextSelect} onkeydown={e => e.key === 'Enter' && (openId = s.id)} oncontextmenu={e => seriesMenu(e, s)} use:lazySeriesCover={{ id: s.id, has: !!(s.poster || s.frame || artPoster(art.series[s.id])), oncover: c => (covers[s.id] = c) }}>
+              <Poster poster={covers[s.id]?.poster ?? s.poster ?? artPoster(art.series[s.id])} frame={covers[s.id]?.frame ?? s.frame} thumb={s.thumb} name={s.title}>
                 <SelCheck card checked={selS.has(s.id)} onclick={e => { claim(selS, selV); if (e.shiftKey) selS.range(sOrder, s.id, true); else selS.toggle(s.id); }} />
                 <span class="mp-badge">{seriesBadge(s)}</span>
                 <span class="mp-pt">{s.title}</span>
@@ -182,7 +187,7 @@
 
       {#if videos.length}
         {#if !movies}<div class="grp">独立视频</div>{/if}
-        <div class="mp-grid wide">
+        <div class="mp-grid" class:wide={!movies}>
           {#each videos as v (v.id)}
             <div
               class="mp-card"
@@ -194,8 +199,9 @@
               onkeydown={e => e.key === 'Enter' && playVideo(v)}
               oncontextmenu={e => videoMenu(e, v)}
               use:lazyThumb={{ id: v.id, thumb: v.thumb, onthumb: n => (thumbs[v.id] = n) }}
+              use:lazyVideoCover={{ id: v.id, has: !movies || !!artPoster(art.video[v.id]), oncover: f => (frames[v.id] = f) }}
             >
-              <Poster thumb={thumbs[v.id] ?? v.thumb} name={v.title}>
+              <Poster poster={movies ? artPoster(art.video[v.id]) : null} frame={movies ? frames[v.id] : null} thumb={thumbs[v.id] ?? v.thumb} name={v.title}>
                 <SelCheck card checked={selV.has(v.id)} onclick={e => { claim(selV, selS); if (e.shiftKey) selV.range(vOrder, v.id, true); else selV.toggle(v.id); }} />
                 <span class="mp-badge">{vBadge(v)}</span>
                 <i class="mp-bar" style:width="{vPct(v)}%"></i>

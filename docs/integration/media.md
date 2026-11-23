@@ -62,3 +62,12 @@ media::media_save_screenshot,
 - 番剧详情没有“为本季缺字幕的集批量生成 AI 字幕”按钮，只有每集的“生成字幕”。
 - 旋转（Ctrl+R）只用 CSS 旋转，不改变容器尺寸。
 - “在追 / 未看”的判断用的是 watched 计数和 last_played，不是逐集位置。
+
+## 封面（artwork.rs / artmeta.rs）
+
+卡片封面的优先级：手动指定 > 作品文件夹里的海报 > 联网海报 > 竖版截帧 > 按名字生成的渐变。
+
+- `artwork.rs`：本地海报查找（视频目录往上最多 3 层，跳过 CDs / Scans，不进媒体库根目录）、截帧打分、去黑边、2:3 裁切。纯函数，有单元测试。
+- `media::media_series_cover` / `media::media_video_cover`：卡片进入可视区域且没有海报时调用，找本地海报或生成竖版截帧（`series.frame`、缩略图目录 `v*.jpg`）。
+- `artmeta.rs`：联网海报。番剧、动画电影查 Bangumi（不需要 key），电视剧、真人电影查 TMDB（设置键 `artwork_online.tmdb_key`，可配 `proxy`）。结果在 `art_match` 表，状态 auto / pending / locked / none；拿不准的标 pending，不自动换图。启动 20 秒后和打开番剧 / 电影页时后台补全，每条完成发 `art://updated`。
+- 命令：`art_list`、`art_auto`、`art_refresh_all`、`art_test`。

@@ -5,6 +5,7 @@
   import { Selection, noTextSelect } from '../../lib/select.svelte';
   import BatchBar from '../BatchBar.svelte';
   import SelCheck from '../SelCheck.svelte';
+  import NewTask from './NewTask.svelte';
   // 下载列表：进度、速度、状态，暂停 / 继续 / 取消 / 重试，完成后显示整理到的路径
   import { toast } from '../../lib/ui.svelte';
   import { fetchApi, canResume, fmtBytes, isActive, MEDIA_TEXT, STATUS_TEXT, type TaskRow } from '../../lib/fetch';
@@ -42,8 +43,10 @@
   const barText = (t: TaskRow) => (t.status === 'downloading' || t.status === 'seeding' ? `${Math.round(t.progress * 100)}%` : '');
 </script>
 
+<NewTask onqueued={onchange} />
+
 {#if tasks.length === 0}
-  <div class="empty" style="padding:18px">还没有下载任务。在上面搜索后点“下载”，任务会出现在这里。</div>
+  <div class="empty" style="padding:18px">还没有下载任务。粘贴磁力链接或选种子文件，或者在上面搜索后点“下载”，任务会出现在这里。</div>
 {/if}
 
 <svelte:window onkeydown={e => order.length && sel.keys(e, () => order)} />

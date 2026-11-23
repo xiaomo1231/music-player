@@ -294,6 +294,22 @@ export function fmtDur(sec: number | null | undefined): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/** 手动新建下载时的任务名：磁力链接取 dn，其他取地址最后一段 */
+export function taskTitleOf(url: string): string {
+  if (url.startsWith('magnet:')) {
+    const dn = new URLSearchParams(url.slice(url.indexOf('?') + 1)).get('dn');
+    if (dn) return dn;
+    const h = /btih:([0-9a-z]+)/i.exec(url)?.[1];
+    return h ? `磁力 ${h.slice(0, 8)}` : '磁力链接';
+  }
+  const last = url.split(/[\\/]/).filter(Boolean).pop() ?? url;
+  try {
+    return decodeURIComponent(last.split('?')[0]) || url;
+  } catch {
+    return last.split('?')[0] || url;
+  }
+}
+
 /** 由地址和类型推断的文案 */
 export function hitKindText(kind: string): string {
   return { magnet: '磁力', torrent: '种子', http: '直链', ytdlp: '网站', file: '本地文件', provider: '下载源' }[kind] ?? kind;

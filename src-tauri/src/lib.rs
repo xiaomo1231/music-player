@@ -12,6 +12,7 @@ pub mod fetch;
 pub mod indexer;
 pub mod item;
 pub mod library;
+pub mod localocr;
 pub mod lyrics;
 pub mod mangatr;
 pub mod media;
@@ -28,6 +29,7 @@ pub mod reader;
 pub mod scanner;
 pub mod shell;
 pub mod subtitle;
+pub mod textdet;
 pub mod tools;
 
 /// 各功能模块自己的表
@@ -310,6 +312,11 @@ pub fn run() {
             fetch::fetch_bili_parse,
             fetch::fetch_ytdlp_status,
             fetch::fetch_ytdlp_install,
+            localocr::localocr_status,
+            localocr::localocr_download,
+            localocr::localocr_cancel,
+            localocr::localocr_remove,
+            localocr::localocr_test,
             mangatr::mangatr_get,
             mangatr::mangatr_translate_page,
             mangatr::mangatr_translate_range,

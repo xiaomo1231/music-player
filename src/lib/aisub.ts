@@ -18,6 +18,8 @@ export interface SubProgress { job: number; step: string; progress: number; mess
 
 export interface AiConfig {
   base_url: string; asr_model: string; chat_model: string; vision_model: string; monthly_token_limit: number;
+  /** 漫画文字识别：cloud 用图像识别模型，local 用本机 Xiaomi-OCR-0 */
+  ocr_engine: 'cloud' | 'local';
 }
 export interface AiUsage {
   month: string; prompt_tokens: number; completion_tokens: number; audio_seconds: number; requests: number;
@@ -62,6 +64,20 @@ export const aiApi = {
   /** key 为 null 时保留已保存的密钥；空串表示删除 */
   saveConfig: (config: AiConfig, key: string | null) => invoke<void>('ai_save_config', { config, key }),
   test: () => invoke<string>('ai_test'),
+};
+
+/** 本地文字识别（Xiaomi-OCR-0，llama.cpp 运行） */
+export interface LocalOcrStatus { installed: boolean; runtime: boolean; downloading: boolean; running: boolean; size: number; got: number; dir: string }
+export interface LocalOcrProgress { got: number; total: number; speed: number; file: string; stage: string; message: string }
+
+export const localOcrApi = {
+  status: () => invoke<LocalOcrStatus>('localocr_status'),
+  /** 返回 true 表示下载完成，false 表示已暂停 */
+  download: () => invoke<boolean>('localocr_download'),
+  cancel: () => invoke<void>('localocr_cancel'),
+  remove: () => invoke<void>('localocr_remove'),
+  test: () => invoke<string>('localocr_test'),
+  onProgress: (f: (p: LocalOcrProgress) => void) => listen<LocalOcrProgress>('localocr://progress', f),
 };
 
 export function listenSubProgress(f: (p: SubProgress) => void): Promise<() => void> {

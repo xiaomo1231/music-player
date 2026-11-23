@@ -67,22 +67,34 @@ function readStamp() {
   }
 }
 
+/** 装到 bin/ 里的文件（相对 bin/）。dir + include 形式的只列必需的那几个 */
+function outputs(tool) {
+  if (tool.dir) return (tool.required ?? []).map(f => path.join(tool.dir, f));
+  return Object.values(tool.files);
+}
+
 function upToDate(tool, stamp) {
   if (stamp[tool.name]?.sha256 !== tool.sha256) return false;
-  return Object.values(tool.files).every(f => fs.existsSync(path.join(binDir, f)));
+  return outputs(tool).every(f => fs.existsSync(path.join(binDir, f)));
+}
+
+/** 只支持 * 通配（如 *.dll），不分大小写 */
+function matchGlob(name, pattern) {
+  const re = new RegExp('^' + pattern.split('*').map(x => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i');
+  return re.test(name);
 }
 
 function notices() {
   const lines = [
     '极光播放器 第三方组件说明 / Third-party components',
     '',
-    '程序目录 bin\\ 里的以下程序是独立的第三方软件，按各自的许可证随安装包分发，播放器通过命令行调用它们。',
+    '程序目录 bin\\ 里的以下程序和模型是独立的第三方作品，按各自的许可证原样随安装包分发，播放器通过命令行或本地推理调用它们。',
     'The programs below are separate third-party works, redistributed unmodified under their own licenses.',
     '',
   ];
   for (const t of manifest.tools) {
     lines.push(`== ${t.name} ${t.version}`);
-    lines.push(`文件 / Files: ${Object.values(t.files).join(', ')}`);
+    lines.push(`文件 / Files: ${t.dir ? `${t.dir}\\ (${t.include.join(', ')})` : Object.values(t.files).join(', ')}`);
     lines.push(`许可证 / License: ${t.license}（全文见 licenses\\${t.name}\\）`);
     lines.push(`下载地址 / Binary: ${t.url}`);
     lines.push(`SHA-256: ${t.sha256}`);
@@ -119,11 +131,21 @@ async function main() {
     const file = await fetchVerified(t);
     fs.rmSync(toolLic, { recursive: true, force: true });
     fs.mkdirSync(toolLic, { recursive: true });
-    if (t.zipRoot) {
+    if (t.zipRoot !== undefined) {
       const tmp = path.join(cacheDir, `${t.name}-unzipped`);
       unzip(file, tmp);
       const base = path.join(tmp, t.zipRoot);
-      for (const [from, to] of Object.entries(t.files)) fs.copyFileSync(path.join(base, from), path.join(binDir, to));
+      if (t.dir) {
+        // 整个文件夹里按通配挑文件（llama.cpp 的 exe 要和它的一堆 dll 放在一起）
+        const dest = path.join(binDir, t.dir);
+        fs.rmSync(dest, { recursive: true, force: true });
+        fs.mkdirSync(dest, { recursive: true });
+        const picked = fs.readdirSync(base).filter(n => t.include.some(p => matchGlob(n, p)));
+        for (const n of picked) fs.copyFileSync(path.join(base, n), path.join(dest, n));
+        for (const r of t.required ?? []) if (!picked.includes(r)) throw new Error(`${t.name} 压缩包里没有 ${r}`);
+        console.log(`  装入 ${t.dir}/：${picked.length} 个文件`);
+      }
+      for (const [from, to] of Object.entries(t.files ?? {})) fs.copyFileSync(path.join(base, from), path.join(binDir, to));
       for (const [from, to] of Object.entries(t.licenseFiles ?? {})) fs.copyFileSync(path.join(base, from), path.join(toolLic, to));
       fs.rmSync(tmp, { recursive: true, force: true });
     } else {

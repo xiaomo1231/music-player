@@ -23,6 +23,7 @@
   import LyricsSettings from '../components/settings/LyricsSettings.svelte';
   import FxSettings from '../components/settings/FxSettings.svelte';
   import ReaderSettings from '../components/settings/ReaderSettings.svelte';
+  import RulesCard from '../components/em/RulesCard.svelte';
   import { updater } from '../lib/updater.svelte';
 
   // 设置项的当前值（启动时从 settings 表读取）
@@ -379,6 +380,7 @@
     <LyricsSettings />
     <FxSettings />
     <ReaderSettings />
+    <RulesCard />
 
     <!-- 快捷键 -->
     <div class="card">

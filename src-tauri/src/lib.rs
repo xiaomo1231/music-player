@@ -8,6 +8,7 @@ pub mod convert;
 pub mod daily;
 pub mod danmaku;
 pub mod db;
+pub mod em;
 pub mod fetch;
 pub mod indexer;
 pub mod item;
@@ -37,6 +38,7 @@ fn init_modules(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     indexer::reclassify_videos(conn)?;
     convert::init(conn)?;
     daily::init(conn)?;
+    em::init(conn)?;
     fetch::init(conn)?;
     lyrics::init(conn)?;
     mangatr::init(conn)?;
@@ -61,6 +63,7 @@ fn setup_modules(app: &tauri::AppHandle) {
     shell::setup(app);
     subtitle::setup(app);
     adclean::setup(app);
+    em::setup(app);
 }
 
 use parking_lot::Mutex;
@@ -232,6 +235,14 @@ pub fn run() {
             media::media_sub_vtt,
             media::media_save_screenshot,
             media::media_danmaku,
+            em::em_inspect,
+            em::em_install,
+            em::em_list,
+            em::em_set_enabled,
+            em::em_delete,
+            em::em_export,
+            em::em_test,
+            em::em_open,
             adclean::adclean_scan,
             adclean::adclean_find_similar,
             adclean::adclean_estimate,

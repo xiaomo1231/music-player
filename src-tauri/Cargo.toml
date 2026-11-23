@@ -52,6 +52,7 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 scraper = "0.24"
+serde_norway = "0.9"
 # 在线歌词：QQ 音乐 QRC / 酷狗 KRC 解压、网易云 eapi 加密
 aes = "0.8"
 md-5 = "0.10"

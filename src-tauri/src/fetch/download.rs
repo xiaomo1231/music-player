@@ -623,6 +623,15 @@ async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_
             set_task_progress(app, t.id, 1.0, 0, std::fs::metadata(&out).map(|m| m.len() as i64).unwrap_or(0));
             Some(out)
         }
+        provider::Target::File { path } => {
+            let src = PathBuf::from(path);
+            if !src.is_file() {
+                bail!("下载源给出的文件不存在：{path}");
+            }
+            let size = std::fs::metadata(&src).map(|m| m.len() as i64).unwrap_or(0);
+            set_task_progress(app, t.id, 1.0, 0, size);
+            Some(src)
+        }
     };
     let Some(path) = got else { return Ok(None) };
     // HTTP 返回文件；yt-dlp 返回它的输出文件夹（里面是媒体文件和同名的字幕、弹幕）

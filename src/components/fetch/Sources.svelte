@@ -81,6 +81,18 @@
     }
   }
 
+  // 自己写的下载源程序（exe / bat / cmd），协议见 docs/下载源接口.md 第 9 节
+  async function pickProgram() {
+    if (!inTauri) return toast('请在桌面程序里选择下载源程序');
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const p = await open({ multiple: false, filters: [{ name: '下载源程序', extensions: ['exe', 'bat', 'cmd'] }] });
+    if (typeof p !== 'string' || !p) return;
+    url = p;
+    kind = 'exe';
+    await add();
+    kind = 'auto';
+  }
+
   async function addProvider(p: ProviderInfo) {
     if (busy) return;
     busy = true;
@@ -151,8 +163,9 @@
 </div>
 
 <div class="frow" style="margin-top:10px">
-  <input class="tin" style="flex:1" placeholder="粘贴网站地址或订阅链接" autocomplete="off" bind:value={url} onkeydown={e => e.key === 'Enter' && add()} />
+  <input class="tin" style="flex:1" placeholder="粘贴网站地址、订阅链接，或下载源程序（exe）的路径" autocomplete="off" bind:value={url} onkeydown={e => e.key === 'Enter' && add()} />
   <button class="mp-btn" onclick={add} disabled={busy}>添加</button>
+  <button class="mp-btn ghost" title="添加自己写的下载源程序：搜索和下载时由软件调用它" onclick={pickProgram} disabled={busy}>选择程序…</button>
 </div>
 {#if addable.length > 0}
   <div class="frow" style="margin-top:10px">
@@ -181,6 +194,7 @@
       <option value="ytdlp">视频网站（yt-dlp）</option>
       <option value="dir">网盘或 NAS 目录（本地路径、\\服务器\共享、WebDAV 地址）</option>
       <option value="web">其他网页（AI 解析）</option>
+      <option value="exe">外部程序下载源（exe / bat / cmd）</option>
     </select>
   </div>
   <div class="frow" style="margin-top:8px">

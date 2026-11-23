@@ -97,6 +97,8 @@ pub enum Target {
     },
     /// 小说若干章的正文，生成一本 EPUB
     Chapters { chapters: Vec<TextChapter> },
+    /// 已经下好的本地文件（外部程序下载源自己下载时用），直接拿去补标签、整理入库
+    File { path: String },
 }
 
 /// `resolve` 的结果：真正的下载地址，以及可选的歌词
@@ -134,6 +136,11 @@ pub fn register(p: Arc<dyn Provider>) {
     let mut list = PROVIDERS.write();
     list.retain(|x| x.info().id != id);
     list.push(p);
+}
+
+/// 移除一个运行时注册的下载源（删除外部程序来源时用）
+pub fn unregister(id: &str) {
+    PROVIDERS.write().retain(|x| x.info().id != id);
 }
 
 pub fn list() -> Vec<ProviderInfo> {

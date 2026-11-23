@@ -2,6 +2,7 @@
 //! 自动归类入库、追更。子模块：source（各类来源）、web（网页 AI 规则）、download（下载队列）、organize（整理入库）。
 pub mod bili;
 pub mod download;
+pub mod onlinemusic;
 pub mod organize;
 pub mod pack;
 pub mod provider;

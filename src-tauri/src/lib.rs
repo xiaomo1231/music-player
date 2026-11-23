@@ -284,6 +284,7 @@ pub fn run() {
             fetch::fetch_search,
             fetch::fetch_ai_pick,
             fetch::fetch_download,
+            fetch::fetch_inspect_torrent,
             fetch::fetch_tasks,
             fetch::fetch_pause,
             fetch::fetch_resume,

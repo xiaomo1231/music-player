@@ -102,6 +102,39 @@ export interface DlItem {
   mediaKind: string;
   sourceId: number | null;
   size: number | null;
+  /** 种子里要下载的文件序号；不传表示全部 */
+  files?: number[] | null;
+}
+
+/** 种子里的一个文件（下载前确认页用） */
+export interface TorrentFile {
+  index: number;
+  path: string;
+  size: number;
+  /** video / audio / sub / image / doc / archive / other */
+  kind: string;
+  season: number | null;
+  episode: number | null;
+  special: boolean;
+  label: string;
+  suggested: boolean;
+}
+
+export interface TorrentInfo {
+  name: string;
+  infoHash: string;
+  totalSize: number;
+  torrentPath: string;
+  files: TorrentFile[];
+  work: string;
+  episodes: number;
+  specials: number;
+}
+
+/** 磁力链接或种子（本地 .torrent / 种子网址） */
+export function isBtUrl(url: string): boolean {
+  const l = url.trim().toLowerCase();
+  return l.startsWith('magnet:') || l.split(/[?#]/)[0].endsWith('.torrent');
 }
 
 export const KIND_TEXT: Record<string, string> = {
@@ -157,6 +190,7 @@ export const fetchApi = {
   search: (query: string, mediaKind: string) => invoke<SearchOut>('fetch_search', { query, mediaKind }),
   aiPick: (results: Hit[], prefs: string) => invoke<Pick[]>('fetch_ai_pick', { results, prefs }),
   download: (items: DlItem[]) => invoke<number[]>('fetch_download', { items }),
+  inspectTorrent: (url: string) => invoke<TorrentInfo>('fetch_inspect_torrent', { url }),
   tasks: () => invoke<TaskRow[]>('fetch_tasks'),
   pause: (id: number) => invoke<void>('fetch_pause', { id }),
   resume: (id: number) => invoke<void>('fetch_resume', { id }),

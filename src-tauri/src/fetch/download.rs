@@ -2,8 +2,8 @@
 //! HTTP（断点续传 + 失败重试 3 次 + 限速）、BT / 磁力（librqbit，下完即停或做种到分享率）、yt-dlp（子进程，解析进度行）、下载源按页 / 按章（打包 CBZ / EPUB）。
 //! 下载完成后交给 organize 删除可执行文件、识别、重命名、移入整理目录并入库。
 use super::{
-    bili, emit_task, load_settings, load_task, organize, pack, provider, remove_task_files, set_task_progress, set_task_status, source, with_db, FetchSettings,
-    TaskView,
+    bili, emit_task, load_settings, load_task, organize, pack, provider, remove_task_files, set_task_progress, set_task_status, source, torrent, with_db,
+    FetchSettings, TaskView,
 };
 use crate::{danmaku, db, tools};
 use anyhow::{anyhow, bail, Context, Result};
@@ -371,7 +371,7 @@ async fn local_copy(app: &AppHandle, task: &TaskView, dl_dir: &Path) -> Result<O
 }
 
 /// 初始化 librqbit 会话（整个程序只一个）
-async fn session(dl_dir: &Path) -> Result<Arc<Session>> {
+pub(crate) async fn session(dl_dir: &Path) -> Result<Arc<Session>> {
     let dir = dl_dir.to_path_buf();
     let s = BT
         .get_or_try_init(|| async move { Session::new_with_opts(dir, SessionOptions::default()).await })
@@ -389,9 +389,17 @@ async fn bt_download(app: &AppHandle, task: &TaskView, ctl: &Ctl, dl_dir: &Path,
     } else {
         AddTorrent::from_local_filename(&task.url)?
     };
+    // 下载前确认页里勾选的文件
+    let only_files = with_db(app, |c| {
+        Ok(c.query_row("SELECT files FROM fetch_tasks WHERE id=?1", [task.id], |r| r.get::<_, String>(0))
+            .unwrap_or_default())
+    })
+    .ok()
+    .and_then(|s| torrent::parse_selection(&s));
     let opts = AddTorrentOptions {
         output_folder: Some(out_dir.to_string_lossy().into_owned()),
         overwrite: true,
+        only_files: only_files.clone(),
         ..Default::default()
     };
     let resp = session.add_torrent(add, Some(opts)).await.context("添加种子失败")?;
@@ -436,8 +444,14 @@ async fn bt_download(app: &AppHandle, task: &TaskView, ctl: &Ctl, dl_dir: &Path,
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     }
+    let all_files: Vec<PathBuf> = handle
+        .with_metadata(|m| m.file_infos.iter().map(|f| f.relative_filename.clone()).collect())
+        .unwrap_or_default();
     // 下完即停：从会话里移除（不删文件），之后才能移动文件
     let _ = session.delete(TorrentIdOrHash::Id(id), false).await;
+    if let Some(sel) = &only_files {
+        torrent::remove_unselected(&out_dir, &all_files, sel);
+    }
     Ok(Some(out_dir))
 }
 

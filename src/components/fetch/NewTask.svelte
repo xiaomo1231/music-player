@@ -1,8 +1,10 @@
 <script lang="ts">
   // 新建下载：粘贴磁力链接、种子地址、HTTP 直链（一行一个），或选本地种子文件
+  // 磁力 / 种子先弹确认页（列出种子里的文件和体积），勾选后只下载选中的文件
   import { inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, MEDIA_TEXT, taskTitleOf } from '../../lib/fetch';
+  import { fetchApi, isBtUrl, MEDIA_TEXT, taskTitleOf, type DlItem, type TorrentInfo } from '../../lib/fetch';
+  import TorrentConfirm from './TorrentConfirm.svelte';
 
   // 只有这三类下完会自动整理入库
   const KINDS = ['video', 'anime', 'music'];
@@ -20,21 +22,56 @@
       .filter(Boolean),
   );
 
+  /** 等待确认的磁力 / 种子，一个一个弹确认页 */
+  let pending = $state<string[]>([]);
+  let added = 0;
+
+  async function enqueue(items: DlItem[]): Promise<boolean> {
+    try {
+      const ids = await fetchApi.download(items);
+      added += ids.length;
+      onqueued?.();
+      return true;
+    } catch (err) {
+      toast(String(err));
+      return false;
+    }
+  }
+
   async function start(urls: string[]) {
     if (urls.length === 0) return toast('先粘贴磁力链接、种子地址或下载直链');
     if (!inTauri) return toast('请在桌面程序里下载');
-    if (busy) return;
+    if (busy || pending.length) return;
     busy = true;
+    added = 0;
+    const direct = urls.filter(u => !isBtUrl(u));
+    const bt = urls.filter(isBtUrl);
     try {
-      const ids = await fetchApi.download(urls.map(url => ({ title: taskTitleOf(url), url, kind: '', mediaKind: mk, sourceId: null, size: null })));
-      toast(`已加入下载队列：${ids.length} 个`);
+      if (direct.length) {
+        await enqueue(direct.map(url => ({ title: taskTitleOf(url), url, kind: '', mediaKind: mk, sourceId: null, size: null })));
+      }
       text = '';
-      onqueued?.();
-    } catch (err) {
-      toast(String(err));
+      if (bt.length) pending = bt;
+      else if (added) toast(`已加入下载队列：${added} 个`);
     } finally {
       busy = false;
     }
+  }
+
+  /** 当前这个种子处理完（确认 / 跳过），换下一个 */
+  function next() {
+    pending = pending.slice(1);
+    if (pending.length === 0 && added) toast(`已加入下载队列：${added} 个`);
+  }
+
+  async function confirmTorrent(info: TorrentInfo, files: number[] | null, size: number, kind: string) {
+    await enqueue([{ title: info.name, url: info.torrentPath, kind: 'torrent', mediaKind: kind, sourceId: null, size, files }]);
+    next();
+  }
+
+  async function fallback(url: string, kind: string) {
+    await enqueue([{ title: taskTitleOf(url), url, kind: '', mediaKind: kind, sourceId: null, size: null }]);
+    next();
   }
 
   async function pickTorrent() {
@@ -57,10 +94,16 @@
       {/each}
     </select>
     <span class="spacer"></span>
-    <button class="mp-btn ghost" onclick={pickTorrent} disabled={busy}>选择种子文件…</button>
-    <button class="mp-btn" onclick={() => start(lines)} disabled={busy || lines.length === 0}>开始下载{lines.length > 1 ? `（${lines.length}）` : ''}</button>
+    <button class="mp-btn ghost" onclick={pickTorrent} disabled={busy || pending.length > 0}>选择种子文件…</button>
+    <button class="mp-btn" onclick={() => start(lines)} disabled={busy || pending.length > 0 || lines.length === 0}>开始下载{lines.length > 1 ? `（${lines.length}）` : ''}</button>
   </div>
 </div>
+
+{#if pending.length}
+  {#key pending[0] + pending.length}
+    <TorrentConfirm url={pending[0]} mediaKind={mk} onconfirm={confirmTorrent} onfallback={k => fallback(pending[0], k)} onskip={next} />
+  {/key}
+{/if}
 
 <style>
   .nt {

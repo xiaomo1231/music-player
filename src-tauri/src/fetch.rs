@@ -8,6 +8,7 @@ pub mod organize;
 pub mod pack;
 pub mod provider;
 pub mod source;
+pub mod torrent;
 pub mod web;
 pub mod ytdlp;
 
@@ -62,6 +63,8 @@ pub fn init(conn: &Connection) -> Result<()> {
             seen_json TEXT NOT NULL DEFAULT '[]'
         );",
     )?;
+    // 种子任务只下载选中的文件：JSON 数组（文件序号），空表示全部
+    db::add_column(conn, "fetch_tasks", "files", "TEXT NOT NULL DEFAULT ''")?;
     Ok(())
 }
 
@@ -221,6 +224,9 @@ pub struct DlItem {
     pub source_id: Option<i64>,
     #[serde(default)]
     pub size: Option<i64>,
+    /// 种子里要下载的文件序号；None 表示全部
+    #[serde(default)]
+    pub files: Option<Vec<usize>>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -787,7 +793,11 @@ pub fn fetch_download(app: AppHandle, items: Vec<DlItem>) -> Result<Vec<i64>, St
                 it.media_kind.clone()
             };
             let title = if it.title.trim().is_empty() { url.to_string() } else { it.title.clone() };
-            ids.push(insert_task(c, it.source_id, &title, &kind, url, &mk, it.size.unwrap_or(0))?);
+            let id = insert_task(c, it.source_id, &title, &kind, url, &mk, it.size.unwrap_or(0))?;
+            if let Some(files) = it.files.as_ref().filter(|f| !f.is_empty()) {
+                c.execute("UPDATE fetch_tasks SET files=?2 WHERE id=?1", params![id, serde_json::to_string(files)?])?;
+            }
+            ids.push(id);
         }
         Ok(())
     })
@@ -797,6 +807,12 @@ pub fn fetch_download(app: AppHandle, items: Vec<DlItem>) -> Result<Vec<i64>, St
     }
     download::pump(&app);
     Ok(ids)
+}
+
+/// 解析磁力链接 / 种子，列出里面的文件给用户勾选（不开始下载）
+#[tauri::command]
+pub async fn fetch_inspect_torrent(app: AppHandle, url: String) -> Result<torrent::TorrentInfo, String> {
+    torrent::inspect(&app, &url).await.map_err(|err| format!("{err:#}"))
 }
 
 #[tauri::command]

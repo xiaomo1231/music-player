@@ -777,4 +777,108 @@ mod tests {
         let v = vc(r"D:\TV\Some.Show.S01E05.1080p.WEB-DL.mkv");
         assert_eq!((v.kind, v.series, v.info.title.as_str()), ("video", true, "Some.Show"));
     }
+
+    fn vc(s: &str) -> VideoClass {
+        classify_video(&p(s)).unwrap()
+    }
+
+    // 下面的路径照搬用户真实的 F:\番 和 F:\电影 目录结构
+    #[test]
+    fn real_anime_folders() {
+        // 纯数字文件名，作品名在上一级文件夹
+        let v = vc(r"F:\番\孤独摇滚！\08.mp4");
+        assert_eq!(
+            (v.kind, v.series, v.info.title.as_str(), v.info.episode, v.info.season),
+            ("anime", true, "孤独摇滚！", Some(8.0), None)
+        );
+        // 剧场总集篇：作品名和 TV 版对得上，算特别篇，上 / 下是第 1 / 2 部
+        let v = vc(r"F:\番\0.孤独摇滚（上+下）2024【剧场总集篇】中字\孤独摇滚（下）劇場総集編.2024.HD1080P（中字）.mp4");
+        assert_eq!(v.kind, "anime");
+        assert_eq!(v.info.title, "孤独摇滚");
+        assert_eq!(title_key(&v.info.title), title_key("孤独摇滚！"));
+        assert!(v.info.special);
+        assert_eq!((v.info.season, v.info.episode), (Some(0), Some(2.0)));
+        // 跳过 [喵萌Production][1080p][简日双语] 这层
+        let v = vc(r"F:\番\BanG Dream! Ave Mujica\[喵萌Production][1080p][简日双语]\10.mp4");
+        assert_eq!((v.info.title.as_str(), v.info.episode), ("BanG Dream! Ave Mujica", Some(10.0)));
+        // Season 1 + 全是方括号的文件夹名
+        let mygo = r"F:\番\[DBD-Raws][BanG Dream! It's MyGO!!!!!][01-13TV全集][1080P][BDRip][HEVC-10bit][简繁日双语外挂][FLAC][MKV](1)";
+        let v = vc(&format!(r"{mygo}\Season 1\S01E03.mkv"));
+        assert_eq!(
+            (v.kind, v.info.title.as_str(), v.info.season, v.info.episode),
+            ("anime", "BanG Dream! It's MyGO!!!!!", Some(1), Some(3.0))
+        );
+        // 无字幕 OP / ED 归到同一部的特别篇
+        let v = vc(&format!(
+            r"{mygo}\NCOP&NCED\[DBD-Raws][BanG Dream! It's MyGO!!!!!][NCOP][1080P][BDRip][HEVC-10bit][FLAC].mkv"
+        ));
+        assert_eq!((v.info.title.as_str(), v.info.season), ("BanG Dream! It's MyGO!!!!!", Some(0)));
+        // 碟片菜单不入库
+        assert!(classify_video(&p(&format!(
+            r"{mygo}\menu\[DBD-Raws][BanG Dream! It's MyGO!!!!!][menu][01][1080P][BDRip][HEVC-10bit][FLAC].mkv"
+        )))
+        .is_none());
+        assert_eq!(
+            classify(&p(&format!(
+                r"{mygo}\menu\[DBD-Raws][BanG Dream! It's MyGO!!!!!][menu][02][1080P][BDRip][HEVC-10bit][FLAC].mkv"
+            ))),
+            None
+        );
+        // [01集名][...] 开头的集号；4K修复 这层跳过；剧版上 / 下 算特别篇
+        let gbc = r"F:\番\girls band cry（哭泣少女乐队）\4K修复";
+        let v = vc(&format!(
+            r"{gbc}\[01東京ワッショイ][B站沸羊羊都得叫我师傅][ガールズバンドクライ][2160P][喵萌Production&LoliHouse][4K修复].mkv"
+        ));
+        assert_eq!(
+            (v.info.title.as_str(), v.info.episode, v.info.special),
+            ("girls band cry（哭泣少女乐队）", Some(1.0), false)
+        );
+        let v = vc(&format!(r"{gbc}\剧版下.mp4"));
+        assert_eq!(
+            (v.info.title.as_str(), v.info.season, v.info.episode),
+            ("girls band cry（哭泣少女乐队）", Some(0), Some(2.0))
+        );
+        // 动画电影：单独一部，用文件夹名
+        let v = vc(r"F:\番\辉夜姬\4K\[MAI] Chou Kaguya-hime! [WebRip 2160p HEVC-10bit EAC3 ASS].mkv");
+        assert_eq!((v.kind, v.series, v.info.title.as_str()), ("anime", true, "辉夜姬"));
+    }
+
+    #[test]
+    fn real_movie_folders() {
+        let v = vc(
+            r"F:\电影\[阿甘正传][1994][中英双字][4K HDR][29.6G]\[阿甘正传][1994][中英双字][4K HDR][29.6G]\Forrest.Gump.1994.Bluray.2160p.x265.10bit.HDR.2Audio-MiniHD.mkv",
+        );
+        assert_eq!(
+            (v.kind, v.series, v.movie, v.movie_guess, v.info.title.as_str()),
+            ("video", false, true, false, "阿甘正传")
+        );
+        // 不在“电影”文件夹里，按发布名猜
+        let v = vc(r"D:\Downloads\Forrest.Gump.1994.Bluray.2160p.x265.mkv");
+        assert_eq!((v.movie, v.movie_guess, v.info.title.as_str()), (true, true, "Forrest Gump"));
+        let v = vc(r"D:\Movies\潮汐之间 (2024) 2160p.mkv");
+        assert_eq!((v.movie, v.info.title.as_str()), (true, "潮汐之间"));
+        // 普通视频不算电影
+        let v = vc(r"D:\Videos\录屏 2024-05-01.mp4");
+        assert!(!v.movie && !v.series);
+    }
+
+    #[test]
+    fn clean_titles() {
+        assert_eq!(clean_title("[阿甘正传][1994][中英双字][4K HDR][29.6G]"), "阿甘正传");
+        assert_eq!(clean_title("[喵萌Production][1080p][简日双语]"), "");
+        assert_eq!(clean_title("4K修复"), "");
+        assert_eq!(clean_title("0.孤独摇滚（上+下）2024【剧场总集篇】中字"), "孤独摇滚");
+        assert_eq!(clean_title("girls band cry（哭泣少女乐队）"), "girls band cry（哭泣少女乐队）");
+    }
+
+    #[test]
+    fn folder_title_beats_misc_dirs() {
+        // 分类目录不当作品名
+        let v = vc(r"D:\Downloads\[XX字幕组] Sousou no Frieren - 03 [1080p].mkv");
+        assert_eq!((v.kind, v.info.title.as_str()), ("anime", "Sousou no Frieren"));
+        let v = vc(r"E:\2024新番\[XX字幕组] Sousou no Frieren - 03 [1080p].mkv");
+        assert_eq!(v.info.title, "Sousou no Frieren");
+        let v = vc(r"D:\TV\Some.Show.S01E05.1080p.WEB-DL.mkv");
+        assert_eq!((v.kind, v.series, v.info.title.as_str()), ("video", true, "Some.Show"));
+    }
 }

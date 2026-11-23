@@ -125,7 +125,10 @@ static PROVIDERS: Lazy<RwLock<Vec<Arc<dyn Provider>>>> = Lazy::new(|| RwLock::ne
 /// 随软件一起编译进来的下载源。接入新的下载源时在这里加一行，例如
 /// `Arc::new(jamendo::Jamendo::default()),`
 fn builtin() -> Vec<Arc<dyn Provider>> {
-    vec![Arc::new(super::bili::BiliProvider)]
+    vec![
+        Arc::new(super::bili::BiliProvider),
+        Arc::new(super::onlinemusic::OnlineMusic),
+    ]
 }
 
 /// 运行时注册（同 id 会替换旧的）

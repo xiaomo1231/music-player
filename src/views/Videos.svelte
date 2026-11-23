@@ -14,6 +14,10 @@
   import { fmtT } from '../lib/util';
   import { lazyThumb, seriesBadge } from '../lib/media.svelte';
 
+  // movies：“电影”分类页，只列电影；否则是“视频”页（电视剧 + 独立视频）
+  let { movies = false }: { movies?: boolean } = $props();
+  const unit = $derived(movies ? '部电影' : '个视频');
+
   let videos = $state<Video[]>([]);
   let shows = $state<Series[]>([]);
   let loaded = $state(false);
@@ -30,8 +34,8 @@
       loaded = true;
       return;
     }
-    const [v, s] = await Promise.all([invoke<Video[]>('list_videos'), invoke<Series[]>('list_series', { kind: 'tv' })]);
-    videos = v;
+    const [v, s] = await Promise.all([invoke<Video[]>('list_videos'), movies ? Promise.resolve([]) : invoke<Series[]>('list_series', { kind: 'tv' })]);
+    videos = v.filter(x => !!x.movie === movies);
     shows = s;
     loaded = true;
   }
@@ -44,7 +48,7 @@
   // 搜索结果跳过来时直接打开那部电视剧
   $effect(() => {
     const sid = ui.seriesId;
-    if (sid == null || ui.view !== 'video' || !loaded) return;
+    if (sid == null || movies || ui.view !== 'video' || !loaded) return;
     if (shows.some(s => s.id === sid)) {
       openId = sid;
       ui.seriesId = null;
@@ -112,7 +116,7 @@
     ]));
   }
   function videoMenu(e: MouseEvent, v: Video) {
-    if (selV.has(v.id) && selV.size > 1) return openMenu(e, `已选 ${selV.size} 个视频`, videoBatch());
+    if (selV.has(v.id) && selV.size > 1) return openMenu(e, `已选 ${selV.size} ${unit}`, videoBatch());
     openMenu(e, v.title, mediaEntries('video', v.id, v.title, [
       { label: '播放', run: () => playVideo(v) },
       { label: '生成 AI 字幕', run: () => { ui.subVideo = v.id; ui.go('aisub'); } },
@@ -130,8 +134,8 @@
   {:else}
     <header>
       <div>
-        <h2>视频</h2>
-        <p>{shows.length} 部电视剧 · {videos.length} 个独立视频</p>
+        <h2>{movies ? '电影' : '视频'}</h2>
+        <p>{movies ? `${videos.length} 部电影` : `${shows.length} 部电视剧 · ${videos.length} 个独立视频`}</p>
       </div>
       {#if shows.length || videos.length}
         <button class="mp-chip msel" class:on={selS.on || selV.on} onclick={() => (selS.on || selV.on ? (selS.clear(), selV.clear()) : ((videos.length ? selV : selS).mode = true))}
@@ -142,14 +146,18 @@
     {#if selS.on}
       <BatchBar sel={selS} unit="部" total={sOrder.length} onall={() => selS.selectAll(sOrder)} entries={seriesBatch()} />
     {:else if selV.on}
-      <BatchBar sel={selV} unit="个视频" total={vOrder.length} onall={() => selV.selectAll(vOrder)} entries={videoBatch()}
-        hint="单击勾选，Shift 连选，Ctrl+A 全选；点电视剧海报可以改选电视剧" />
+      <BatchBar sel={selV} {unit} total={vOrder.length} onall={() => selV.selectAll(vOrder)} entries={videoBatch()}
+        hint={movies ? '单击勾选，Shift 连选，Ctrl+A 全选' : '单击勾选，Shift 连选，Ctrl+A 全选；点电视剧海报可以改选电视剧'} />
     {/if}
 
     {#if !loaded}
       <div class="empty">正在读取…</div>
     {:else if !shows.length && !videos.length}
-      <div class="empty">还没有视频。到“设置”里添加视频文件夹并扫描，或直接把视频拖进窗口。</div>
+      <div class="empty">
+        {movies
+          ? '还没有电影。放在名字带“电影”或 Movies 的文件夹里的视频，以及“片名.2019.1080p.BluRay”这种发布名的长视频会归到这里。'
+          : '还没有视频。到“设置”里添加视频文件夹并扫描，或直接把视频拖进窗口。'}
+      </div>
     {:else}
       {#if shows.length}
         <div class="grp">电视剧</div>
@@ -171,7 +179,7 @@
       {/if}
 
       {#if videos.length}
-        <div class="grp">独立视频</div>
+        {#if !movies}<div class="grp">独立视频</div>{/if}
         <div class="mp-grid wide">
           {#each videos as v (v.id)}
             <div

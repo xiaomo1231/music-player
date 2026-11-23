@@ -3,7 +3,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use std::path::Path;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 pub fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
@@ -49,6 +49,11 @@ fn migrate(conn: &Connection) -> Result<()> {
             add_column(conn, t, c, "TEXT")?;
         }
         conn.execute_batch(SCHEMA_V2)?;
+    }
+    if v < 4 {
+        // v4：电影标记；rules 记录这条视频按哪一版归类规则处理过，规则更新后启动时重新归类
+        add_column(conn, "videos", "movie", "INTEGER NOT NULL DEFAULT 0")?;
+        add_column(conn, "videos", "rules", "INTEGER NOT NULL DEFAULT 0")?;
     }
     conn.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION}"))?;
     Ok(())

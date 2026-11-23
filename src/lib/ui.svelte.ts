@@ -1,5 +1,5 @@
 // 界面状态：当前页面、弹窗、提示、沉浸 / 迷你模式、OLED 防烧屏
-export type View = 'now' | 'music' | 'video' | 'anime' | 'manga' | 'novel' | 'daily' | 'convert' | 'aisub' | 'get' | 'org' | 'settings';
+export type View = 'now' | 'music' | 'video' | 'movie' | 'anime' | 'manga' | 'novel' | 'daily' | 'convert' | 'aisub' | 'get' | 'org' | 'settings';
 export type Modal = null | 'scan' | 'eq' | 'oled' | 'ai' | 'keys' | 'playlist-add' | 'about';
 
 const load = <T>(k: string, d: T): T => {

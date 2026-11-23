@@ -99,9 +99,11 @@ pub struct Video {
     pub thumb: Option<String>,
     pub size: i64,
     pub added_at: i64,
+    /// 电影（放在“电影”分类里，不在独立视频里）
+    pub movie: bool,
 }
 
-const VIDEO_COLS: &str = "f.id,f.path,coalesce(f.custom_title,v.title),v.series_id,v.season,v.episode,v.release_group,v.resolution,v.duration,v.position,v.watched,v.last_played,v.subs,coalesce(f.custom_cover,v.thumb),f.size,f.added_at";
+const VIDEO_COLS: &str = "f.id,f.path,coalesce(f.custom_title,v.title),v.series_id,v.season,v.episode,v.release_group,v.resolution,v.duration,v.position,v.watched,v.last_played,v.subs,coalesce(f.custom_cover,v.thumb),f.size,f.added_at,v.movie";
 
 fn video_row(r: &Row) -> rusqlite::Result<Video> {
     Ok(Video {
@@ -121,6 +123,7 @@ fn video_row(r: &Row) -> rusqlite::Result<Video> {
         thumb: r.get(13)?,
         size: r.get(14)?,
         added_at: r.get(15)?,
+        movie: r.get::<_, i64>(16)? != 0,
     })
 }
 

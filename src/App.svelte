@@ -40,6 +40,7 @@
   const nav: [View, string, string, string?][] = [
     ['music', 'music', '音乐'],
     ['video', 'video', '视频'],
+    ['movie', 'film', '电影'],
     ['anime', 'anime', '番剧'],
     ['manga', 'list', '漫画'],
     ['novel', 'book', '小说'],
@@ -322,6 +323,7 @@
     {#if ui.view === 'now'}<NowPlaying />
     {:else if ui.view === 'music'}<Music />
     {:else if ui.view === 'video'}<Videos />
+    {:else if ui.view === 'movie'}<Videos movies />
     {:else if ui.view === 'anime'}<Anime />
     {:else if ui.view === 'manga'}<Manga />
     {:else if ui.view === 'novel'}<Novels />

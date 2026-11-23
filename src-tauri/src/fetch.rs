@@ -2,6 +2,7 @@
 //! 自动归类入库、追更。子模块：source（各类来源）、web（网页 AI 规则）、download（下载队列）、organize（整理入库）。
 pub mod bili;
 pub mod download;
+pub mod login;
 pub mod organize;
 pub mod pack;
 pub mod provider;
@@ -1039,4 +1040,28 @@ pub fn fetch_remove_task(app: AppHandle, id: i64) -> Result<usize, String> {
 #[tauri::command]
 pub fn fetch_providers() -> Vec<provider::ProviderInfo> {
     provider::list()
+}
+
+// ---------- 网站登录（软件内浏览器窗口） ----------
+
+/// 打开登录窗口，返回网站名（Windows 上同步命令里建窗口会卡死，所以是 async）
+#[tauri::command]
+pub async fn fetch_login_open(app: AppHandle, url: String) -> Result<String, String> {
+    login::open(&app, &url).map_err(e)
+}
+
+/// 读取登录窗口的 Cookie 并保存，然后关闭窗口
+#[tauri::command]
+pub async fn fetch_login_finish(app: AppHandle) -> Result<login::LoginView, String> {
+    login::finish(&app).await.map_err(e)
+}
+
+#[tauri::command]
+pub fn fetch_logins() -> Vec<login::LoginView> {
+    login::list()
+}
+
+#[tauri::command]
+pub fn fetch_login_clear(site: String) -> Result<(), String> {
+    login::clear(&site).map_err(e)
 }

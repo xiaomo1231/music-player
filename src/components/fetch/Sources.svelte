@@ -2,9 +2,10 @@
   // 我的来源：添加（自动判断类型，网页来源由 AI 生成提取规则）、重建规则、删除
   import { onMount } from 'svelte';
   import Icon from '../../lib/Icon.svelte';
+  import SiteLogin from './SiteLogin.svelte';
   import { listen, inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, KIND_TEXT, MEDIA_TEXT, metaApi, type MetaInfo, type ProviderInfo, type Source, type SourceStep } from '../../lib/fetch';
+  import { fetchApi, needsLogin, KIND_TEXT, MEDIA_TEXT, metaApi, type MetaInfo, type ProviderInfo, type Source, type SourceStep } from '../../lib/fetch';
 
   let { onchange }: { onchange?: () => void } = $props();
 
@@ -15,6 +16,9 @@
   let kind = $state('auto');
   let busy = $state(false);
   let steps = $state<SourceStep[]>([]);
+  // 添加时遇到要登录的网站：记下地址，提示在软件里登录
+  let loginUrl = $state('');
+  let loggingIn = $state(false);
   // 已接入的下载源（默认没有）；已经添加过的不再列出
   let providers = $state<ProviderInfo[]>([]);
   // 已接入的资料源（作品资料，默认没有）：不用添加，自动用在搜索页
@@ -66,9 +70,12 @@
       name = '';
       template = '';
       toast(`已添加来源：${s.name}`);
+      loginUrl = '';
       onchange?.();
     } catch (err) {
-      toast(String(err));
+      const msg = String(err);
+      toast(msg);
+      loginUrl = needsLogin(msg) && /^https?:\/\//i.test(u) ? u : '';
     } finally {
       busy = false;
     }
@@ -184,6 +191,16 @@
   </div>
 </details>
 
+{#if loginUrl && !loggingIn}
+  <div class="note" style="margin-top:10px">
+    这个网站可能需要登录。可以在软件里打开它，自己登录一次，之后识别链接、搜索和下载都会带上登录状态。
+    <div style="margin-top:6px"><button class="mp-btn" onclick={() => (loggingIn = true)}>在软件里登录</button></div>
+  </div>
+{/if}
+{#if loggingIn}
+  <SiteLogin url={loginUrl} ondone={saved => { loggingIn = false; if (saved) { url = loginUrl; loginUrl = ''; add(); } }} />
+{/if}
+
 {#if steps.length > 0}
   <div class="steps" style="margin-top:10px">
     {#each steps as s (s.step)}
@@ -195,7 +212,7 @@
   {/if}
 {/if}
 
-<div class="note" style="margin-top:10px">软件不自带任何来源，全部由你添加。请只添加你有权获取内容的网站。遇到登录或验证码时，请在浏览器里自己完成，软件不会绕过。</div>
+<div class="note" style="margin-top:10px">软件不自带任何来源，全部由你添加。请只添加你有权获取内容的网站。遇到需要登录的网站，可以在软件里打开它自己登录一次（验证码也由你自己完成），软件不会绕过登录或验证码。</div>
 
 <style>
   .card-head {

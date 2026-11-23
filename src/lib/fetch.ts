@@ -169,6 +169,10 @@ export const fetchApi = {
   unsubscribe: (id: number) => invoke<void>('fetch_unsubscribe', { id }),
   subs: () => invoke<SubRow[]>('fetch_subs'),
   providers: () => invoke<ProviderInfo[]>('fetch_providers'),
+  loginOpen: (url: string) => invoke<string>('fetch_login_open', { url }),
+  loginFinish: () => invoke<SiteLoginView>('fetch_login_finish'),
+  logins: () => invoke<SiteLoginView[]>('fetch_logins'),
+  loginClear: (site: string) => invoke<void>('fetch_login_clear', { site }),
 };
 
 // ---------- 资料源（作品资料：封面、简介、分集；见 docs/漫画番剧来源接口.md） ----------
@@ -309,6 +313,23 @@ export function taskTitleOf(url: string): string {
     return last.split('?')[0] || url;
   }
 }
+
+/** 在软件里登录过的网站（不含 Cookie 内容） */
+export interface SiteLoginView {
+  site: string;
+  url: string;
+  saved_at: number;
+  count: number;
+}
+
+export interface LoginEvent {
+  status: 'saved' | 'canceled' | 'error';
+  site: string;
+  message: string;
+}
+
+/** 这条错误是不是“需要登录 / 网站拒绝访问”，可以提示用户在软件里登录 */
+export const needsLogin = (msg: string) => /需要登录|HTTP 40[13]|拒绝了这次访问/.test(msg);
 
 /** 由地址和类型推断的文案 */
 export function hitKindText(kind: string): string {

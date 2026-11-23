@@ -48,10 +48,16 @@ jobs:
           foreach ($f in 'ffmpeg.exe', 'ffprobe.exe', 'yt-dlp.exe', 'versions.json', 'licenses/THIRD-PARTY-NOTICES.txt', 'licenses/ffmpeg/LICENSE', 'licenses/yt-dlp/LICENSE') {
             if (-not (Test-Path (Join-Path $bin $f))) { throw "安装后缺少 bin/$f" }
           }
-          & (Join-Path $bin 'ffmpeg.exe') -hide_banner -version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg 无法运行' }
-          & (Join-Path $bin 'ffmpeg.exe') -hide_banner -encoders | Select-String 'libx264|libx265|libmp3lame|libopus'
-          & (Join-Path $bin 'ffprobe.exe') -hide_banner -version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) { throw 'ffprobe 无法运行' }
-          & (Join-Path $bin 'yt-dlp.exe') --version
-          if ($LASTEXITCODE -ne 0) { throw 'yt-dlp 无法运行' }
+          # 先完整收集输出再检查退出码：管道里用 Select-Object -First 提前结束会让程序非 0 退出
+          function Run($exe, [string[]]$a) {
+            $out = & (Join-Path $bin $exe) @a 2>&1
+            if ($LASTEXITCODE -ne 0) { $out | Select-Object -Last 5; throw "$exe 无法运行（退出码 $LASTEXITCODE）" }
+            return $out
+          }
+          Run 'ffmpeg.exe' '-hide_banner', '-version' | Select-Object -First 1
+          $enc = Run 'ffmpeg.exe' '-hide_banner', '-encoders'
+          foreach ($e in 'libx264', 'libx265', 'libmp3lame', 'libopus') {
+            if (-not ($enc | Select-String -SimpleMatch $e)) { throw "ffmpeg 缺少编码器 $e" }
+          }
+          Run 'ffprobe.exe' '-hide_banner', '-version' | Select-Object -First 1
+          Run 'yt-dlp.exe' '--version'

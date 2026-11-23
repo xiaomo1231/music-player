@@ -1,5 +1,5 @@
 // .em 规则文件：类型、命令、导入确认框的状态
-import { invoke, inTauri, listen } from './api';
+import { invoke, inTauri, listen, bumpComicPages } from './api';
 import { toast } from './ui.svelte';
 
 export type EmKind = 'comic' | 'source' | 'clean' | 'organize';
@@ -98,7 +98,11 @@ let started = false;
 export function startEm() {
   if (started || !inTauri) return;
   started = true;
-  void listen<string>('em://changed', () => em.version++);
+  void listen<string>('em://changed', kind => {
+    // 漫画排版规则变了：页面图片地址换掉，不用缓存的旧图
+    if (kind === 'comic') bumpComicPages();
+    em.version++;
+  });
 }
 
 export async function exportEm(r: EmRule) {

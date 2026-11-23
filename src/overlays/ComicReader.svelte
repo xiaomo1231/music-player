@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { invoke, inTauri, fileUrl, comicPage, type ComicItem } from '../lib/api';
+  import { untrack } from 'svelte';
+  import { invoke, inTauri, fileUrl, comicPage, setComicVer, type ComicItem } from '../lib/api';
+  import { em } from '../lib/em.svelte';
+  import { comicView, applyRuleRead, type ComicView } from '../lib/emcomic';
+  import ComicExportModal from '../components/em/ComicExportModal.svelte';
   import { ui, toast } from '../lib/ui.svelte';
   import { typing, clamp } from '../lib/util';
   import {
@@ -36,9 +40,12 @@
   let aiOpen = $state(false);
   let trMode = $state<Tr>('orig');
   let bars = $state(true);
-  let pop = $state<'' | 'flow' | 'view'>('');
+  let pop = $state<'' | 'flow' | 'view' | 'rule'>('');
   let help = $state(false);
   let paged: PagedView | undefined = $state();
+  /** 适用的漫画排版规则（.em） */
+  let view = $state.raw<ComicView | null>(null);
+  let exporting = $state(false);
   let scroller: ScrollView | undefined = $state();
 
   /** 当前加载的是哪一本（非响应式，给保存进度用） */
@@ -117,6 +124,28 @@
     };
   });
 
+  // 排版规则变了：重新打开这本（页数、页面都可能变）
+  let emSeen = em.version;
+  $effect(() => {
+    const v = em.version;
+    untrack(() => {
+      if (v === emSeen) return;
+      emSeen = v;
+      const id = loadedId;
+      if (!id || ui.comicId !== id || !item || item.format === 'pdf') return;
+      const cur = view;
+      comicView(id)
+        .then(nv => {
+          if (loadedId !== id) return;
+          const same = (nv?.rule?.id ?? '') === (cur?.rule?.id ?? '') && (nv?.rule ? nv.ver : '') === (cur?.ver ?? '');
+          if (same) return;
+          saveNow();
+          void loadComic(id);
+        })
+        .catch(() => {});
+    });
+  });
+
   // 预加载前后几页（翻页时不闪），顺便拿到页面尺寸
   $effect(() => {
     const it = item;
@@ -178,11 +207,26 @@
       const [list, pf, g] = await Promise.all([invoke<ComicItem[]>('list_comics'), comicFor(cid), comicGlobal()]);
       if (loadedId !== cid) return;
       comics = list;
-      const it = list.find(x => x.id === cid);
+      let it = list.find(x => x.id === cid);
       if (!it) {
         err = '找不到这本漫画';
         loading = false;
         return;
+      }
+      // 漫画排版规则：页数按排过之后的算，没单独设置过的书用规则里的阅读排版
+      let v: ComicView | null = null;
+      if (it.format !== 'pdf') {
+        try {
+          v = await comicView(cid);
+        } catch (x) {
+          toast(`排版规则没能生效：${x}`);
+        }
+        if (loadedId !== cid) return;
+      }
+      view = v?.rule ? v : null;
+      if (v?.rule) {
+        setComicVer(cid, v.ver);
+        it = { ...it, pages: v.pages };
       }
       gprefs = g;
       ratios = new Float64Array(it.pages);
@@ -190,14 +234,16 @@
       natW = new Float64Array(it.pages);
       defRatio = 1.42;
       const p0 = it.pages > 0 ? clamp(it.page, 0, it.pages - 1) : 0;
-      const next = { ...pf.prefs };
-      // 没单独设置过的书：页面特别长的当作条漫，用上下连续滚动
+      let next = { ...pf.prefs };
+      const ruleRead = !pf.has && view?.read ? view.read : null;
+      if (ruleRead) next = applyRuleRead(next, ruleRead);
+      // 没单独设置过的书：页面特别长的当作条漫，用上下连续滚动（规则指定了翻页方式时不改）
       if (it.format !== 'pdf' && it.pages > 0) {
         const d = await probe(cid, p0);
         if (loadedId !== cid) return;
         if (d) {
           ondims(p0, d[0], d[1]);
-          if (!pf.has && d[1] / d[0] >= 2 && (next.flow === 'h' || next.flow === 'v')) {
+          if (!pf.has && !ruleRead?.flow && d[1] / d[0] >= 2 && (next.flow === 'h' || next.flow === 'v')) {
             next.flow = 'vscroll';
             toast('页面是长条，已切换为上下连续滚动（可在顶栏“翻页方式”里改）');
           }
@@ -324,7 +370,7 @@
   // ---------- 键盘 ----------
 
   function onKey(e: KeyboardEvent) {
-    if (ui.comicId == null) return;
+    if (ui.comicId == null || exporting) return;
     if (typing(e)) {
       const t = e.target as HTMLInputElement;
       if (e.key !== 'Escape') return;
@@ -445,6 +491,27 @@
       <button type="button" class="rbtn" onclick={close}>← 书架</button>
       <b class="cr-title">{item?.title ?? '漫画'}</b>
       {#if item?.series}<span class="cr-series">{item.series}</span>{/if}
+      {#if view?.rule && item}
+        <div class="cr-wrap">
+          <button type="button" class="rbtn cr-popbtn cr-rule" class:on={pop === 'rule'} onclick={() => (pop = pop === 'rule' ? '' : 'rule')} title="已按规则「{view.rule.name}」排版">
+            排版<small>▾</small>
+          </button>
+          {#if pop === 'rule'}
+            <div class="cr-pop l">
+              <h6>已按规则「{view.rule.name}」排版</h6>
+              <p class="cr-rinfo">
+                {#if view.marker}这本是按这个规则导出的，页面不再处理，只套用阅读排版。
+                {:else if view.processed}共 {view.pages} 页{view.skipped ? `，跳过了 ${view.skipped} 页` : ''}。页面在阅读时实时处理，原文件不变。
+                {:else}只套用阅读排版，页面不变。{/if}
+                阅读排版只在这本书没单独设置过时生效。
+              </p>
+              {#if !view.marker}
+                <button type="button" class="rbtn" onclick={() => ((pop = ''), (exporting = true))}>导出排版后的 CBZ…</button>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
       <span class="sp"></span>
       {#if item && !isPdf}
         <div class="cr-wrap">
@@ -613,7 +680,28 @@
   {/if}
 </div>
 
+{#if exporting && item}
+  <ComicExportModal
+    ids={[item.id]}
+    title={item.title}
+    ruleName={view?.rule?.name}
+    onclose={() => (exporting = false)}
+    ondone={(r, replace) => {
+      if (replace && r.outputs.length && loadedId) void loadComic(loadedId);
+    }}
+  />
+{/if}
+
 <style>
+  .cr-rule {
+    color: #7be0a3;
+  }
+  .cr-rinfo {
+    margin: 0 2px 4px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #aaa;
+  }
   .reader.cr {
     grid-template-rows: auto minmax(0, 1fr) auto;
   }

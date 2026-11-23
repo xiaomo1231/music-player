@@ -6,6 +6,7 @@
   import { listen, inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
   import { fetchApi, needsLogin, KIND_TEXT, MEDIA_TEXT, metaApi, type MetaInfo, type ProviderInfo, type Source, type SourceStep } from '../../lib/fetch';
+  import { em } from '../../lib/em.svelte';
 
   let { onchange }: { onchange?: () => void } = $props();
 
@@ -43,6 +44,15 @@
       /* 旧版本没有资料源命令时忽略 */
     }
   }
+
+  // 下载源规则（.em）导入、停用、删除后，可添加的下载源和来源列表跟着变
+  let emSeen = em.version;
+  $effect(() => {
+    const v = em.version;
+    if (v === emSeen) return;
+    emSeen = v;
+    void load();
+  });
 
   onMount(() => {
     load();

@@ -11,9 +11,18 @@
     onconfirm,
     onfallback,
     onskip,
+    step = '',
+    rest = 1,
+    onrest,
   }: {
     url: string;
     mediaKind: string;
+    /** 一批里的第几个，例如“2 / 12” */
+    step?: string;
+    /** 包括这个在内还剩几个没确认 */
+    rest?: number;
+    /** 剩下的都不再确认、整个下载 */
+    onrest?: () => void;
     /** 确认下载：选中的文件（全选时为 null）和归类 */
     onconfirm: (info: TorrentInfo, files: number[] | null, size: number, mediaKind: string) => void;
     /** 读不到种子信息时仍然整个下载 */
@@ -104,7 +113,7 @@
   }
 </script>
 
-<Modal title={info ? '确认下载内容' : '读取种子信息'} onclose={onskip} wide>
+<Modal title={`${info ? '确认下载内容' : '读取种子信息'}${step ? `（${step}）` : ''}`} onclose={onskip} wide>
   {#if !info && !err}
     <p class="mp-desc">
       {#if isMagnet}正在通过磁力链接获取种子信息（已等 {seconds} 秒，最多 2 分钟），拿到后会列出里面的文件给你挑选。{:else}正在读取种子文件…{/if}
@@ -112,12 +121,14 @@
     <div class="wait"><span class="spin"></span><span class="ell">{taskTitleOf(url)}</span></div>
     <div class="foot">
       <span class="spacer"></span>
-      <button class="mp-btn ghost" onclick={onskip}>取消</button>
+      {#if onrest}<button class="mp-btn ghost" onclick={onrest}>剩下 {rest} 个不确认，直接下载</button>{/if}
+      <button class="mp-btn ghost" onclick={onskip}>{step ? '跳过这个' : '取消'}</button>
     </div>
   {:else if err}
     <p class="mp-desc">没能读取种子信息：{err}</p>
     <div class="foot">
       <span class="spacer"></span>
+      {#if onrest}<button class="mp-btn ghost" onclick={onrest}>剩下 {rest} 个不确认，直接下载</button>{/if}
       <button class="mp-btn ghost" onclick={onskip}>跳过</button>
       <button class="mp-btn ghost" onclick={() => onfallback(mk)}>仍然下载全部</button>
     </div>
@@ -178,7 +189,8 @@
       </select>
       <span class="spacer"></span>
       <span class="picked">已选 {chosen.length} / {info.files.length} 个 · {fmtBytes(chosenSize)}</span>
-      <button class="mp-btn ghost" onclick={onskip}>取消</button>
+      {#if onrest}<button class="mp-btn ghost" onclick={onrest} title="剩下的种子都不再确认，整个下载">剩下 {rest} 个直接下载</button>{/if}
+      <button class="mp-btn ghost" onclick={onskip}>{step ? '跳过这个' : '取消'}</button>
       <button class="mp-btn" onclick={confirm} disabled={chosen.length === 0}>下载选中</button>
     </div>
   {/if}

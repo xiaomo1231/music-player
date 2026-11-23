@@ -3,8 +3,8 @@
   // 磁力 / 种子先弹确认页（列出种子里的文件和体积），勾选后只下载选中的文件
   import { inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, isBtUrl, MEDIA_TEXT, taskTitleOf, type DlItem, type TorrentInfo } from '../../lib/fetch';
-  import TorrentConfirm from './TorrentConfirm.svelte';
+  import { fetchApi, isBtUrl, MEDIA_TEXT, taskTitleOf, type DlItem } from '../../lib/fetch';
+  import TorrentQueue from './TorrentQueue.svelte';
 
   // 只有这三类下完会自动整理入库
   const KINDS = ['video', 'anime', 'music'];
@@ -22,56 +22,39 @@
       .filter(Boolean),
   );
 
-  /** 等待确认的磁力 / 种子，一个一个弹确认页 */
-  let pending = $state<string[]>([]);
-  let added = 0;
-
-  async function enqueue(items: DlItem[]): Promise<boolean> {
-    try {
-      const ids = await fetchApi.download(items);
-      added += ids.length;
-      onqueued?.();
-      return true;
-    } catch (err) {
-      toast(String(err));
-      return false;
-    }
-  }
+  /** 等待确认的磁力 / 种子，由 TorrentQueue 一个一个弹确认页 */
+  let pending = $state<DlItem[]>([]);
+  let directCount = 0;
 
   async function start(urls: string[]) {
     if (urls.length === 0) return toast('先粘贴磁力链接、种子地址或下载直链');
     if (!inTauri) return toast('请在桌面程序里下载');
     if (busy || pending.length) return;
     busy = true;
-    added = 0;
+    directCount = 0;
     const direct = urls.filter(u => !isBtUrl(u));
     const bt = urls.filter(isBtUrl);
     try {
       if (direct.length) {
-        await enqueue(direct.map(url => ({ title: taskTitleOf(url), url, kind: '', mediaKind: mk, sourceId: null, size: null })));
+        const ids = await fetchApi.download(direct.map(url => ({ title: taskTitleOf(url), url, kind: '', mediaKind: mk, sourceId: null, size: null })));
+        directCount = ids.length;
+        onqueued?.();
       }
       text = '';
-      if (bt.length) pending = bt;
-      else if (added) toast(`已加入下载队列：${added} 个`);
+      // 种子标题留空：确认后用种子里的名字
+      if (bt.length) pending = bt.map(url => ({ title: '', url, kind: '', mediaKind: mk, sourceId: null, size: null }));
+      else if (directCount) toast(`已加入下载队列：${directCount} 个`);
+    } catch (err) {
+      toast(String(err));
     } finally {
       busy = false;
     }
   }
 
-  /** 当前这个种子处理完（确认 / 跳过），换下一个 */
-  function next() {
-    pending = pending.slice(1);
-    if (pending.length === 0 && added) toast(`已加入下载队列：${added} 个`);
-  }
-
-  async function confirmTorrent(info: TorrentInfo, files: number[] | null, size: number, kind: string) {
-    await enqueue([{ title: info.name, url: info.torrentPath, kind: 'torrent', mediaKind: kind, sourceId: null, size, files }]);
-    next();
-  }
-
-  async function fallback(url: string, kind: string) {
-    await enqueue([{ title: taskTitleOf(url), url, kind: '', mediaKind: kind, sourceId: null, size: null }]);
-    next();
+  function done(added: number) {
+    pending = [];
+    const n = added + directCount;
+    if (n) toast(`已加入下载队列：${n} 个`);
   }
 
   async function pickTorrent() {
@@ -100,9 +83,7 @@
 </div>
 
 {#if pending.length}
-  {#key pending[0] + pending.length}
-    <TorrentConfirm url={pending[0]} mediaKind={mk} onconfirm={confirmTorrent} onfallback={k => fallback(pending[0], k)} onskip={next} />
-  {/key}
+  <TorrentQueue items={pending} ondone={done} {onqueued} />
 {/if}
 
 <style>

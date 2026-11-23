@@ -335,6 +335,8 @@ pub fn run() {
             shell::shell_show_main,
             shell::shell_tray_tooltip,
             shell::shell_startup_files,
+            shell::shell_close_ready,
+            shell::shell_close_choose,
             shell::shell_autostart_get,
             shell::shell_autostart_set,
             shell::shell_keep_awake,

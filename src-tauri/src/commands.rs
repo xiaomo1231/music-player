@@ -254,7 +254,14 @@ pub fn start_scan(app: AppHandle, st: State<AppState>, roots: Option<Vec<String>
     std::thread::spawn(move || {
         let r = scanner::run_scan(app.clone(), db_path, dirs, roots, scan.clone());
         match r {
-            Ok(p) => *scan.last.lock() = p,
+            Ok(p) => {
+                *scan.last.lock() = p;
+                // 扫描完把规则拿不准的视频交给 AI（没配置 AI 或关掉了就跳过）
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::aiclassify::run(&app).await;
+                });
+            }
             Err(err) => {
                 let _ = app.emit("scan://error", err.to_string());
             }

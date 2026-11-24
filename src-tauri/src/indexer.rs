@@ -95,12 +95,13 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
     };
     let encrypted = parse::is_encrypted(path) as i64;
     let file_id = if let Some(id) = moved {
-        conn.execute("UPDATE files SET path=?1, missing=0 WHERE id=?2", params![p, id])?;
+        conn.execute("UPDATE files SET path=?1, missing=0, encrypted=?2 WHERE id=?3", params![p, encrypted, id])?;
         return Ok(Outcome::Updated);
     } else if let Some((id, ..)) = existing {
         conn.execute(
-            "UPDATE files SET size=?1, mtime=?2, missing=0, kind=?3 WHERE id=?4",
-            params![size, mtime, kind, id],
+            // 加密格式转换后“替换原文件”会把记录改成新路径：encrypted 要跟着新扩展名走，否则歌还留在“加密格式”里
+            "UPDATE files SET size=?1, mtime=?2, missing=0, kind=?3, encrypted=?4 WHERE id=?5",
+            params![size, mtime, kind, encrypted, id],
         )?;
         id
     } else {
@@ -353,6 +354,36 @@ pub fn mark_missing(conn: &Connection, path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    /// 加密格式转换后替换原文件：同一条记录换成新路径再入库，encrypted 要清掉
+    #[test]
+    fn replaced_encrypted_file_is_no_longer_encrypted() {
+        use rusqlite::params;
+        let c = crate::db::open_memory().unwrap();
+        let tmp = std::env::temp_dir().join(format!("mp-enc-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let old = tmp.join("song.ncm");
+        let new = tmp.join("song.flac");
+        std::fs::write(&new, b"not really audio").unwrap();
+        c.execute(
+            "INSERT INTO files(path,kind,size,mtime,added_at,encrypted) VALUES(?1,'music',1,1,1,1)",
+            params![old.to_string_lossy().to_string()],
+        )
+        .unwrap();
+        let id = c.last_insert_rowid();
+        // convert::relink 的做法：先改路径，再重新入库
+        c.execute("UPDATE files SET path=?1 WHERE id=?2", params![new.to_string_lossy().to_string(), id])
+            .unwrap();
+        let dirs = super::Dirs {
+            data: tmp.clone(),
+            covers: tmp.join("covers"),
+            thumbs: tmp.join("thumbs"),
+        };
+        super::index_file(&c, &new, "music", &dirs).unwrap();
+        let enc: i64 = c.query_row("SELECT encrypted FROM files WHERE id=?1", [id], |r| r.get(0)).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(enc, 0);
+    }
+
     #[test]
     fn pinyin_initials() {
         assert_eq!(super::initials("周杰伦"), "zjl");

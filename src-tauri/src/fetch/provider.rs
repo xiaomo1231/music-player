@@ -104,6 +104,9 @@ pub enum Target {
         urls: Vec<String>,
         #[serde(default)]
         headers: BTreeMap<String, String>,
+        /// 图片被站点切条打乱时的还原算法（目前只认 `jm18comic`），下载每页后先拼回再打包
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        descramble: Option<String>,
     },
     /// 小说若干章的正文，生成一本 EPUB
     Chapters { chapters: Vec<TextChapter> },
@@ -774,6 +777,7 @@ pub mod tests {
         let t = Target::Pages {
             urls: vec!["https://img.example/1.jpg".into()],
             headers: BTreeMap::from([("Referer".to_string(), "https://example".to_string())]),
+            descramble: None,
         };
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(v["type"], "pages");
@@ -781,7 +785,17 @@ pub mod tests {
             serde_json::from_value::<Target>(serde_json::json!({"type":"pages","urls":["a"]})).unwrap(),
             Target::Pages {
                 urls: vec!["a".into()],
-                headers: BTreeMap::new()
+                headers: BTreeMap::new(),
+                descramble: None,
+            }
+        );
+        assert!(v.get("descramble").is_none(), "没有还原算法时不输出这个字段");
+        assert_eq!(
+            serde_json::from_value::<Target>(serde_json::json!({"type":"pages","urls":["a"],"descramble":"jm18comic"})).unwrap(),
+            Target::Pages {
+                urls: vec!["a".into()],
+                headers: BTreeMap::new(),
+                descramble: Some("jm18comic".into()),
             }
         );
         let m: Target = serde_json::from_str(r#"{"type":"magnet","uri":"magnet:?xt=urn:btih:abc"}"#).unwrap();

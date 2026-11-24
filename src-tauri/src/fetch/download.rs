@@ -642,13 +642,13 @@ async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_
             t.url = uri.clone();
             bt_download(app, &t, ctl, dl_dir, settings).await?
         }
-        provider::Target::Pages { urls, headers } => {
+        provider::Target::Pages { urls, headers, descramble } => {
             let out = if t.save_path.is_empty() {
                 organize::unique(dl_dir.join(provider::file_name(&item, "cbz")))
             } else {
                 PathBuf::from(&t.save_path)
             };
-            pages_download(app, &t, ctl, dl_dir, &out, urls, headers).await?
+            pages_download(app, &t, ctl, dl_dir, &out, urls, headers, descramble.as_deref()).await?
         }
         provider::Target::Chapters { chapters } => {
             let out = organize::unique(dl_dir.join(provider::file_name(&item, "epub")));
@@ -786,6 +786,7 @@ async fn pages_download(
     out: &Path,
     urls: &[String],
     headers: &std::collections::BTreeMap<String, String>,
+    descramble: Option<&str>,
 ) -> Result<Option<PathBuf>> {
     if urls.is_empty() {
         bail!("下载源没有给出任何图片");
@@ -828,7 +829,14 @@ async fn pages_download(
                 Err(err) => last_err = err.to_string(),
             }
         }
-        let bytes = got.ok_or_else(|| anyhow!("第 {} 页下载失败：{last_err}", i + 1))?;
+        let mut bytes: Vec<u8> = got.ok_or_else(|| anyhow!("第 {} 页下载失败：{last_err}", i + 1))?.into();
+        // 站点把图切条打乱过：先拼回（解码、重编码费 CPU，放到阻塞线程），失败就原样保存
+        if let Some(kind) = descramble {
+            let (kind, u, raw) = (kind.to_string(), url.clone(), bytes.clone());
+            if let Ok(Some(fixed)) = tokio::task::spawn_blocking(move || super::descramble::fix_page(&kind, &u, &raw)).await {
+                bytes = fixed;
+            }
+        }
         let name = format!("{}.{}", pack::page_stem(i), pack::image_ext(url, &bytes));
         tokio::fs::write(dir.join(&name), &bytes).await?;
         total += bytes.len() as i64;

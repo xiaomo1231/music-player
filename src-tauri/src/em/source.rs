@@ -1241,7 +1241,11 @@ impl Runner {
                         h.insert("Referer".to_string(), v);
                     }
                 }
-                Target::Pages { urls, headers: h }
+                Target::Pages {
+                    urls,
+                    headers: h,
+                    descramble: None,
+                }
             }
             Next::Chapters => {
                 let TargetSpec::Chapters { toc, content } = spec else { unreachable!() };
@@ -1428,9 +1432,10 @@ pub fn target_summary(t: &Target, total_chapters: Option<usize>) -> Value {
         Target::Http { url, ext, .. } => json!({ "type": "http", "label": "直链下载", "url": url, "ext": ext }),
         Target::Ytdlp { url, format } => json!({ "type": "ytdlp", "label": "交给 yt-dlp", "url": url, "format": format }),
         Target::Magnet { uri } => json!({ "type": "magnet", "label": "磁力 / 种子", "url": uri }),
-        Target::Pages { urls, headers } => json!({
+        Target::Pages { urls, headers, descramble } => json!({
             "type": "pages", "label": "漫画图片", "count": urls.len(),
             "first": urls.first(), "last": urls.last(), "referer": headers.get("Referer"),
+            "descramble": descramble,
         }),
         Target::Chapters { chapters } => {
             let first = chapters.first();
@@ -1936,6 +1941,7 @@ resolve:
                     "https://img.cdn.example.org/3.jpg".into()
                 ],
                 headers: BTreeMap::from([("Referer".to_string(), "https://books.example.org/r/1".to_string())]),
+                descramble: None,
             }
         );
     }

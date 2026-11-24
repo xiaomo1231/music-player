@@ -111,7 +111,7 @@
             {#each s.items as it, k (k)}
               <div class="item">
                 {#each Object.entries(it) as [key, val] (key)}
-                  <div class="kv"><span class="k">{key}</span><span class="v" class:empty={!val}>{val ? fieldText(val) : '（空）'}</span></div>
+                  <div class="kv"><span class="k">{key}</span><span class="v" class:blank={!val}>{val ? fieldText(val) : '（空）'}</span></div>
                 {/each}
               </div>
             {/each}
@@ -248,7 +248,7 @@
     min-width: 0;
     overflow-wrap: anywhere;
   }
-  .v.empty {
+  .v.blank {
     color: var(--mp-sub);
     opacity: 0.6;
   }

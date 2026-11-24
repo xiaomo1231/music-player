@@ -21,7 +21,7 @@
     {/if}
 
     {#if updater.phase === 'downloading'}
-      <div class="bar"><i style="width:{pct}%"></i></div>
+      <div class="upbar"><i style="width:{pct}%"></i></div>
       <p class="sub">
         正在下载 {fmtSize(updater.downloaded)}{updater.total ? ` / ${fmtSize(updater.total)}（${pct}%）` : ''}
       </p>
@@ -84,13 +84,13 @@
     margin: 0;
     word-break: break-all;
   }
-  .bar {
+  .upbar {
     height: 6px;
     border-radius: 3px;
     background: rgba(255, 255, 255, 0.1);
     overflow: hidden;
   }
-  .bar i {
+  .upbar i {
     display: block;
     height: 100%;
     background: var(--mp-accent, #7cc4ff);

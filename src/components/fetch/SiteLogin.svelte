@@ -58,7 +58,7 @@
   }
 </script>
 
-<div class="sl note">
+<div class="sitelogin note">
   <div>已在新窗口打开 <b>{site || url}</b>。请在那个窗口里自己登录（验证码也在那里完成），登录成功后点“完成登录”，或者直接关掉那个窗口。</div>
   {#if failed}<div class="bad">{failed}</div>{/if}
   <div class="row">
@@ -68,7 +68,7 @@
 </div>
 
 <style>
-  .sl {
+  .sitelogin {
     display: grid;
     gap: 8px;
     margin-top: 10px;

@@ -365,7 +365,7 @@
 </script>
 
 <div
-  class="stage"
+  class="pv-stage"
   class:zoomed={zoom > 1.001}
   bind:this={stageEl}
   onpointerdown={onDown}
@@ -386,7 +386,7 @@
 </div>
 
 <style>
-  .stage {
+  .pv-stage {
     position: relative;
     width: 100%;
     height: 100%;
@@ -396,7 +396,7 @@
     user-select: none;
     background: #0d0d10;
   }
-  .stage.zoomed {
+  .pv-stage.zoomed {
     cursor: grab;
   }
   .slot {

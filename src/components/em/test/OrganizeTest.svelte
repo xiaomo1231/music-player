@@ -73,15 +73,15 @@
   <div class="list">
     {#each res.items as it, i (i)}
       <div class="row" class:miss={!it.matched}>
-        <div class="src">{it.line}</div>
+        <div class="ot-src">{it.line}</div>
         {#if it.matched}
-          <div class="meta">
+          <div class="ot-meta">
             <span class="badge2">第 {it.entry} 种 · {it.media_label}</span>
             {#each Object.entries(it.fields ?? {}) as [k, v] (k)}<span class="kv">{FIELD[k] ?? k}：{v}</span>{/each}
           </div>
           <div class="dst">→ {it.dst}</div>
         {:else}
-          <div class="meta">未匹配</div>
+          <div class="ot-meta">未匹配</div>
         {/if}
       </div>
     {/each}
@@ -127,10 +127,10 @@
   .row.miss {
     opacity: 0.6;
   }
-  .src {
+  .ot-src {
     word-break: break-all;
   }
-  .meta {
+  .ot-meta {
     display: flex;
     flex-wrap: wrap;
     gap: 4px 10px;

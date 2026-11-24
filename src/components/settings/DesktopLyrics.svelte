@@ -21,7 +21,7 @@
   });
 </script>
 
-<div class="dl">
+<div class="dlyr">
   {#if text}
     {@const [main, sub] = text.split('\n')}
     <p>{main}</p>
@@ -30,7 +30,7 @@
 </div>
 
 <style>
-  .dl {
+  .dlyr {
     position: fixed;
     inset: 0;
     display: grid;

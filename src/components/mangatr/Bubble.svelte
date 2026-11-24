@@ -29,7 +29,7 @@
 
 <div
   class="mtr-b"
-  class:sel={selected}
+  class:mtr-sel={selected}
   style="left:{block.bbox[0] * 100}%;top:{block.bbox[1] * 100}%;width:{block.bbox[2] * 100}%;height:{block.bbox[3] * 100}%"
 >
   {#if block.tr.trim()}
@@ -54,7 +54,7 @@
     position: absolute;
     pointer-events: none;
   }
-  .mtr-b.sel {
+  .mtr-b.mtr-sel {
     outline: 2px dashed #ff3d6e;
     outline-offset: 2px;
   }

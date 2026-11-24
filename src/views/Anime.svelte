@@ -28,6 +28,8 @@
   let loaded = $state(false);
   /** 刚找到 / 生成的封面（不用整页重新读取） */
   let covers = $state<Record<number, SeriesCover>>({});
+  /** 打开中的“选择官方海报”面板 */
+  let picker = $state<{ kind: 'series' | 'video'; id: number; title: string } | null>(null);
   let openId = $state<number | null>(null);
 
   const openSeries = $derived(openId == null ? null : (list.find(s => s.id === openId) ?? null));
@@ -102,6 +104,7 @@
   function seriesMenu(e: MouseEvent, s: Series) {
     if (sel.has(s.id) && sel.size > 1) return openMenu(e, `已选 ${sel.size} 部`, batch());
     openMenu(e, s.title, mediaEntries('series', s.id, s.title, [
+      { label: '选择官方海报…', run: () => (picker = { kind: 'series', id: s.id, title: s.title }) },
       { label: '打开详情', run: () => (openId = s.id) },
       ...(s.next_id != null ? [{ label: '继续观看', run: () => s.next_id != null && ui.openItem(s.next_id, 'anime') }] : []),
     ]));

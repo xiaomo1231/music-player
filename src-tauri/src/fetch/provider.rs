@@ -212,6 +212,22 @@ pub trait Provider: Send + Sync {
         true
     }
 
+    /// 能不能把一部作品展开成各集 / 话 / 章（插件的 `episodes` 能力、.em 规则的 `episodes` 阶段）
+    fn can_episodes(&self) -> bool {
+        false
+    }
+
+    /// 搜索页用：只取作品列表，不展开分集（点开作品卡时再调 [`Provider::episodes`]）。
+    /// 默认和 `search` 一样；有分集能力的下载源要覆盖它
+    fn search_works<'a>(&'a self, query: &'a str, media_kind: &'a str, page: u32) -> BoxFuture<'a, Result<Vec<Item>, String>> {
+        self.search(query, media_kind, page)
+    }
+
+    /// 一部作品（`search_works` 给出的一条）→ 各集 / 话 / 章
+    fn episodes<'a>(&'a self, _work: &'a Item) -> BoxFuture<'a, Result<Vec<Item>, String>> {
+        Box::pin(async { Err(coded("unsupported", "这个下载源不能列出分集")) })
+    }
+
     /// 由下载源自己把文件下到 `dest` 文件夹里（插件的 `download` 能力）。`resume` 表示上次没下完，`dest` 里留着上次的文件
     fn download<'a>(
         &'a self,
@@ -340,16 +356,68 @@ pub fn file_name(item: &Item, ext: &str) -> String {
 
 // ---------- 搜索 ----------
 
-/// 搜索一个下载源，把结果转换成搜索页通用的 `Hit`
-pub async fn search(row: &super::SourceRow, query: &str, media_kind: &str) -> Result<Vec<Hit>, String> {
+fn get_or_missing(id: &str) -> Result<Arc<dyn Provider>, String> {
+    get(id).ok_or_else(|| crate::plugin::missing_reason(id).unwrap_or_else(|| format!("这个版本的软件里没有下载源“{id}”")))
+}
+
+/// 搜索一个下载源，把结果转换成搜索页通用的 `Hit`。
+/// `works` 为 true（搜索页）时，有分集能力的下载源只返回作品，作品条目标上 `expand`，点开时再用 [`episodes`] 取各集；
+/// 为 false（追更）时照旧展开成各集
+pub async fn search(row: &super::SourceRow, query: &str, media_kind: &str, works: bool) -> Result<Vec<Hit>, String> {
     let id = provider_id(&row.url).ok_or("来源地址不正确")?;
-    let p = get(id).ok_or_else(|| crate::plugin::missing_reason(id).unwrap_or_else(|| format!("这个版本的软件里没有下载源“{id}”")))?;
+    let p = get_or_missing(id)?;
     let info = p.info();
     if !info.media_kinds.is_empty() && !info.media_kinds.iter().any(|k| k == media_kind) {
         return Ok(vec![]);
     }
+    if works && p.can_episodes() {
+        let items = p.search_works(query, media_kind, 1).await?;
+        return Ok(items
+            .iter()
+            .map(|it| {
+                let mut h = to_hit(id, it);
+                h.expand = it.episode.is_none();
+                h
+            })
+            .collect());
+    }
     let items = p.search(query, media_kind, 1).await?;
     Ok(items.iter().map(|it| to_hit(id, it)).collect())
+}
+
+/// 搜索页点开作品卡：把一条作品结果（`Hit.url`）展开成各集，按集数排好
+pub async fn episodes(work_url: &str) -> Result<Vec<Hit>, String> {
+    let (id, work, _) = parse_task_url(work_url).ok_or("作品地址不正确")?;
+    let p = get_or_missing(&id)?;
+    if !p.can_episodes() {
+        return Err(coded("unsupported", "这个下载源不能列出分集"));
+    }
+    let eps = p.episodes(&work).await?;
+    Ok(episode_hits(&id, &work, eps))
+}
+
+/// 各集转成 `Hit`：没写作品名、封面的用作品的；有集数的按集数排，没集数的保持原顺序排在后面
+pub fn episode_hits(provider: &str, work: &Item, eps: Vec<Item>) -> Vec<Hit> {
+    let series = if work.series.trim().is_empty() { &work.title } else { &work.series };
+    let mut eps: Vec<Item> = eps
+        .into_iter()
+        .map(|mut e| {
+            if e.series.trim().is_empty() {
+                e.series = series.clone();
+            }
+            if e.cover.is_empty() {
+                e.cover = work.cover.clone();
+            }
+            e
+        })
+        .collect();
+    eps.sort_by(|a, b| match (a.episode, b.episode) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    eps.iter().map(|e| to_hit(provider, e)).collect()
 }
 
 pub fn to_hit(provider: &str, it: &Item) -> Hit {
@@ -488,6 +556,101 @@ pub mod tests {
             extra: serde_json::json!({ "sign": "a&b=c 中文" }),
             ..Default::default()
         }
+    }
+
+    /// 有分集能力的假下载源：搜索给两部作品，episodes 给乱序的各话
+    struct Works;
+
+    impl Provider for Works {
+        fn info(&self) -> ProviderInfo {
+            ProviderInfo {
+                id: "works".into(),
+                name: "分集测试源".into(),
+                media_kinds: vec!["manga".into()],
+                note: String::new(),
+            }
+        }
+        fn can_episodes(&self) -> bool {
+            true
+        }
+        fn search<'a>(&'a self, _q: &'a str, _mk: &'a str, _page: u32) -> BoxFuture<'a, Result<Vec<Item>, String>> {
+            Box::pin(async { Err("追更才会走这里".to_string()) })
+        }
+        fn search_works<'a>(&'a self, _q: &'a str, _mk: &'a str, _page: u32) -> BoxFuture<'a, Result<Vec<Item>, String>> {
+            Box::pin(async {
+                Ok(vec![
+                    Item {
+                        id: "w1".into(),
+                        title: "星屑邮局".into(),
+                        cover: "https://example.invalid/c.jpg".into(),
+                        media_kind: "manga".into(),
+                        ..Default::default()
+                    },
+                    Item {
+                        id: "w2#1".into(),
+                        title: "单话".into(),
+                        series: "潮汐档案".into(),
+                        episode: Some(1.0),
+                        media_kind: "manga".into(),
+                        ..Default::default()
+                    },
+                ])
+            })
+        }
+        fn episodes<'a>(&'a self, work: &'a Item) -> BoxFuture<'a, Result<Vec<Item>, String>> {
+            Box::pin(async move {
+                Ok([Some(2.0), None, Some(1.0), Some(10.0)]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ep)| Item {
+                        id: format!("{}#{i}", work.id),
+                        title: format!("第{i}话"),
+                        episode: *ep,
+                        media_kind: "manga".into(),
+                        ..Default::default()
+                    })
+                    .collect())
+            })
+        }
+        fn resolve<'a>(&'a self, _item: &'a Item, _q: &'a str) -> BoxFuture<'a, Result<Resolved, String>> {
+            Box::pin(async { Err("不下载".to_string()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn search_works_then_episodes() {
+        register(Arc::new(Works));
+        let row = super::super::SourceRow {
+            id: 1,
+            kind: "provider".into(),
+            name: "分集测试源".into(),
+            url: source_url("works"),
+            rule_json: String::new(),
+            enabled: true,
+            created_at: 0,
+        };
+        // 搜索页：只拿作品，没集数的作品标上 expand
+        let hits = search(&row, "星屑", "manga", true).await.unwrap();
+        assert_eq!(hits.len(), 2);
+        assert!(hits[0].expand);
+        assert_eq!(hits[0].work, "星屑邮局");
+        assert!(!hits[1].expand);
+        // 追更：走 search（这里故意报错，说明没有用 search_works）
+        assert!(search(&row, "星屑", "manga", false).await.is_err());
+        // 点开作品：按集数排序，作品名和封面从作品补上
+        let eps = episodes(&hits[0].url).await.unwrap();
+        let nums: Vec<Option<f64>> = eps.iter().map(|h| h.episode).collect();
+        assert_eq!(nums, vec![Some(1.0), Some(2.0), Some(10.0), None]);
+        assert!(eps.iter().all(|h| h.work == "星屑邮局" && !h.expand));
+        let (_, first, _) = parse_task_url(&eps[0].url).unwrap();
+        assert_eq!(first.cover, "https://example.invalid/c.jpg");
+        unregister("works");
+    }
+
+    #[tokio::test]
+    async fn episodes_needs_capability() {
+        let u = task_url("mock-none", &Item::default(), "");
+        assert!(episodes(&u).await.is_err());
     }
 
     #[test]

@@ -4,20 +4,18 @@
   import { onMount } from 'svelte';
   import { inTauri } from '../../lib/api';
   import TorrentQueue from './TorrentQueue.svelte';
+  import WorkCard from './WorkCard.svelte';
+  import { splitGroup, type WorkCard as Card } from '../../lib/fetchworks';
   import { toast } from '../../lib/ui.svelte';
   import {
     fetchApi,
     fmtBytes,
-    fmtDur,
-    epText,
     hitKindText,
     isBtUrl,
     MEDIA_TEXT,
     metaApi,
     supportsKind,
-    providerItem,
-    providerQualityKey,
-    withQuality,
+    providerKey,
     type DlItem,
     type Group,
     type Hit,
@@ -25,16 +23,16 @@
     type MetaEpisode,
     type MetaInfo,
     type ProviderInfo,
-    type ProviderItem,
     type SearchOut,
     type Source,
     type SourceStat,
     type SubRow,
+    type TaskRow,
   } from '../../lib/fetch';
   import { plugins, pickPlugin, CODE_TEXT } from '../../lib/plugin.svelte';
   import { em } from '../../lib/em.svelte';
 
-  let { onqueued }: { onqueued?: () => void } = $props();
+  let { onqueued, tasks = [] }: { onqueued?: () => void; tasks?: TaskRow[] } = $props();
 
   let mk = $state('anime');
   let q = $state('');
@@ -45,9 +43,6 @@
   let prefs = $state('');
   let picking = $state(false);
   let subs = $state<SubRow[]>([]);
-  // 下载源结果：曲目信息（从结果地址里解出）和每行选的档位
-  let items = $derived<(ProviderItem | null)[]>(out ? out.hits.map(providerItem) : []);
-  let qsel = $state<Record<number, string>>({});
   // 资料源：搜索时一起查作品资料
   let metas = $state<MetaInfo[]>([]);
   let providers = $state<ProviderInfo[]>([]);
@@ -58,6 +53,36 @@
   const cardKey = (c: MetaCard) => `${c.provider}/${c.subject.id}`;
   /** 这个类型目前有没有能用的下载源（漫画 / 小说只能来自下载源） */
   const noBookSource = $derived((mk === 'manga' || mk === 'novel') && !providers.some(p => supportsKind(p.media_kinds, mk)));
+
+  // 下载源结果按“来源 + 作品”折叠成作品卡；磁力 / RSS 等多个版本的结果照旧逐条列出
+  const parts = $derived(out ? out.groups.map(g => ({ g, ...splitGroup(out!.hits, g) })) : []);
+  const workCards = $derived(parts.flatMap(p => p.cards));
+  const rowGroups = $derived(parts.filter(p => p.rows.length));
+  let openCard = $state<string | null>(null);
+  /** 已经在下载列表里的下载源条目（失败、取消的不算），作品卡里标“已下” */
+  const dlKeys = $derived(
+    new Set(tasks.filter(t => t.status !== 'failed' && t.status !== 'canceled').map(t => providerKey(t.url)).filter((k): k is string => !!k)),
+  );
+  const cardPick = (c: Card) => {
+    const i = c.indices.find(i => picks[i] !== undefined);
+    return i === undefined ? '' : picks[i];
+  };
+  const subOfCard = (c: Card) => subs.find(s => s.query === c.work && s.source_id === c.sourceId);
+  async function toggleCardSub(c: Card, workUrl: string, cover: string) {
+    const existing = subOfCard(c);
+    try {
+      if (existing) {
+        await fetchApi.unsubscribe(existing.id);
+        toast('已取消追更');
+      } else {
+        await fetchApi.subscribe(c.sourceId, c.work, mk, workUrl || undefined, cover || undefined);
+        toast(`已追更：${c.work}。书架里这部作品会显示“检查更新”，之后有新${mk === 'anime' ? '集' : mk === 'novel' ? '章' : '话'}会自动下载`);
+      }
+      await loadSubs();
+    } catch (err) {
+      toast(String(err));
+    }
+  }
 
   const PLACEHOLDER: Record<string, string> = {
     anime: '例如：星屑邮局',
@@ -165,7 +190,7 @@
     out = null;
     picks = {};
     sel = {};
-    qsel = {};
+    openCard = null;
     loadCards(text);
     try {
       out = await fetchApi.search(text, mk, scope.filter(id => scoped.some(s => s.id === id)));
@@ -196,24 +221,7 @@
     return { title: h.title, url: h.url, kind: h.kind, mediaKind: mk, sourceId: h.source_id, size: h.size };
   }
 
-  /** 带上这一行选的档位 */
-  function hitAt(i: number): Hit {
-    const h = out!.hits[i];
-    return qsel[i] !== undefined ? withQuality(h, qsel[i]) : h;
-  }
-
-  /** 这一组是不是下载源的结果（按专辑 / 作品分组，“全部下载”下整组） */
-  const isProviderGroup = (g: Group) => !!out && out.hits[g.indices[0]]?.kind === 'provider';
-  /** 这一组的结果带集数，可以追更（下载源给了 episode 时也可以） */
-  const hasEpisodes = (g: Group) => !!out && g.indices.some(i => out!.hits[i].episode !== null);
-  /** 下载源结果的说明行：音乐显示艺人专辑，其他显示作品、集数、作者 / 字幕组 */
-  function itemLine(it: ProviderItem): string {
-    if (it.media_kind === 'music' || (!it.series && it.episode === null)) {
-      return [it.artist || (it.media_kind === 'music' ? '艺人未知' : ''), it.album, it.year, fmtDur(it.duration)].filter(Boolean).join(' · ');
-    }
-    const season = it.season && it.season > 1 ? `第 ${it.season} 季` : '';
-    return [it.series, season, epText(it.media_kind, it.episode), it.artist, it.year, fmtDur(it.duration)].filter(Boolean).join(' · ');
-  }
+  const hitAt = (i: number): Hit => out!.hits[i];
 
   /** 磁力 / 种子先弹确认页（TorrentQueue），勾选后只下载选中的文件 */
   let btQueue = $state<DlItem[]>([]);
@@ -246,13 +254,11 @@
   }
 
   /** 整季：优先下载 AI 推荐的版本，没有推荐就下第一个 */
-  function seasonHits(g: Group): Hit[] {
-    if (!out) return [];
-    // 下载源：整张专辑全部下载
-    if (isProviderGroup(g)) return g.indices.map(hitAt);
-    const recs = g.indices.filter(i => picks[i] !== undefined).map(hitAt);
+  function seasonHits(rows: number[]): Hit[] {
+    if (!out || !rows.length) return [];
+    const recs = rows.filter(i => picks[i] !== undefined).map(hitAt);
     if (recs.length) return recs;
-    return [hitAt(g.indices[0])];
+    return [hitAt(rows[0])];
   }
 
   function selectedHits(): Hit[] {
@@ -397,59 +403,52 @@
     {#if out.hits.length === 0}
       <div class="empty">没有找到结果。可以换个写法再试，或检查来源是否可用。</div>
     {/if}
-    {#each out.groups as g (g.work + g.indices[0])}
+    {#if workCards.length}
+      <div class="wgrid">
+        {#each workCards as c (c.key)}
+          <WorkCard
+            card={c}
+            hits={out.hits}
+            {mk}
+            downloaded={dlKeys}
+            sub={subOfCard(c)}
+            picked={cardPick(c)}
+            open={openCard === c.key}
+            ontoggle={() => (openCard = openCard === c.key ? null : c.key)}
+            ondownload={download}
+            onsub={(u, cv) => toggleCardSub(c, u, cv)}
+          />
+        {/each}
+      </div>
+    {/if}
+    {#each rowGroups as { g, rows } (g.work + g.indices[0])}
       <section class="hitgrp">
         <div class="grp-head">
           <b>{g.work}</b>
-          <span class="badge2">{g.indices.length} 个版本</span>
+          <span class="badge2">{rows.length} 个版本</span>
           {#if subOf(g)}<span class="badge2 ok">已追更</span>{/if}
           <span class="spacer"></span>
-          {#if isProviderGroup(g)}
-            <button class="mp-btn ghost" onclick={() => download(seasonHits(g))}>全部下载</button>
-            {#if hasEpisodes(g)}
-              <button class="mp-btn ghost" onclick={() => toggleSub(g)}>{subOf(g) ? '取消追更' : '追更'}</button>
-            {/if}
-          {:else}
-            <button class="mp-btn ghost" onclick={() => download(seasonHits(g))}>下载整季</button>
-            <button class="mp-btn ghost" onclick={() => toggleSub(g)}>{subOf(g) ? '取消追更' : '追更'}</button>
-          {/if}
+          <button class="mp-btn ghost" onclick={() => download(seasonHits(rows))}>下载整季</button>
+          <button class="mp-btn ghost" onclick={() => toggleSub(g)}>{subOf(g) ? '取消追更' : '追更'}</button>
         </div>
-        {#each g.indices as i (i)}
+        <div class="rgrid">
+        {#each rows as i (i)}
           {@const h = out.hits[i]}
-          {@const it = items[i]}
           <div class="rs" class:on={picks[i] !== undefined || sel[i]}>
             <div class="rs-top">
               <input type="checkbox" class="mp-sw" aria-label="选中" bind:checked={sel[i]} />
-              {#if it?.cover}<img class="hitcover" src={it.cover} alt="" loading="lazy" referrerpolicy="no-referrer" />{/if}
-              <b>{it ? it.title : h.title}</b>
+              <b title={h.title}>{h.title}</b>
               {#if picks[i] !== undefined}<span class="badge2 ai">推荐</span>{/if}
               {#if h.rule_updated}<span class="badge2">规则已更新</span>{/if}
             </div>
-            {#if it}
-              {@const qk = qsel[i] ?? providerQualityKey(h)}
-              {@const cur = it.qualities.find(x => x.key === qk) ?? it.qualities[0]}
-              <small>{itemLine(it)}</small>
-              <div class="qrow">
-                {#if it.qualities.length > 1}
-                  <select class="sel" aria-label={mk === 'music' ? '音质' : '版本'} value={qk} onchange={e => (qsel[i] = e.currentTarget.value)}>
-                    {#each it.qualities as x (x.key)}
-                      <option value={x.key}>{x.label || x.format.toUpperCase()}{x.size ? ' · ' + fmtBytes(x.size) : ''}</option>
-                    {/each}
-                  </select>
-                {:else if cur}
-                  <span class="badge2">{cur.label || cur.format.toUpperCase()}</span>
-                {/if}
-                <small>{cur?.format ? cur.format.toUpperCase() : ''}{cur?.bitrate ? ' ' + cur.bitrate + 'k' : ''} · {fmtBytes(cur?.size ?? h.size)} · {hitKindText(h.kind)}</small>
-              </div>
-            {:else}
-              <small>{h.resolution ?? '清晰度未知'} · {h.group ?? '字幕组未知'} · {fmtBytes(h.size)} · {hitKindText(h.kind)}{h.date ? ' · ' + h.date : ''}</small>
-            {/if}
+            <small>{h.resolution ?? '清晰度未知'} · {h.group ?? '字幕组未知'} · {fmtBytes(h.size)} · {hitKindText(h.kind)}{h.date ? ' · ' + h.date : ''}</small>
             <small>来源：{h.source_name}{picks[i] !== undefined ? ' · ' + picks[i] : ''}</small>
             <div class="acts">
               <button class="mp-btn ghost" onclick={() => download([hitAt(i)])}>下载这一个</button>
             </div>
           </div>
         {/each}
+        </div>
       </section>
     {/each}
   {/if}
@@ -526,8 +525,16 @@
     white-space: nowrap;
     flex: none;
   }
-  .qrow .sel {
-    max-width: 100%;
+  .wgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .rgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 8px;
   }
   .grp-head {
     display: flex;
@@ -553,23 +560,6 @@
   }
   .rs small {
     grid-column: 1 / -1;
-  }
-  .hitcover {
-    width: 34px;
-    height: 34px;
-    border-radius: 6px;
-    object-fit: cover;
-    flex: none;
-  }
-  .qrow {
-    grid-column: 1 / -1;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  .qrow small {
-    grid-column: auto;
   }
   .mcard {
     display: flex;

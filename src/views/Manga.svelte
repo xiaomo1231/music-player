@@ -13,6 +13,7 @@
   import ComicExportModal from '../components/em/ComicExportModal.svelte';
   import CoverPicker from '../components/media/CoverPicker.svelte';
   import WorkDetail from '../components/shelf/WorkDetail.svelte';
+  import FollowStrip from '../components/shelf/FollowStrip.svelte';
   import { art, artPoster, artPending, artUi, loadArt, openCoverPicker } from '../lib/media.svelte';
   import { comicDone, comicVol, comicFmt, nextVol, unitOf, type Vol } from '../lib/shelf';
 
@@ -282,6 +283,8 @@
         </select>
       </div>
     {/if}
+
+    <FollowStrip kind="manga" names={works.map(w => w.name)} />
 
     {#if sel.on}
       <BatchBar {sel} unit="部" total={order.length} onall={() => sel.selectAll(order)} entries={batch()} />

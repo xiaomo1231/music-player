@@ -1485,6 +1485,24 @@ impl Provider for EmProvider {
         Box::pin(async move { self.runner().search_all(query, media_kind, page).await })
     }
 
+    fn can_episodes(&self) -> bool {
+        self.eng.episodes.is_some()
+    }
+
+    fn search_works<'a>(&'a self, query: &'a str, media_kind: &'a str, page: u32) -> BoxFuture<'a, Result<Vec<Item>, String>> {
+        Box::pin(async move {
+            let works = self.runner().search_works(query, media_kind, page).await?;
+            Ok(works.into_iter().map(|w| w.1).collect())
+        })
+    }
+
+    fn episodes<'a>(&'a self, work: &'a Item) -> BoxFuture<'a, Result<Vec<Item>, String>> {
+        Box::pin(async move {
+            let eps = self.runner().episodes(work).await?;
+            Ok(eps.into_iter().map(|e| e.1).collect())
+        })
+    }
+
     fn resolve<'a>(&'a self, item: &'a Item, _quality: &'a str) -> BoxFuture<'a, Result<Resolved, String>> {
         Box::pin(async move { self.runner().resolve(item, false).await.map(|r| r.0) })
     }

@@ -184,6 +184,30 @@ impl Provider for PluginSource {
         self.decl.can("resolve")
     }
 
+    fn can_episodes(&self) -> bool {
+        self.decl.can("episodes")
+    }
+
+    fn search_works<'a>(&'a self, query: &'a str, media_kind: &'a str, page: u32) -> BoxFuture<'a, Result<Vec<Item>, String>> {
+        Box::pin(async move {
+            let v = self
+                .call(
+                    "search",
+                    json!({ "query": query, "media_kind": media_kind, "page": page }),
+                    Duration::from_secs(60),
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
+            parse_search(v, media_kind)
+        })
+    }
+
+    fn episodes<'a>(&'a self, work: &'a Item) -> BoxFuture<'a, Result<Vec<Item>, String>> {
+        Box::pin(async move { PluginSource::episodes(self, work).await })
+    }
+
     fn resolve<'a>(&'a self, item: &'a Item, quality: &'a str) -> BoxFuture<'a, Result<Resolved, String>> {
         Box::pin(async move {
             if !self.decl.can("resolve") {

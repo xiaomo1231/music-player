@@ -246,10 +246,11 @@ body.playing .deck.sq .sleeve{transform:none}
 .rbtn{background:#ffffff12;border:1px solid #ffffff1c;border-radius:9px;padding:5px 11px;font-size:12.5px;color:#eee}.rbtn.on{background:#fff;color:#111}.rbtn.pri{background:linear-gradient(90deg,#ff3d6e,#ff8a3d);border:0;color:#fff;font-weight:600}
 .rbtn:disabled{opacity:.4;cursor:default}
 /* 底栏 */
-footer{margin:0 10px 10px;border-radius:18px;background:var(--glass);backdrop-filter:blur(30px);border:1px solid var(--edge);display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:18px;padding:9px 16px}
-.np{display:flex;align-items:center;gap:12px;min-width:0;cursor:pointer}.np i{width:44px;height:44px;border-radius:10px;background-size:cover;flex:none}
+footer{margin:0 10px 10px;border-radius:18px;background:var(--glass);backdrop-filter:blur(30px);border:1px solid var(--edge);display:grid;grid-template-columns:minmax(150px,1fr) minmax(220px,500px) minmax(max-content,1fr);align-items:center;gap:18px;padding:9px 16px}
+/* 左栏（封面+歌名）至少留 150px；中间播放区在 220–500px 之间伸缩；右栏按钮不被挤压。窗口窄时中间先变窄，不再压住左边的歌名和格式标签 */
+.np{display:flex;align-items:center;gap:12px;min-width:0;cursor:pointer}.np>div{min-width:0;overflow:hidden}.np .mp-fmt{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:top;margin-top:2px}.np i{width:44px;height:44px;border-radius:10px;background-size:cover;flex:none}
 .np b{display:block;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.np span{font-size:12px;color:var(--mp-sub)}
-.mid{display:grid;gap:5px;width:min(44vw,500px)}
+.mid{display:grid;gap:5px;min-width:0}
 .ctrl{display:flex;justify-content:center;align-items:center;gap:14px}
 .ctrl button{background:none;border:0;font-size:17px;opacity:.75;padding:4px;transition:.2s}.ctrl button:hover{opacity:1;transform:scale(1.1)}.ctrl button.on{color:var(--mp-accent);opacity:1}
 .ctrl .pp{font-size:21px;width:40px;height:40px;border-radius:50%;background:#fff;color:#111;opacity:1;display:grid;place-items:center}

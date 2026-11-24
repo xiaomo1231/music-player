@@ -34,6 +34,8 @@ class UI {
   closeAsk = $state<{ ask: boolean; downloads: number } | null>(null);
   /** 从别处带到 AI 字幕页的视频 */
   subVideo = $state<number | null>(null);
+  /** 从顶部搜索框带到自动获取页的关键词（“查看全部”），搜索页读到后自动搜一次并清空 */
+  fetchQuery = $state<{ q: string; mk: string } | null>(null);
 
   setImmersive: (v?: boolean) => void = () => {};
   setMini: (v?: boolean) => void = () => {};

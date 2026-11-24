@@ -1,12 +1,12 @@
 <script lang="ts">
   // 搜索并下载：同时搜所有来源，按作品分组；AI 挑推荐版本；整季 / 选中下载；追更订阅。
   // 番剧 / 漫画 / 小说 / 音乐 / 视频共用；有资料源时在结果上方显示作品资料卡
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { inTauri } from '../../lib/api';
   import TorrentQueue from './TorrentQueue.svelte';
   import WorkCard from './WorkCard.svelte';
   import { splitGroup, type WorkCard as Card } from '../../lib/fetchworks';
-  import { toast } from '../../lib/ui.svelte';
+  import { toast, ui } from '../../lib/ui.svelte';
   import {
     fetchApi,
     fmtBytes,
@@ -101,6 +101,19 @@
 
   onMount(() => {
     loadSubs();
+  });
+
+  // 顶部搜索框点了“查看全部”：带着关键词过来，自动搜一次
+  $effect(() => {
+    const fq = ui.fetchQuery;
+    if (!fq) return;
+    untrack(() => {
+      ui.fetchQuery = null;
+      mk = fq.mk;
+      q = fq.q;
+      cards = [];
+      void doSearch();
+    });
   });
 
   // 来源或插件有变化时重新读（装了插件就能马上在这里选）

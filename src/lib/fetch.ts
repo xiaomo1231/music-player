@@ -209,7 +209,8 @@ export const fetchApi = {
     invoke<Source>('fetch_add_source', { kind, url, name, searchTemplate }),
   removeSource: (id: number) => invoke<void>('fetch_remove_source', { id }),
   rebuildRule: (id: number) => invoke<Source>('fetch_rebuild_rule', { id }),
-  search: (query: string, mediaKind: string, sources?: number[]) => invoke<SearchOut>('fetch_search', { query, mediaKind, sources: sources?.length ? sources : null }),
+  search: (query: string, mediaKind: string, sources?: number[], works = true) =>
+    invoke<SearchOut>('fetch_search', { query, mediaKind, sources: sources?.length ? sources : null, works }),
   setSourceEnabled: (id: number, enabled: boolean) => invoke<void>('fetch_set_source_enabled', { id, enabled }),
   aiPick: (results: Hit[], prefs: string) => invoke<Pick[]>('fetch_ai_pick', { results, prefs }),
   download: (items: DlItem[]) => invoke<number[]>('fetch_download', { items }),
@@ -476,3 +477,39 @@ export const biliApi = {
   ytdlpStatus: () => invoke<YtdlpStatus>('fetch_ytdlp_status'),
   ytdlpInstall: () => invoke<YtdlpStatus>('fetch_ytdlp_install'),
 };
+
+// ---------- 顶部搜索框搜下载源 ----------
+
+const GS_KEY = 'mp.gsProviders';
+/** 顶部搜索框是否同时搜下载源（默认开） */
+export function gsProvidersOn(): boolean {
+  try {
+    return localStorage.getItem(GS_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+export function setGsProviders(on: boolean) {
+  try {
+    localStorage.setItem(GS_KEY, on ? '1' : '0');
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 歌名 / 歌手比较用：去掉空白和标点、转小写（括号里的 Live、伴奏等保留，算不同版本） */
+export function normName(s: string): string {
+  return s.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+/** 本地曲库里的同一首歌（歌名一样，歌手一样或有一方没写歌手）；没有返回 undefined */
+export function findInLibrary<T extends { title: string; artist: string }>(tracks: T[], title: string, artist: string): T | undefined {
+  const t = normName(title);
+  if (!t) return undefined;
+  const a = normName(artist);
+  return tracks.find(x => {
+    if (normName(x.title) !== t) return false;
+    const b = normName(x.artist);
+    return !a || !b || a === b;
+  });
+}

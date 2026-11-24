@@ -842,11 +842,12 @@ pub fn fetch_remove_source(st: State<AppState>, id: i64) -> Result<(), String> {
 
 // ---------- 搜索 / 挑选命令 ----------
 
+/// `works`：默认 true（搜索页按作品折叠）；顶部搜索框搜单曲时传 false
 #[tauri::command]
-pub async fn fetch_search(app: AppHandle, query: String, media_kind: String, sources: Option<Vec<i64>>) -> Result<SearchOut, String> {
+pub async fn fetch_search(app: AppHandle, query: String, media_kind: String, sources: Option<Vec<i64>>, works: Option<bool>) -> Result<SearchOut, String> {
     let mk = if media_kind.trim().is_empty() { "anime".to_string() } else { media_kind };
     let only = sources.filter(|s| !s.is_empty());
-    search_in(&app, &query, &mk, only.as_deref(), true).await
+    search_in(&app, &query, &mk, only.as_deref(), works.unwrap_or(true)).await
 }
 
 /// 搜索页点开作品卡：把一条作品结果展开成各集 / 话 / 章（按集数排好）

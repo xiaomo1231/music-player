@@ -74,6 +74,13 @@
     }
   }
 
+  // 电影的手动封面排在官方海报后面，选了本地图片就顺便关掉这部的联网海报
+  async function local() {
+    onclose();
+    if (kind === 'comic') return;
+    if (await changeCover(kind, id)) await invoke('art_off', { kind, id }).catch(() => {});
+  }
+
   async function off() {
     await invoke('art_off', { kind, id }).catch(e => toast(String(e)));
     toast('这部不再使用联网海报');
@@ -126,7 +133,7 @@
   </div>
   <div class="rowbtns">
     {#if kind !== 'comic'}
-      <button class="mp-btn ghost" onclick={() => { onclose(); changeCover(kind, id); }}>用本地图片…</button>
+      <button class="mp-btn ghost" onclick={local}>用本地图片…</button>
     {/if}
     <button class="mp-btn ghost" disabled={busy} onclick={reset}>恢复自动匹配</button>
     <button class="mp-btn ghost" onclick={off}>不要联网封面</button>

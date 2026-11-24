@@ -147,6 +147,15 @@ class ArtState {
   comicByName = $derived(Object.fromEntries(Object.values(this.comic).filter(a => a.query).map(a => [a.query as string, a])));
 }
 export const art = new ArtState();
+
+/** 打开中的“更换封面”面板（同一时间只显示一个页面，所以放全局） */
+class ArtUi {
+  picker = $state<{ kind: ArtKind; id: number; title: string } | null>(null);
+}
+export const artUi = new ArtUi();
+export function openCoverPicker(kind: ArtKind, id: number, title: string) {
+  artUi.picker = { kind, id, title };
+}
 let artStarted = false;
 
 function putArt(a: ArtInfo) {

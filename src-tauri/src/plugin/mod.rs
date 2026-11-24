@@ -1484,4 +1484,36 @@ mod tests {
         assert!(normalize_setting(&m.settings[2], &json!("ogg")).is_err());
         assert!(normalize_setting(&m.settings[0], &json!("/no/such/dir/x")).is_err());
     }
+
+    /// 仓库里自带的模板和示例都要能通过安装检查（js 模板还要能在沙箱里加载）
+    #[test]
+    fn bundled_templates_pass_checks() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tools");
+        let mut n = 0;
+        for group in ["plugin-templates", "plugin-examples"] {
+            for e in std::fs::read_dir(root.join(group)).unwrap().flatten() {
+                let dir = e.path();
+                if !dir.join("plugin.json").is_file() {
+                    continue;
+                }
+                n += 1;
+                let m = Manifest::parse(&std::fs::read_to_string(dir.join("plugin.json")).unwrap()).unwrap();
+                // 测试里拿不到软件版本，版本要求单独不算
+                let issues: Vec<String> = preview_of(&dir, &m).issues.into_iter().filter(|i| !i.contains("版本的软件")).collect();
+                assert!(issues.is_empty(), "{}: {issues:?}", dir.display());
+                if m.runtime.kind == "js" {
+                    let src = std::fs::read_to_string(dir.join(&m.runtime.file)).unwrap();
+                    let rt = rquickjs::Runtime::new().unwrap();
+                    let ctx = rquickjs::Context::full(&rt).unwrap();
+                    ctx.with(|ctx| {
+                        let (m, _) = rquickjs::Module::declare(ctx.clone(), "main.js", src).unwrap().eval().unwrap();
+                        let ns = m.namespace().unwrap();
+                        let f: rquickjs::Value = ns.get("search").unwrap();
+                        assert!(f.is_function(), "js 模板要导出 search");
+                    });
+                }
+            }
+        }
+        assert!(n >= 5, "模板和示例应该有 5 个，实际 {n}");
+    }
 }

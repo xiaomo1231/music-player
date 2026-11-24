@@ -168,18 +168,31 @@ class Player {
     } else this.playList([t], 0);
   }
 
-  /** 下一首播放 */
+  /** 下一首播放：已经在队列里的歌挪到当前这首后面（从音乐库播放时整个库都在队列里，不挪的话这个操作什么都不做） */
   playNext(tracks: Track[]) {
     if (!this.current) return this.playList(tracks);
-    const have = new Set(this.queue.map(q => q.id));
-    const add = tracks.filter(t => !have.has(t.id));
-    const base = this.queue.length;
-    this.queue = [...this.queue, ...add];
-    const idxs = add.map((_, k) => base + k);
-    const o = [...this.order];
-    o.splice(this.pos + 1, 0, ...idxs);
+    const curIdx = this.order[this.pos];
+    const at = new Map(this.queue.map((q, i) => [q.id, i]));
+    const queue = [...this.queue];
+    const picked: number[] = [];
+    for (const t of tracks) {
+      let i = at.get(t.id);
+      if (i === undefined) {
+        i = queue.length;
+        queue.push(t);
+        at.set(t.id, i);
+      }
+      if (i !== curIdx && !picked.includes(i)) picked.push(i);
+    }
+    if (!picked.length) return;
+    const moving = new Set(picked);
+    const o = this.order.filter(i => !moving.has(i));
+    const pos = o.indexOf(curIdx);
+    o.splice(pos + 1, 0, ...picked);
+    this.queue = queue;
     this.order = o;
-    toast(`已添加 ${add.length} 首到下一首播放`);
+    this.pos = pos;
+    toast(`已添加 ${picked.length} 首到下一首播放`);
   }
 
   enqueue(tracks: Track[]) {

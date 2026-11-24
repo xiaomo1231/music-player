@@ -3,7 +3,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use std::path::Path;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 pub fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
@@ -58,6 +58,14 @@ fn migrate(conn: &Connection) -> Result<()> {
     if v < 5 {
         // v5：番剧 / 剧集卡片的竖版截帧（没有海报时用）
         add_column(conn, "series", "frame", "TEXT")?;
+    }
+    if v < 6 {
+        // v6：歌曲的补全封面（同专辑共用或联网找到的），重新读标签时不会被冲掉；
+        // net_lock = 1 表示用户手动选的，连内嵌封面也盖过；art_rules 记录按哪一版本地查找规则补过
+        add_column(conn, "tracks", "net_cover", "TEXT")?;
+        add_column(conn, "tracks", "net_hue", "INTEGER")?;
+        add_column(conn, "tracks", "net_lock", "INTEGER NOT NULL DEFAULT 0")?;
+        add_column(conn, "tracks", "art_rules", "INTEGER NOT NULL DEFAULT 0")?;
     }
     conn.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION}"))?;
     Ok(())

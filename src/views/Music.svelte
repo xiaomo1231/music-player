@@ -16,6 +16,8 @@
   import { fmtT, coverCSS } from '../lib/util';
   import { smartLists, customLists, matchRules, type SmartDef } from '../lib/smart.svelte';
   import SmartRuleModal from '../components/SmartRuleModal.svelte';
+  import MusicCoverPicker from '../components/music/MusicCoverPicker.svelte';
+  import { musicArt, refetchCovers } from '../lib/musicart.svelte';
 
   let filter = $state<string>('all'); // all / smart:<key> / pl:<id>
   let group = $state<'none' | 'artist' | 'album' | 'format' | 'folder' | 'year'>('none');
@@ -157,6 +159,7 @@
       ...(ts.some(t => !t.favorite) ? [{ label: '收藏', run: () => favMany(ts, true) }] : []),
       ...(ts.some(t => t.favorite) ? [{ label: '取消收藏', run: () => favMany(ts, false) }] : []),
       { label: '转换格式…', run: () => { ui.convertPaths = ts.map(t => t.path); ui.go('convert'); } },
+      { label: '重新获取封面', run: () => refetchCovers(ids) },
       ...(pl ? [{ label: '从这个歌单移除', run: () => plRemoveMany(ids) }] : []),
       'sep',
       { label: '从媒体库移除…', run: async () => { if (await removeMany('track', ids)) sel.clear(); } },
@@ -388,6 +391,7 @@
 </section>
 
 {#if ruleEdit !== undefined}<SmartRuleModal def={ruleEdit} onclose={() => (ruleEdit = undefined)} />{/if}
+{#if musicArt.picker}<MusicCoverPicker {...musicArt.picker} onclose={() => (musicArt.picker = null)} />{/if}
 
 <style>
   /* 智能列表卡片：固定高度、顶部对齐；文字在左上，按钮锚在右下角，不参与文字流 */

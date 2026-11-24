@@ -118,7 +118,9 @@ pub fn index_file(conn: &Connection, path: &Path, kind: &str, dirs: &Dirs) -> Re
                  VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
                  ON CONFLICT(file_id) DO UPDATE SET title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,
                  track_no=excluded.track_no,disc_no=excluded.disc_no,year=excluded.year,genre=excluded.genre,duration=excluded.duration,bitrate=excluded.bitrate,
-                 sample_rate=excluded.sample_rate,bit_depth=excluded.bit_depth,channels=excluded.channels,format=excluded.format,lossless=excluded.lossless,cover=excluded.cover,hue=excluded.hue",
+                 sample_rate=excluded.sample_rate,bit_depth=excluded.bit_depth,channels=excluded.channels,format=excluded.format,lossless=excluded.lossless,
+                 cover=CASE WHEN tracks.net_lock=1 THEN tracks.net_cover ELSE coalesce(excluded.cover,tracks.net_cover) END,
+                 hue=CASE WHEN tracks.net_lock=1 THEN tracks.net_hue WHEN excluded.cover IS NULL THEN tracks.net_hue ELSE excluded.hue END",
                 params![file_id, m.title, m.artist, m.album, m.album_artist, m.track_no, m.disc_no, m.year, m.genre, m.duration, m.bitrate, m.sample_rate, m.bit_depth, m.channels, m.format, m.lossless as i64, m.cover, m.hue],
             )?;
             set_search(conn, file_id, "music", &m.title, &format!("{} {}", m.artist, m.album))?;

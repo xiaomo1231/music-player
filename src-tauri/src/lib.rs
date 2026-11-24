@@ -22,6 +22,7 @@ pub mod mangatr;
 pub mod media;
 pub mod meta;
 pub mod metadata;
+pub mod musicart;
 pub mod organize;
 pub mod parse;
 #[cfg(feature = "mpv")]
@@ -52,6 +53,7 @@ fn init_modules(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     lyrics::init(conn)?;
     mangatr::init(conn)?;
     media::init(conn)?;
+    musicart::init(conn)?;
     organize::init(conn)?;
     shell::init(conn)?;
     subtitle::init(conn)?;
@@ -74,6 +76,7 @@ fn setup_modules(app: &tauri::AppHandle) {
     adclean::setup(app);
     aiclassify::setup(app);
     artmeta::setup(app);
+    musicart::setup(app);
     em::setup(app);
     plugin::setup(app);
 }
@@ -254,6 +257,15 @@ pub fn run() {
             media::media_thumb_dir,
             media::media_series_cover,
             media::media_video_cover,
+            musicart::music_art_picker,
+            musicart::music_art_search,
+            musicart::music_art_choose,
+            musicart::music_art_local,
+            musicart::music_art_reset,
+            musicart::music_art_refetch,
+            musicart::music_art_status,
+            musicart::music_art_auto,
+            musicart::music_art_missing,
             artmeta::art_list,
             artmeta::art_auto,
             artmeta::art_refresh_all,

@@ -175,7 +175,14 @@ button{font:inherit;color:inherit;cursor:pointer}
 .mp-mini{position:fixed;right:24px;bottom:24px;z-index:700;width:320px;display:none;grid-template-columns:56px 1fr;gap:4px 12px;align-items:center;padding:12px;border-radius:calc(var(--mp-radius)*1.2);background:var(--mp-panel);backdrop-filter:blur(var(--mp-blur));border:1px solid var(--mp-line);box-shadow:var(--mp-shadow);font-family:var(--mp-font);color:var(--mp-text)}
 body.mini .mp-mini{display:grid;animation:mp-pop .4s cubic-bezier(.2,.8,.2,1)}
 body.mini>*:not(.mp-mini):not(.mp-modal):not(.mp-dim):not(.mp-toast):not(.mp-refresh){visibility:hidden}
-body.mini{background:transparent}
+/* 迷你模式下窗口本身就是卡片：卡片铺满窗口，窗口底色和卡片一致，不再露出白底 */
+body.mini{background:var(--mp-bg)}
+body.mini .mp-mini{inset:0;width:auto;height:auto;align-content:center;border:0;border-radius:0;box-shadow:none;animation:none}
+body.mini:has(.mp-mini[data-bg=dark]){background:#1b1c22}body.mini:has(.mp-mini[data-bg=black]){background:#000}body.mini:has(.mp-mini[data-bg=light]){background:#f3f4f7}
+.mp-mini[data-bg=dark]{background:#1b1c22}.mp-mini[data-bg=black]{background:#000}
+.mp-mini[data-bg=light]{background:#f3f4f7;color:#1c1d22;--mp-line:rgba(0,0,0,.1)}
+body.playing .mp-mini.nospin .mp-mc,.mp-mini.nospin .mp-mc{animation:none}
+.mp-mini .mp-mb button{opacity:.85}.mp-mini .mp-mb button:hover{opacity:1}
 @keyframes mp-pop{from{opacity:0;transform:translateY(20px) scale(.95)}}
 .mp-mini .mp-mc{width:56px;height:56px;border-radius:10px;grid-row:span 3;animation:mp-spin 14s linear infinite;animation-play-state:paused;border-radius:50%}
 body.playing .mp-mini .mp-mc{animation-play-state:running}

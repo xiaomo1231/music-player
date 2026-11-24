@@ -24,6 +24,7 @@
   import ScanModal from './components/ScanModal.svelte';
   import EqModal from './components/EqModal.svelte';
   import OledModal from './components/OledModal.svelte';
+  import MiniModal from './components/MiniModal.svelte';
   import AiModal from './components/AiModal.svelte';
   import PlaylistAddModal from './components/PlaylistAddModal.svelte';
   import KeysModal from './components/KeysModal.svelte';
@@ -138,12 +139,15 @@
       await w.setFullscreen(false).catch(() => {});
       ui.immersive = false;
       await w.setDecorations(false);
+      // 先放开最小尺寸再缩小，否则会被主窗口的 900×600 下限卡住，留下一大片空白
       await w.setMinSize(new LogicalSize(340, 104)).catch(() => {});
       await w.setSize(new LogicalSize(360, 112));
+      await w.setResizable(false).catch(() => {});
       await w.setAlwaysOnTop(true);
     } else {
       await w.setAlwaysOnTop(false);
       await w.setDecorations(true);
+      await w.setResizable(true).catch(() => {});
       await w.setMinSize(new LogicalSize(900, 600)).catch(() => {});
       await w.setSize(new LogicalSize(1280, 800));
       await w.center().catch(() => {});
@@ -352,6 +356,7 @@
 {#if ui.modal === 'scan'}<ScanModal />{/if}
 {#if ui.modal === 'eq'}<EqModal />{/if}
 {#if ui.modal === 'oled'}<OledModal />{/if}
+{#if ui.modal === 'mini'}<MiniModal />{/if}
 {#if ui.modal === 'ai'}<AiModal />{/if}
 {#if ui.modal === 'playlist-add'}<PlaylistAddModal />{/if}
 {#if ui.modal === 'keys'}<KeysModal />{/if}

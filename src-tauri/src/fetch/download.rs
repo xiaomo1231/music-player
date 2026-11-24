@@ -203,6 +203,9 @@ async fn run(app: &AppHandle, id: i64, ctl: &Arc<Ctl>) -> Result<Option<organize
     if ctl.flag() == CANCEL {
         return Ok(None);
     }
+    if let Some(out) = keep_metadata(&task, &path, &dl_dir) {
+        return Ok(Some(out));
+    }
     set_task_status(app, id, "organizing", "");
     let media_kind = task.media_kind.clone();
     let org_root = PathBuf::from(&settings.organize_dir);
@@ -216,6 +219,22 @@ async fn run(app: &AppHandle, id: i64, ctl: &Arc<Ctl>) -> Result<Option<organize
         }
     }
     Ok(Some(out))
+}
+
+/// 只下元数据的 B 站任务：没有媒体可整理，把输出文件夹改名成“标题 [BV号] 元数据”留在下载目录
+fn keep_metadata(task: &TaskView, path: &Path, dl_dir: &Path) -> Option<organize::Outcome> {
+    let (pid, item, quality) = provider::parse_task_url(&task.url)?;
+    if pid != "bilibili" || bili::Choice::parse(&quality).mode != bili::Mode::Meta || !path.is_dir() {
+        return None;
+    }
+    let dst = organize::unique(dl_dir.join(organize::sanitize(&format!("{} [{}] 元数据", item.title, item.id))));
+    let saved = if std::fs::rename(path, &dst).is_ok() { dst } else { path.to_path_buf() };
+    let n = std::fs::read_dir(&saved).map(|d| d.count()).unwrap_or(0);
+    Some(organize::Outcome {
+        save_path: saved.to_string_lossy().into_owned(),
+        manual: false,
+        note: format!("已保存元数据 {n} 个文件（信息、简介、封面等），在下载目录"),
+    })
 }
 
 /// 下载目录里的文件名：取网址最后一段，没有就用标题
@@ -474,16 +493,23 @@ async fn bt_download(app: &AppHandle, task: &TaskView, ctl: &Ctl, dl_dir: &Path,
 
 /// yt-dlp 子进程：解析 [download] 进度行。成功后返回任务自己的输出文件夹（视频和同名的字幕、弹幕、封面一起整理入库）。
 /// B 站网址会带上登录 Cookie（临时文件，用完即删）、清晰度、字幕和弹幕参数，见 bili::ytdlp_args
-/// `quality`：清晰度上限（画面高度），给下载源在搜索页选的档位用；None 时按设置
-async fn ytdlp_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_dir: &Path, quality: Option<u32>, format: &str) -> Result<Option<PathBuf>> {
+/// `choice`：下载源在搜索页选的档位（清晰度上限，B 站还有音视频 / 仅音频 / 仅视频 / 仅元数据、字幕、弹幕、封面）；None 时按设置
+async fn ytdlp_download(
+    app: &AppHandle,
+    task: &TaskView,
+    ctl: &Arc<Ctl>,
+    dl_dir: &Path,
+    choice: Option<&bili::Choice>,
+    format: &str,
+) -> Result<Option<PathBuf>> {
     let exe = source::ytdlp_path().ok_or_else(|| anyhow!(source::YTDLP_MISSING))?;
     let out_dir = dl_dir.join(format!("yt-{}", task.id));
     tokio::fs::create_dir_all(&out_dir).await?;
     source::throttle(&task.url).await;
     let settings = with_db(app, |c| Ok(load_settings(c)))?;
     let mut opts = bili::YtOpts::new(&task.url, &task.media_kind, &settings);
-    if let Some(q) = quality {
-        opts.quality = q;
+    if let Some(c) = choice {
+        c.apply(&mut opts);
     }
     if provider::valid_ytdlp_format(format) {
         opts.format = format.to_string();
@@ -635,8 +661,8 @@ async fn provider_download(app: &AppHandle, task: &TaskView, ctl: &Arc<Ctl>, dl_
         }
         provider::Target::Ytdlp { url, format } => {
             t.url = url.clone();
-            // 档位是数字时当作清晰度上限（B 站下载源的档位就是画面高度，“0”为最高，空串按设置）
-            ytdlp_download(app, &t, ctl, dl_dir, quality.parse::<u32>().ok(), format).await?
+            // 档位是数字时当作清晰度上限（“0”为最高，空串按设置）；B 站下载源还带下载内容、字幕、弹幕、封面，见 bili::Choice
+            ytdlp_download(app, &t, ctl, dl_dir, Some(&bili::Choice::parse(&quality)), format).await?
         }
         provider::Target::Magnet { uri } => {
             t.url = uri.clone();

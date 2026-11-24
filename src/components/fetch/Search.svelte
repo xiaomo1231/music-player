@@ -230,8 +230,8 @@
     }
   }
 
-  function toItem(h: Hit): DlItem {
-    return { title: h.title, url: h.url, kind: h.kind, mediaKind: mk, sourceId: h.source_id, size: h.size };
+  function toItem(h: Hit, mediaKind = mk): DlItem {
+    return { title: h.title, url: h.url, kind: h.kind, mediaKind, sourceId: h.source_id, size: h.size };
   }
 
   const hitAt = (i: number): Hit => out!.hits[i];
@@ -241,10 +241,10 @@
   let directCount = 0;
   const isBtItem = (it: DlItem) => it.kind === 'magnet' || it.kind === 'torrent' || (!it.kind && isBtUrl(it.url));
 
-  async function download(hits: Hit[]) {
+  async function download(hits: Hit[], mediaKind?: string) {
     if (hits.length === 0) return toast('没有可下载的条目');
     if (btQueue.length) return toast('还有种子在等你确认');
-    const items = hits.map(toItem);
+    const items = hits.map(h => toItem(h, mediaKind ?? mk));
     const direct = items.filter(it => !isBtItem(it));
     const bt = items.filter(isBtItem);
     directCount = 0;

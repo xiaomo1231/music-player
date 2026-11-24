@@ -368,9 +368,8 @@ pub fn search_items(v: &Value, media_kind: &str) -> Vec<provider::Item> {
             let author = r["author"].as_str().unwrap_or("").to_string();
             Some(provider::Item {
                 id: bvid.to_string(),
+                // 不填 album / series：搜索页按作品名分组，每个视频自己一张卡，卡上显示视频标题；UP 主作为艺人显示在副标题里
                 title: clean_title(r["title"].as_str().unwrap_or(bvid)),
-                // 搜索页按 album 分组：同一个 UP 主的视频放在一起
-                album: author.clone(),
                 artist: author,
                 duration: r["duration"].as_str().and_then(parse_duration),
                 cover,
@@ -468,12 +467,100 @@ fn uuid_like() -> String {
 
 // ---------- 给 yt-dlp 的下载参数 ----------
 
+/// 搜索页 B 站卡片上选的下载内容
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// 音视频合成一个 MP4
+    #[default]
+    Both,
+    /// 只要音频
+    Audio,
+    /// 只要画面（没有声音）
+    Video,
+    /// 只要元数据：信息 JSON、简介、封面（字幕、弹幕可选），不下载音视频
+    Meta,
+}
+
+/// 下载源任务的档位字符串解析出的下载选项。
+/// 老格式：纯数字是清晰度上限（“0”为最高），空串按设置；新格式：`m=a;h=1080;s=1;d=0;c=1`
+/// （m 内容 av / a / v / meta，h 清晰度上限，s 字幕，d 弹幕，c 封面；没写的按设置）
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Choice {
+    pub mode: Mode,
+    pub height: Option<u32>,
+    pub subs: Option<bool>,
+    pub danmaku: Option<bool>,
+    pub cover: bool,
+}
+
+impl Choice {
+    pub fn parse(key: &str) -> Choice {
+        let key = key.trim();
+        if let Ok(h) = key.parse::<u32>() {
+            return Choice {
+                height: Some(h),
+                ..Default::default()
+            };
+        }
+        let mut c = Choice::default();
+        if !key.contains('=') {
+            return c;
+        }
+        for part in key.split(';') {
+            let Some((k, v)) = part.split_once('=') else { continue };
+            let on = v.trim() == "1";
+            match k.trim() {
+                "m" => {
+                    c.mode = match v.trim() {
+                        "a" => Mode::Audio,
+                        "v" => Mode::Video,
+                        "meta" => Mode::Meta,
+                        _ => Mode::Both,
+                    }
+                }
+                "h" => c.height = v.trim().parse().ok(),
+                "s" => c.subs = Some(on),
+                "d" => c.danmaku = Some(on),
+                "c" => c.cover = on,
+                _ => {}
+            }
+        }
+        c
+    }
+
+    /// 把选项套到这次下载上（覆盖设置里的清晰度、字幕、弹幕）
+    pub fn apply(&self, o: &mut YtOpts) {
+        if let Some(h) = self.height {
+            o.quality = h;
+        }
+        if let Some(s) = self.subs {
+            o.subs = s;
+        }
+        if let Some(d) = self.danmaku {
+            o.danmaku = d;
+        }
+        o.cover = self.cover;
+        // 音视频时沿用任务本身（存到音乐库的任务只要音频）
+        if self.mode != Mode::Both {
+            o.audio_only = self.mode == Mode::Audio;
+        }
+        o.video_only = self.mode == Mode::Video;
+        o.meta_only = self.mode == Mode::Meta;
+    }
+}
+
 /// 一次 yt-dlp 下载的选项
 #[derive(Debug, Clone, Default)]
 pub struct YtOpts {
     pub bili: bool,
     pub bangumi: bool,
     pub audio_only: bool,
+    /// 只要画面（不合并音频）
+    pub video_only: bool,
+    /// 只要元数据（不下载音视频）
+    pub meta_only: bool,
+    /// 另存封面图（和视频同名，整理时跟着走）
+    pub cover: bool,
     /// 最高清晰度（高度），0 表示不限
     pub quality: u32,
     pub danmaku: bool,
@@ -491,6 +578,9 @@ impl YtOpts {
             bili,
             bangumi: bili && (is_bangumi_url(url) || media_kind == "anime"),
             audio_only: media_kind == "music",
+            video_only: false,
+            meta_only: false,
+            cover: false,
             quality: s.bili_quality,
             danmaku: s.bili_danmaku,
             subs: s.bili_subs,
@@ -520,7 +610,15 @@ pub fn ytdlp_args(o: &YtOpts, out_dir: &Path) -> Vec<OsString> {
     };
     a.push("-o".into());
     a.push(template.into());
-    if !o.format.is_empty() {
+    if o.meta_only {
+        // 只要信息：标题、UP 主、简介、标签等写进 .info.json，简介另存 .description，封面另存图片
+        a.extend([
+            "--skip-download".into(),
+            "--write-info-json".into(),
+            "--write-description".into(),
+            "--write-thumbnail".into(),
+        ]);
+    } else if !o.format.is_empty() {
         a.push("-f".into());
         a.push(o.format.clone().into());
         if o.ffmpeg.is_some() && !o.audio_only {
@@ -533,16 +631,31 @@ pub fn ytdlp_args(o: &YtOpts, out_dir: &Path) -> Vec<OsString> {
             // 曲名、UP 主（作为艺人）和封面写进音频标签，整理时按标签归到音乐库
             a.extend(["--embed-metadata".into(), "--embed-thumbnail".into()]);
         }
+    } else if o.video_only {
+        // 只要画面：挑纯视频流，没有时退回带声音的
+        a.push("-f".into());
+        a.push("bv/bv*".into());
+    }
+    if o.cover && !o.meta_only {
+        a.push("--write-thumbnail".into());
+    }
+    if (o.cover || o.meta_only) && o.ffmpeg.is_some() {
+        a.extend(["--convert-thumbnails".into(), "jpg".into()]);
     }
     if o.bili {
         a.extend(["--sleep-requests".into(), "1".into()]);
         if !o.audio_only && o.format.is_empty() {
-            let sort = if o.quality > 0 {
-                format!("res:{},codec:h264", o.quality)
-            } else {
-                "res,codec:h264".into()
-            };
-            a.extend(["-S".into(), sort.into(), "--merge-output-format".into(), "mp4".into()]);
+            if !o.meta_only {
+                let sort = if o.quality > 0 {
+                    format!("res:{},codec:h264", o.quality)
+                } else {
+                    "res,codec:h264".into()
+                };
+                a.extend(["-S".into(), sort.into()]);
+                if !o.video_only {
+                    a.extend(["--merge-output-format".into(), "mp4".into()]);
+                }
+            }
             let langs = match (o.subs, o.danmaku) {
                 (true, true) => Some("all"),
                 (true, false) => Some("all,-danmaku"),
@@ -656,7 +769,8 @@ mod tests {
         let it = &items[0];
         assert_eq!(it.title, "星屑邮局 & 片头");
         assert_eq!(it.artist, "UP主");
-        assert_eq!(it.album, "UP主");
+        assert!(it.album.is_empty() && it.series.is_empty(), "不按 UP 主分组，卡片显示视频标题");
+        assert_eq!(provider::to_hit("bilibili", it).work, "星屑邮局 & 片头");
         assert_eq!(it.qualities.len(), 1, "只要音频时不分档位");
         assert_eq!(
             qualities("video").iter().map(|q| q.key.as_str()).collect::<Vec<_>>(),
@@ -751,6 +865,68 @@ mod tests {
         let s = args_text(&g);
         assert!(!s.contains("--sleep-requests") && !s.contains("--write-subs"));
         assert!(s.starts_with("--newline --no-playlist"));
+    }
+
+    #[test]
+    fn download_choices() {
+        assert_eq!(Choice::parse(""), Choice::default());
+        assert_eq!(Choice::parse("1080").height, Some(1080));
+        assert_eq!(Choice::parse("hd"), Choice::default());
+        let c = Choice::parse("m=a;h=720;s=0;d=1;c=1");
+        assert_eq!(
+            c,
+            Choice {
+                mode: Mode::Audio,
+                height: Some(720),
+                subs: Some(false),
+                danmaku: Some(true),
+                cover: true
+            }
+        );
+        let base = YtOpts {
+            bili: true,
+            subs: true,
+            danmaku: true,
+            ffmpeg: Some(PathBuf::from("ffmpeg.exe")),
+            ..Default::default()
+        };
+
+        // 音视频 + 封面，字幕关掉只要弹幕
+        let mut o = base.clone();
+        Choice::parse("m=av;h=1080;s=0;d=1;c=1").apply(&mut o);
+        let s = args_text(&o);
+        assert!(s.contains("-S res:1080,codec:h264 --merge-output-format mp4"));
+        assert!(s.contains("--write-thumbnail --convert-thumbnails jpg"));
+        assert!(s.contains("--sub-langs danmaku"));
+
+        // 仅音频
+        let mut o = base.clone();
+        Choice::parse("m=a;s=1;d=1").apply(&mut o);
+        let s = args_text(&o);
+        assert!(s.contains("-f ba/b") && !s.contains("-S ") && !s.contains("--write-subs"));
+
+        // 仅视频：纯视频流，不合并
+        let mut o = base.clone();
+        Choice::parse("m=v;h=720;s=0;d=0").apply(&mut o);
+        let s = args_text(&o);
+        assert!(s.contains("-f bv/bv*") && s.contains("-S res:720,codec:h264"));
+        assert!(!s.contains("--merge-output-format") && !s.contains("--write-subs"));
+
+        // 仅元数据：不下载音视频，信息、简介、封面，可带字幕
+        let mut o = base.clone();
+        Choice::parse("m=meta;s=1;d=0").apply(&mut o);
+        let s = args_text(&o);
+        assert!(s.contains("--skip-download --write-info-json --write-description --write-thumbnail"));
+        assert!(s.contains("--sub-langs all,-danmaku"));
+        assert!(!s.contains("-S ") && !s.contains("-f "));
+
+        // 存到音乐库的任务选“音视频”时仍只要音频（沿用任务本身）
+        let mut o = YtOpts {
+            audio_only: true,
+            ..base.clone()
+        };
+        Choice::parse("m=av").apply(&mut o);
+        assert!(o.audio_only);
     }
 
     #[test]

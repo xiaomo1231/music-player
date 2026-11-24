@@ -3,7 +3,9 @@
   // 收起时只显示封面、作品名、来源、话数和最新话；点开才去取章节，可以按区间、只要未下载勾选，分批显示
   import { untrack } from 'svelte';
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, fmtBytes, providerItem, providerKey, withQuality, EP_UNIT, type Hit, type SubRow } from '../../lib/fetch';
+  import { fetchApi, fmtBytes, fmtDur, providerItem, providerKey, withQuality, EP_UNIT, type Hit, type SubRow } from '../../lib/fetch';
+  import { applyChoice, choiceLabel, choiceMediaKind, isBiliHit, loadChoice, type BiliChoice } from '../../lib/bilidl';
+  import BiliDlMenu from './BiliDlMenu.svelte';
   import { dedupe, knownEpisodes, latestEpisode, needsEpisodes, rangeUrls, sortEpisodes, PAGE, type WorkCard } from '../../lib/fetchworks';
 
   let {
@@ -29,7 +31,8 @@
     picked?: string;
     open?: boolean;
     ontoggle: () => void;
-    ondownload: (list: Hit[]) => Promise<void> | void;
+    /** mediaKind：存到哪个库（不传按当前分类） */
+    ondownload: (list: Hit[], mediaKind?: string) => Promise<void> | void;
     /** 追更 / 取消追更：带上作品条目地址和封面 */
     onsub: (workUrl: string, cover: string) => void;
   } = $props();
@@ -40,6 +43,13 @@
   const cover = $derived(base.map(h => providerItem(h)?.cover).find(Boolean) ?? '');
   const author = $derived(first?.artist ?? '');
   const lazy = $derived(needsEpisodes(hits, card));
+
+  // B 站：下载前选下载什么（音视频 / 仅音频 / 仅视频 / 仅元数据）、清晰度、字幕、弹幕、封面
+  const bili = $derived(isBiliHit(base[0]));
+  let choice = $state<BiliChoice>(untrack(() => loadChoice(mk)));
+  /** 打开的选项弹层：单条下载 / 全部下载 / 只改选项（勾选后“下载选中”用） */
+  let menu = $state<'' | 'single' | 'all' | 'sel'>('');
+  const biliDl = (list: Hit[], c: BiliChoice) => ondownload(list.map(h => applyChoice(h, c)), choiceMediaKind(c, mk));
 
   // 点开后取到的章节
   let fetched = $state<Hit[] | null>(null);
@@ -117,16 +127,26 @@
   const withQ = (h: Hit) => (qkey ? withQuality(h, qkey) : h);
 
   async function downloadSel() {
-    const pick = sortEpisodes(eps).filter(h => sel[h.url]).map(withQ);
+    const pick = sortEpisodes(eps).filter(h => sel[h.url]);
     if (!pick.length) return toast(`先勾选要下载的${unit}`);
-    await ondownload(pick);
+    if (bili) await biliDl(pick, choice);
+    else await ondownload(pick.map(withQ));
     sel = {};
   }
 
   async function downloadAll() {
     const all = await loadEps();
     if (!all) return toast(error || '正在读取章节，稍后再点');
-    await ondownload(sortEpisodes(all).map(withQ));
+    if (bili) await biliDl(sortEpisodes(all), choice);
+    else await ondownload(sortEpisodes(all).map(withQ));
+  }
+
+  async function onMenuConfirm(c: BiliChoice) {
+    const which = menu;
+    menu = '';
+    choice = c;
+    if (which === 'single') await biliDl([base[0]], c);
+    else if (which === 'all') await downloadAll();
   }
 
   async function toggleSub() {
@@ -145,7 +165,10 @@
   const summary = $derived.by(() => {
     const parts = [card.sourceName];
     if (author && mk !== 'anime') parts.push(author);
-    if (single) {
+    if (single && bili) {
+      const d = fmtDur(first?.duration);
+      if (d) parts.push(d);
+    } else if (single) {
       const q = providerItem(base[0])?.qualities[0];
       if (q?.label) parts.push(q.label);
       if (base[0].size) parts.push(fmtBytes(base[0].size));
@@ -175,14 +198,25 @@
       </div>
       <small class="wc-sub">{summary}</small>
       <div class="wc-acts">
-        {#if single}
+        {#if single && bili}
+          <button class="mp-btn ghost sm" data-bili-dl class:on={menu === 'single'} onclick={() => (menu = menu === 'single' ? '' : 'single')} title="选择下载音视频、仅音频、仅视频或仅元数据">
+            {isDone(base[0]) ? '再下载一次' : '下载'} ▾
+          </button>
+        {:else if single}
           <button class="mp-btn ghost sm" onclick={() => ondownload([base[0]])}>{isDone(base[0]) ? '再下载一次' : '下载'}</button>
         {:else}
           <button class="mp-btn ghost sm" class:on={open} onclick={ontoggle}>{open ? '收起' : `选${unit}下载`}</button>
-          <button class="mp-btn ghost sm" onclick={downloadAll} disabled={loading}>全部下载</button>
+          {#if bili}
+            <button class="mp-btn ghost sm" data-bili-dl class:on={menu === 'all'} onclick={() => (menu = menu === 'all' ? '' : 'all')} disabled={loading}>全部下载 ▾</button>
+          {:else}
+            <button class="mp-btn ghost sm" onclick={downloadAll} disabled={loading}>全部下载</button>
+          {/if}
           {#if mk !== 'music'}
             <button class="mp-btn ghost sm" onclick={toggleSub}>{sub ? '取消追更' : '追更'}</button>
           {/if}
+        {/if}
+        {#if menu === 'single' || menu === 'all'}
+          <BiliDlMenu {mk} bind:choice confirmText={menu === 'all' ? '全部下载' : '开始下载'} onconfirm={onMenuConfirm} onclose={() => (menu = '')} />
         {/if}
       </div>
     </div>
@@ -207,7 +241,16 @@
             {unit} <button class="mp-chip" onclick={selectRange}>选中</button>
           </span>
           <button class="mp-chip" onclick={() => (desc = !desc)} title="排序">{desc ? '倒序' : '正序'}</button>
-          {#if qualities.length > 1}
+          {#if bili}
+            <span class="bili-opt">
+              <button class="mp-chip" data-bili-dl class:on={menu === 'sel'} onclick={() => (menu = menu === 'sel' ? '' : 'sel')} title="下载选中时用的内容和清晰度">
+                {choiceLabel(choice)} ▾
+              </button>
+              {#if menu === 'sel'}
+                <BiliDlMenu {mk} bind:choice confirmText="确定" onconfirm={onMenuConfirm} onclose={() => (menu = '')} />
+              {/if}
+            </span>
+          {:else if qualities.length > 1}
             <select class="mp-chip" aria-label="版本" bind:value={qkey}>
               <option value="">默认版本</option>
               {#each qualities as x (x.key)}<option value={x.key}>{x.label || x.format.toUpperCase()}</option>{/each}
@@ -297,6 +340,7 @@
     white-space: nowrap;
   }
   .wc-acts {
+    position: relative;
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
@@ -336,6 +380,9 @@
   }
   .grow {
     flex: 1;
+  }
+  .bili-opt {
+    position: relative;
   }
   select.mp-chip {
     color: inherit;

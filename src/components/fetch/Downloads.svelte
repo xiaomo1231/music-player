@@ -29,22 +29,76 @@
 
   const isDone = (s: string) => s === 'done' || s === 'manual';
 
-  // 多选删除记录：进行中的任务不能选
+  // 多选：所有任务都能选，批量操作只作用在选中里能做这一步的任务上
   const sel = new Selection();
   const removable = (t: TaskRow) => !isActive(t.status);
-  const order = $derived(tasks.filter(removable).map(t => t.id));
+  const pausable = (t: TaskRow) => t.status === 'downloading' || t.status === 'queued';
+  const resumable = (t: TaskRow) => t.status === 'paused' || t.status === 'canceled';
+  const retryable = (t: TaskRow) => t.status === 'failed';
+  const cancelable = (t: TaskRow) => isActive(t.status) || canResume(t.status);
+  const order = $derived(tasks.map(t => t.id));
   $effect(() => { const o = order; untrack(() => sel.prune(o)); });
   function rowClick(e: MouseEvent, t: TaskRow) {
-    if (!removable(t) || (e.target as HTMLElement).closest('button')) return;
+    if ((e.target as HTMLElement).closest('button')) return;
     sel.click(e, t.id, order);
   }
+  const picked = $derived(sel.size ? tasks.filter(t => sel.has(t.id)) : []);
+  const count = (list: TaskRow[], f: (t: TaskRow) => boolean) => list.filter(f).length;
+
+  /** 对一组任务逐个执行同一操作，单个失败不影响其余的 */
+  async function batch(list: TaskRow[], fn: (id: number) => Promise<unknown>, done: (n: number) => string) {
+    let n = 0;
+    let err = '';
+    for (const t of list) {
+      try {
+        await fn(t.id);
+        n++;
+      } catch (e) {
+        err = String(e);
+      }
+    }
+    toast(err && n < list.length ? `${done(n)}，${list.length - n} 个失败：${err}` : done(n));
+    onchange?.();
+  }
+
+  const doPause = (list: TaskRow[]) => batch(list.filter(pausable), fetchApi.pause, n => `已暂停 ${n} 个任务`);
+  const doResume = (list: TaskRow[]) => batch(list.filter(resumable), fetchApi.resume, n => `已继续 ${n} 个任务`);
+  const doRetry = (list: TaskRow[]) => batch(list.filter(retryable), fetchApi.resume, n => `已重试 ${n} 个任务`);
+  async function doCancel(list: TaskRow[], all: boolean) {
+    const ts = list.filter(cancelable);
+    const what = all ? '全部' : '选中的';
+    if (!(await confirmDlg(all ? '全部取消' : '取消任务', `取消${what} ${ts.length} 个未完成的下载？正在下载的会立即停止，已下载的部分保留在下载目录，之后还能继续。已整理入库的不受影响。`, { ok: all ? '全部取消' : '取消任务' }))) return;
+    await batch(ts, id => fetchApi.cancel(id, false), n => `已取消 ${n} 个任务`);
+  }
   async function removeSelected() {
-    const ids = sel.ids(order);
-    if (!(await confirmDlg('删除记录', `删除选中的 ${ids.length} 条下载记录？只从列表里删掉记录，已整理入库的文件不受影响。`, { ok: '删除记录' }))) return;
-    await act(async () => { for (const id of ids) await invoke('fetch_remove_task', { id }); }, `已删除 ${ids.length} 条记录`);
+    const ts = picked.filter(removable);
+    const skip = picked.length - ts.length;
+    if (!(await confirmDlg('删除记录', `删除选中的 ${ts.length} 条下载记录？只从列表里删掉记录，已整理入库的文件不受影响。${skip ? `进行中的 ${skip} 个任务不会删除，请先暂停或取消。` : ''}`, { ok: '删除记录' }))) return;
+    await batch(ts, id => invoke('fetch_remove_task', { id }), n => `已删除 ${n} 条记录`);
     sel.clear();
   }
-  const entries: MenuEntry[] = [{ label: '删除记录', danger: true, run: removeSelected }];
+
+  // 批量操作栏：只列出选中里有任务能做的操作，括号里是能做的个数
+  const entries = $derived.by(() => {
+    const out: MenuEntry[] = [];
+    const add = (f: (t: TaskRow) => boolean, label: string, run: () => unknown, danger = false) => {
+      const n = count(picked, f);
+      if (n) out.push({ label: n === picked.length ? label : `${label}（${n}）`, run, danger });
+    };
+    add(pausable, '暂停', () => doPause(picked));
+    add(resumable, '继续', () => doResume(picked));
+    add(retryable, '重试', () => doRetry(picked));
+    add(cancelable, '取消', () => doCancel(picked, false));
+    add(removable, '删除记录', removeSelected, true);
+    return out;
+  });
+
+  // 不用多选的整表操作，和转换队列的“全部暂停 / 继续 / 取消”一致
+  const nPause = $derived(count(tasks, pausable));
+  const isPaused = (t: TaskRow) => t.status === 'paused';
+  const nResume = $derived(count(tasks, isPaused));
+  const nRetry = $derived(count(tasks, retryable));
+  const nCancel = $derived(count(tasks, t => isActive(t.status) || t.status === 'paused'));
   const barText = (t: TaskRow) => (t.status === 'downloading' || t.status === 'seeding' ? `${Math.round(t.progress * 100)}%` : '');
 </script>
 
@@ -57,17 +111,23 @@
 <svelte:window onkeydown={e => order.length && sel.keys(e, () => order)} />
 
 {#if order.length}
+  <div class="dlhead">
+    <button class="mp-chip" class:on={sel.on} onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}>{sel.on ? '退出多选' : '多选'}</button>
+    <span class="grow"></span>
+    {#if nPause}<button class="mp-chip" onclick={() => doPause(tasks)}>全部暂停</button>{/if}
+    {#if nResume}<button class="mp-chip" onclick={() => doResume(tasks.filter(isPaused))}>全部继续（{nResume}）</button>{/if}
+    {#if nRetry}<button class="mp-chip" onclick={() => doRetry(tasks)}>全部重试（{nRetry}）</button>{/if}
+    {#if nCancel}<button class="mp-chip" onclick={() => doCancel(tasks.filter(t => isActive(t.status) || t.status === 'paused'), true)}>全部取消</button>{/if}
+  </div>
   {#if sel.on}
-    <BatchBar {sel} unit="条" total={order.length} onall={() => sel.selectAll(order)} {entries} hint="单击勾选，Shift 连选，Ctrl+A 全选（进行中的任务不能选）" />
-  {:else}
-    <div class="dlhead"><button class="mp-chip" onclick={() => (sel.mode = true)}>多选</button></div>
+    <BatchBar {sel} unit="条" total={order.length} onall={() => sel.selectAll(order)} {entries} hint="单击勾选，Shift 连选，Ctrl+A 全选" />
   {/if}
 {/if}
 
 {#each tasks as t (t.id)}
-  <div class="dl" class:done={isDone(t.status)} class:picked={sel.has(t.id)} class:pickable={sel.on && removable(t)} style="--p:{t.progress}"
+  <div class="dl" class:done={isDone(t.status)} class:picked={sel.has(t.id)} class:pickable={sel.on} style="--p:{t.progress}"
     role="presentation" onclick={e => rowClick(e, t)} onmousedown={noTextSelect}>
-    <span title={t.title} class="dname">{#if sel.on && removable(t)}<SelCheck checked={sel.has(t.id)} onclick={e => (e.shiftKey ? sel.range(order, t.id, true) : sel.toggle(t.id))} />{/if}<span class="ell">{t.title}</span></span>
+    <span title={t.title} class="dname">{#if sel.on}<SelCheck checked={sel.has(t.id)} onclick={e => (e.shiftKey ? sel.range(order, t.id, true) : sel.toggle(t.id))} />{/if}<span class="ell">{t.title}</span></span>
     <small>
       {#if MEDIA_TEXT[t.media_kind]}{MEDIA_TEXT[t.media_kind]} ·{/if}
       {STATUS_TEXT[t.status] ?? t.status}
@@ -108,7 +168,8 @@
 {/each}
 
 <style>
-  .dlhead { display: flex; justify-content: flex-end; margin: 0 0 6px; }
+  .dlhead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 6px; }
+  .dlhead .grow { flex: 1; }
   .dname { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pickable { cursor: pointer; }

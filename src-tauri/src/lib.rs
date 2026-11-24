@@ -336,6 +336,7 @@ pub fn run() {
             convert::convert_add,
             convert::convert_list,
             convert::convert_cancel,
+            convert::convert_cancel_all,
             convert::convert_clear_done,
             convert::convert_retry,
             convert::convert_undo,

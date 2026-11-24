@@ -1380,6 +1380,24 @@ pub fn convert_cancel(st: State<AppState>, app: AppHandle, id: i64) -> R<()> {
     Ok(())
 }
 
+/// 全部取消：先把排队中的全部标成已取消（免得调度器接着领新任务），再停掉正在转换的。返回取消的数量
+#[tauri::command]
+pub fn convert_cancel_all(st: State<AppState>) -> R<usize> {
+    let queued = {
+        let conn = st.db.lock();
+        conn.execute("UPDATE jobs SET status='canceled', finished_at=?1 WHERE status='queued'", params![db::now()])
+            .map_err(s)?
+    };
+    let running: Vec<Arc<JobCtl>> = RUNNING.lock().iter().map(|(_, c)| c.clone()).collect();
+    for ctl in &running {
+        ctl.canceled.store(true, Ordering::SeqCst);
+        if let Some(c) = ctl.child.lock().as_mut() {
+            let _ = c.kill();
+        }
+    }
+    Ok(queued + running.len())
+}
+
 /// 清掉已结束的任务记录（不删文件）
 #[tauri::command]
 pub fn convert_clear_done(st: State<AppState>) -> R<usize> {

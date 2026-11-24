@@ -79,16 +79,30 @@
 
   const running = $derived(jobs.filter(j => j.status === 'running').length);
   const queued = $derived(jobs.filter(j => j.status === 'queued').length);
+  const failed = $derived(jobs.filter(j => j.status === 'failed').length);
+
+  async function cancelAll() {
+    const n = running + queued;
+    if (!(await confirmDlg('全部取消', `取消全部 ${n} 个转换任务？正在转换的会立即停止并删除半成品，已完成的不受影响。`, { ok: '全部取消' }))) return;
+    try {
+      const k = await invoke<number>('convert_cancel_all');
+      toast(`已取消 ${k} 个任务`);
+    } catch (e) {
+      toast(String(e));
+    }
+    onremoved?.();
+  }
 
   const canPlay = (j: ConvertJob) => !!j.output && (isAudioPath(j.output) || isVideoPath(j.output));
 </script>
 
 <div class="qhead">
   <h5>队列 <span class="badge2">{jobs.length}</span>
-    {#if running || queued}<small class="qcount">{running ? `转换中 ${running}` : ''}{running && queued ? ' · ' : ''}{queued ? `等待 ${queued}` : ''}</small>{/if}
+    {#if running || queued || failed}<small class="qcount">{[running ? `转换中 ${running}` : '', queued ? `等待 ${queued}` : '', failed ? `失败 ${failed}` : ''].filter(Boolean).join(' · ')}</small>{/if}
   </h5>
   <span class="qacts">
     {#if order.length}<button class="mp-btn ghost" class:on={sel.on} onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}>{sel.on ? '退出多选' : '多选'}</button>{/if}
+    {#if running || queued}<button class="mp-btn ghost" onclick={cancelAll}>全部取消</button>{/if}
     <button class="mp-btn ghost" onclick={onclear}>清除已结束</button>
   </span>
 </div>

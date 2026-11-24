@@ -3,7 +3,7 @@
 // 10 段均衡器和频谱都在 Web Audio 里实现；装了 libmpv 后 engine 换成 mpv，覆盖 APE/DSD/WMA 等全部格式。
 import { invoke, listen, fileUrl, inTauri, type Track, type LyricLine, type OnlineLyrics } from './api';
 import { engine } from './engine.svelte';
-import { clamp, shuffleArr } from './util';
+import { clamp, spreadShuffle } from './util';
 import { toast } from './ui.svelte';
 
 export const EQF = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
@@ -40,6 +40,9 @@ export const PLAY_MODE_LABEL: Record<PlayMode, string> = { order: '顺序播放'
 export const PLAY_MODE_ICON: Record<PlayMode, string> = { order: 'order', all: 'repeat', one: 'repeat1', shuffle: 'shuffle' };
 
 /** 读出播放模式；旧版本分开存的 shuffle / repeat 迁移过来（两个都开时以随机为准） */
+/** 随机时用来分散的歌手：取第一位歌手，忽略大小写 */
+const artistKey = (t: Track) => ((t.artist || t.album_artist || '').split(/\s*[/&,，、;；]\s*|\s+feat\.?\s+/i)[0] || '').trim().toLowerCase();
+
 export function migrateMode(mode: unknown, shuffle: unknown, repeat: unknown): PlayMode {
   if (typeof mode === 'string' && (PLAY_MODES as string[]).includes(mode)) return mode as PlayMode;
   if (shuffle === true) return 'shuffle';
@@ -163,7 +166,14 @@ class Player {
     const i = this.queue.findIndex(x => x.id === t.id);
     if (i >= 0) {
       this.flushStats();
-      this.pos = this.order.indexOf(i);
+      if (this.shuffle && this.current) {
+        // 随机模式下把这首挪到当前这首后面再播，后面还没播的随机顺序保持不变，不会被跳过
+        const o = this.order.filter(x => x !== i);
+        const pos = o.indexOf(this.order[this.pos]);
+        o.splice(pos + 1, 0, i);
+        this.order = o;
+        this.pos = pos + 1;
+      } else this.pos = this.order.indexOf(i);
       this.load(true);
     } else this.playList([t], 0);
   }
@@ -201,7 +211,13 @@ class Player {
     const add = tracks.filter(t => !have.has(t.id));
     const base = this.queue.length;
     this.queue = [...this.queue, ...add];
-    this.order = [...this.order, ...add.map((_, k) => base + k)];
+    const added = add.map((_, k) => base + k);
+    if (this.shuffle) {
+      // 随机模式：新加的歌随机插进还没播的部分
+      const o = [...this.order];
+      for (const i of added) o.splice(this.pos + 1 + Math.floor(Math.random() * (o.length - this.pos)), 0, i);
+      this.order = o;
+    } else this.order = [...this.order, ...added];
     toast(`已加入播放队列：${add.length} 首`);
   }
 
@@ -213,11 +229,22 @@ class Player {
     this.order = o;
   }
 
+  /** 随机顺序：整张队列打乱，同一歌手的歌尽量分散开 */
+  private shuffled(idx: number[]) {
+    return spreadShuffle(idx, i => artistKey(this.queue[i]));
+  }
+
   private buildOrder(start: number) {
     const idx = this.queue.map((_, i) => i);
     if (this.shuffle) {
-      const rest = shuffleArr(idx.filter(i => i !== start));
-      this.order = [start, ...rest];
+      const o = [start, ...this.shuffled(idx).filter(i => i !== start)];
+      // 起播的那首是自己选的，紧接着的第二首换成别的歌手
+      const k = artistKey(this.queue[start]);
+      if (o.length > 2 && artistKey(this.queue[o[1]]) === k) {
+        const j = o.findIndex((i, n) => n > 1 && artistKey(this.queue[i]) !== k);
+        if (j > 0) [o[1], o[j]] = [o[j], o[1]];
+      }
+      this.order = o;
       this.pos = 0;
     } else {
       this.order = idx;
@@ -321,7 +348,13 @@ class Player {
         this.seek(0);
         return;
       }
-      if (this.shuffle) this.order = shuffleArr(this.order);
+      if (this.shuffle) {
+        // 一轮播完重新打乱；新一轮的第一首不和刚播完的那首重复
+        const last = this.order[this.pos];
+        const o = this.shuffled(this.order);
+        if (o.length > 1 && o[0] === last) [o[0], o[1]] = [o[1], o[0]];
+        this.order = o;
+      }
       this.pos = 0;
     } else this.pos++;
     this.load(true);

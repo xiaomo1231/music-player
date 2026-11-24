@@ -347,6 +347,22 @@ pub fn save_comic_progress(conn: &Connection, id: i64, page: i64) -> Result<()> 
     Ok(())
 }
 
+/// 批量标记漫画已读（进度移到最后一页）/ 未读（清掉进度）
+pub fn set_comics_read(conn: &Connection, ids: &[i64], read: bool) -> Result<()> {
+    let now = db::now();
+    for id in ids {
+        if read {
+            conn.execute(
+                "UPDATE comics SET page=max(pages-1,0), last_read=coalesce(last_read,?1) WHERE file_id=?2",
+                params![now, id],
+            )?;
+        } else {
+            conn.execute("UPDATE comics SET page=0, last_read=NULL WHERE file_id=?1", [id])?;
+        }
+    }
+    Ok(())
+}
+
 // ---------- 播放统计 ----------
 
 pub fn toggle_favorite(conn: &Connection, id: i64) -> Result<bool> {
@@ -670,6 +686,27 @@ mod tests {
         )
         .unwrap();
         id
+    }
+
+    #[test]
+    fn comics_read_flag() {
+        let c = db::open_memory().unwrap();
+        c.execute("INSERT INTO files(path,kind,size,mtime,added_at) VALUES('C:\\m\\1.cbz','comic',1,1,1)", [])
+            .unwrap();
+        let id = c.last_insert_rowid();
+        c.execute(
+            "INSERT INTO comics(file_id,title,series,format,pages) VALUES(?1,'第01話','深酒日記','cbz',20)",
+            [id],
+        )
+        .unwrap();
+        set_comics_read(&c, &[id], true).unwrap();
+        let v = comics(&c).unwrap();
+        assert_eq!(v[0].page, 19);
+        assert!(v[0].last_read.is_some());
+        set_comics_read(&c, &[id], false).unwrap();
+        let v = comics(&c).unwrap();
+        assert_eq!(v[0].page, 0);
+        assert!(v[0].last_read.is_none());
     }
 
     #[test]

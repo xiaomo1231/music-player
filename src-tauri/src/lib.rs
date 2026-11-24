@@ -195,6 +195,7 @@ pub fn run() {
             commands::save_book_progress,
             commands::list_comics,
             commands::save_comic_progress,
+            commands::set_comics_read,
             commands::lyrics,
             lyrics::lyrics_online,
             commands::toggle_favorite,

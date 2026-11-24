@@ -115,6 +115,11 @@ pub fn save_comic_progress(st: State<AppState>, id: i64, page: i64) -> R<()> {
 }
 
 #[tauri::command]
+pub fn set_comics_read(st: State<AppState>, ids: Vec<i64>, read: bool) -> R<()> {
+    library::set_comics_read(&st.db.lock(), &ids, read).map_err(e)
+}
+
+#[tauri::command]
 pub async fn lyrics(path: String) -> R<Vec<metadata::LyricLine>> {
     tauri::async_runtime::spawn_blocking(move || metadata::lyrics_for(Path::new(&path)))
         .await

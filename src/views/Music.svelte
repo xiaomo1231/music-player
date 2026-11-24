@@ -17,7 +17,7 @@
   import { smartLists, customLists, matchRules, type SmartDef } from '../lib/smart.svelte';
   import SmartRuleModal from '../components/SmartRuleModal.svelte';
 
-  let filter = $state<string>('all'); // all / smart:<key> / pl:<id>
+  let filter = $state<string>('all'); // all / smart:<key> / pl:<id> / enc
   let group = $state<'none' | 'artist' | 'album' | 'format' | 'folder' | 'year'>('none');
   let sort = $state<'def' | 'plays' | 'added' | 'title' | 'duration'>('def');
   let q = $state('');
@@ -35,6 +35,14 @@
     if (filter.startsWith('pl:') && inTauri) invoke<number[]>('playlist_items', { id: +filter.slice(3) }).then(v => (plTracks = v));
   });
 
+  // 加密格式的文件不能直接播放：不混在“全部歌曲”和智能列表里，单独放在“加密格式”分类
+  const isEnc = (t: Track) => t.encrypted || t.format === '加密格式';
+  const playable = $derived(lib.tracks.filter(t => !isEnc(t)));
+  const locked = $derived(lib.tracks.filter(isEnc));
+  const isEncView = $derived(filter === 'enc');
+  // 加密文件都处理掉了：回到全部歌曲
+  $effect(() => { if (filter === 'enc' && !locked.length) untrack(() => setFilter('all')); });
+
   const allSmart = $derived([...smartLists.filter(s => !customLists.hidden.includes(s.key)), ...customLists.list]);
   const hiddenSmart = $derived(smartLists.filter(s => customLists.hidden.includes(s.key)));
   const curPl = $derived(filter.startsWith('pl:') ? lib.playlists.find(p => p.id === +filter.slice(3)) : null);
@@ -42,10 +50,11 @@
   const list = $derived.by(() => {
     let l: Track[];
     if (curPl) l = plTracks.map(id => lib.byId(id)).filter((t): t is Track => !!t);
+    else if (filter === 'enc') l = locked;
     else if (filter.startsWith('smart:')) {
       const def = allSmart.find(s => s.key === filter.slice(6));
-      l = def ? def.pick(lib.tracks) : lib.tracks;
-    } else l = lib.tracks;
+      l = def ? def.pick(playable) : playable;
+    } else l = playable;
     const qq = q.trim().toLowerCase();
     if (qq) l = l.filter(t => (t.title + t.artist + t.album + t.format + t.genre).toLowerCase().includes(qq));
     const s = [...l];
@@ -149,6 +158,7 @@
     const ts = picked();
     const ids = ts.map(t => t.id);
     const pl = curPl;
+    if (ts.every(isEnc)) return encEntries(ts);
     return [
       { label: '播放', run: () => { player.playList(ts, 0, filter); toast(`开始播放：${ts.length} 首`); } },
       { label: '下一首播放', run: () => player.playNext(ts) },
@@ -163,25 +173,45 @@
       { label: '删除文件…', danger: true, run: async () => { if (await deleteMany('track', ids)) sel.clear(); } },
     ];
   }
+  /** 加密格式文件能做的事：交给转换插件、移出媒体库、删除文件 */
+  function encEntries(ts: Track[]): MenuEntry[] {
+    const ids = ts.map(t => t.id);
+    return [
+      { label: '转换格式…', run: () => convertEnc(ts) },
+      ...(ts.length === 1 ? [{ label: '文件信息', run: () => ui.open('about', ts[0]) }] : []),
+      'sep',
+      { label: '从媒体库移除…', run: async () => { if (await removeMany('track', ids)) sel.clear(); } },
+      { label: '删除文件…', danger: true, run: async () => { if (await deleteMany('track', ids)) sel.clear(); } },
+    ];
+  }
+  /** 带到格式转换页；那边会自动选上能处理这些格式的转换插件 */
+  function convertEnc(ts: Track[]) {
+    if (!ts.length) return;
+    ui.convertPaths = ts.map(t => t.path);
+    ui.go('convert');
+  }
   function rowMenu(e: MouseEvent, t: Track) {
     if (sel.has(t.id) && sel.size > 1) popMenu(e, `已选 ${sel.size} 首`, batchEntries());
     else openMenu(e, t);
   }
   function rowClick(e: MouseEvent, t: Track) {
     if (dragged) { dragged = false; return; }
-    if (!sel.click(e, t.id, order)) playFrom(t);
+    if (!sel.click(e, t.id, order) && !isEnc(t)) playFrom(t);
   }
 
   function playFrom(t: Track) {
+    if (isEnc(t)) return toast('加密格式不能直接播放，先用“转换格式”转成普通格式');
     player.playList(list, list.indexOf(t), filter);
   }
   function playGroup(tracks: Track[], shuffle = false) {
+    tracks = tracks.filter(t => !isEnc(t));
     if (!tracks.length) return toast('这一组还没有歌曲');
     if (shuffle && !player.shuffle) player.setMode('shuffle');
     player.playList(tracks, shuffle ? Math.floor(Math.random() * tracks.length) : 0, filter);
     toast(`开始播放：${tracks.length} 首`);
   }
   function openMenu(e: MouseEvent, t: Track) {
+    if (isEnc(t)) return popMenu(e, t.title, encEntries([t]));
     const pl = curPl;
     popMenu(e, t.title, mediaEntries('track', t.id, t.title, [
       { label: '播放', run: () => playFrom(t) },
@@ -197,7 +227,7 @@
 
   // 智能列表卡片的“⋯”：内置的只能隐藏；自定义的可以改名、改规则、换封面、删除
   function smartMenu(e: MouseEvent, s: SmartDef) {
-    const play = { label: '播放', run: () => playGroup(s.pick(lib.tracks)) };
+    const play = { label: '播放', run: () => playGroup(s.pick(playable)) };
     if (!s.custom) {
       popMenu(e, s.name, [play, 'sep', { label: '隐藏这个列表', run: async () => { await customLists.setHidden(s.key, true); if (filter === 'smart:' + s.key) setFilter('all'); toast('已隐藏，可以在“自定义智能列表”卡片里恢复'); } }]);
       return;
@@ -282,7 +312,7 @@
 
 <section class="lib on" class:multi={sel.on} bind:this={scroller} onscroll={onScroll}>
   <header>
-    <div><h2>音乐</h2><p>共 {lib.tracks.length} 首{list.length !== lib.tracks.length ? `，当前显示 ${list.length} 首` : ''} · 点卡片上的播放键直接播放整组</p></div>
+    <div><h2>音乐</h2><p>共 {playable.length} 首{locked.length ? `（另有 ${locked.length} 个加密格式文件）` : ''}{!isEncView && list.length !== playable.length ? `，当前显示 ${list.length} 首` : ''} · 点卡片上的播放键直接播放整组</p></div>
     <input class="tin" placeholder="在音乐库里筛选" bind:value={q} style="width:200px" />
     <select class="sel" bind:value={group}>
       <option value="none">不分组</option><option value="artist">按艺人分组</option><option value="album">按专辑分组</option>
@@ -302,14 +332,14 @@
   {:else}
     <div class="smart">
       {#each allSmart as s (s.key)}
-        {@const n = s.pick(lib.tracks).length}
+        {@const n = s.pick(playable).length}
         <div class="sc" class:on={filter === 'smart:' + s.key} style:background-image={coverCSS(s.hue, true)} role="button" tabindex="-1"
           onclick={() => setFilter(filter === 'smart:' + s.key ? 'all' : 'smart:' + s.key)} onkeydown={() => {}}
           oncontextmenu={e => smartMenu(e, s)} style:background-size="cover">
           {#if s.cover}<span class="sc-img" style:background-image={`url("${coverUrl(s.cover)}")`}></span>{/if}
           <div class="sc-txt"><b>{s.name}</b><span class="sc-sub">{n} 首 · {s.desc}</span></div>
           <div class="sc-acts">
-            <button class="sc-play" title="立即播放" onclick={e => { e.stopPropagation(); playGroup(s.pick(lib.tracks)); }}><Icon name="play" /></button>
+            <button class="sc-play" title="立即播放" onclick={e => { e.stopPropagation(); playGroup(s.pick(playable)); }}><Icon name="play" /></button>
             <span class="sc-more"><MoreButton floating={false} title="更多" onopen={e => smartMenu(e, s)} /></span>
           </div>
         </div>
@@ -325,6 +355,7 @@
     <div class="chips">
       <button class="mp-chip" class:on={filter === 'all'} onclick={() => setFilter('all')}>全部歌曲</button>
       {#each allSmart as s (s.key)}<button class="mp-chip" class:on={filter === 'smart:' + s.key} onclick={() => setFilter('smart:' + s.key)}>{s.name}</button>{/each}
+      {#if locked.length}<button class="mp-chip enc-chip" class:on={isEncView} title="不能直接播放的加密格式文件，可以一键转换或删除" onclick={() => setFilter(isEncView ? 'all' : 'enc')}>加密格式 · {locked.length}</button>{/if}
       <span style="width:1px;height:18px;background:var(--edge);margin:0 4px"></span>
       {#each lib.playlists as p (p.id)}<button class="mp-chip" class:on={filter === 'pl:' + p.id} onclick={() => setFilter('pl:' + p.id)} oncontextmenu={e => openPlaylistMenu(e, p)}><Icon name="list" /> {p.name} · {p.count}</button>{/each}
       <button class="mp-chip" onclick={() => ui.open('playlist-add', [])}>＋ 新建歌单</button>
@@ -333,6 +364,16 @@
     {#if sel.on}
       <BatchBar {sel} unit="首" total={order.length} onall={() => sel.selectAll(order)} entries={batchEntries()}
         hint={curPl && canReorder ? '单击勾选，Shift 连选，Ctrl+A 全选；拖动选中的歌可以一起调整顺序' : undefined} />
+    {:else if isEncView}
+      <div class="plbar encbar">
+        <b>加密格式</b><span class="badge2">{locked.length} 个</span>
+        <button class="mp-chip" onclick={() => convertEnc(list)}><Icon name="convert" /> 全部转换{q.trim() ? `（${list.length}）` : ''}…</button>
+        <button class="mp-chip" title="只从媒体库移除，硬盘上的文件保留，以后扫描也会跳过"
+          onclick={() => removeMany('track', list.map(t => t.id))}>全部从媒体库移除…</button>
+        <button class="mp-chip danger" title="文件移入回收站，同时从媒体库删除"
+          onclick={() => deleteMany('track', list.map(t => t.id))}><Icon name="trash" /> 全部删除文件…</button>
+        <span class="engine-note">这些文件不能直接播放。转换会交给你已安装的转换插件处理；没有插件时可以在“设置 → 插件”里安装</span>
+      </div>
     {:else if curPl}
       <div class="plbar">
         <b>{curPl.name}</b><span class="badge2">{curPl.count} 首</span>
@@ -357,7 +398,7 @@
         {#if 'h' in it}
           <div class="grp" style="position:absolute;left:0;right:0;top:{top}px;height:{HEAD}px;margin:0;padding:14px 6px 0">
             {it.h} · {it.tracks.length} 首
-            <button class="mp-chip" style="padding:2px 10px" onclick={() => playGroup(it.tracks)}><Icon name="play" /> 播放</button>
+            {#if !isEncView}<button class="mp-chip" style="padding:2px 10px" onclick={() => playGroup(it.tracks)}><Icon name="play" /> 播放</button>{/if}
           </div>
         {:else}
           {@const t = it.t}
@@ -406,6 +447,10 @@
 
   /* 多选：序号位置悬停时变成勾选框，多选状态下一直显示 */
   .msel { display: inline-flex; align-items: center; gap: 5px; }
+  .enc-chip:not(.on) { color: var(--mp-sub); border-style: dashed; }
+  .encbar .mp-chip { display: inline-flex; align-items: center; gap: 5px; }
+  .encbar .mp-chip.danger { color: #ff8a8a; }
+  .encbar .mp-chip.danger:hover { border-color: #ff8a8a; }
   .mrow .mp-n { display: grid; align-items: center; justify-items: start; }
   .mrow .mp-n > :global(*) { grid-area: 1 / 1; }
   .mrow .mp-n :global(.selck) { opacity: 0; }

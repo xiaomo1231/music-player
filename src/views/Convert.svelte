@@ -18,6 +18,7 @@
     dirName,
     encoderLabel,
     isAudioPath,
+    isVideoPath,
     loadAfter,
     saveAfter,
     type ConvertAfter,
@@ -148,6 +149,19 @@
       toast(fresh.length ? `已加入待转换：${fresh.length} 个文件` : '没有可以转换的音视频文件');
     } catch (e) {
       toast(String(e));
+    }
+  }
+
+  /** 带过来的文件内置预设处理不了（比如加密格式）：自动选上一个能处理全部文件的转换插件。
+   *  只是替用户点选插件，转换本身完全由插件完成 */
+  function autoPick() {
+    if (!pending.length || plg || pending.every(p => isAudioPath(p) || isVideoPath(p))) return;
+    const c = converters.find(c => c.outputs.length && !unsupported(c).length);
+    if (c) {
+      presetId = converterPreset(c.plugin, c.id, c.outputs[0].ext);
+      toast(`待转换 ${pending.length} 个文件，已选上转换插件：${c.name} → ${c.outputs[0].name}`);
+    } else if (!(cfg?.plugin_enabled && cfg.plugin_file)) {
+      toast('已装的插件里没有能处理这些格式的转换器，可以在“设置 → 插件”里安装');
     }
   }
 
@@ -311,12 +325,14 @@
   }
 
   onMount(() => {
-    if (ui.convertPaths.length) {
-      const list = [...ui.convertPaths];
-      ui.convertPaths = [];
-      addPaths(list);
-    }
-    loadAll();
+    const incoming = [...ui.convertPaths];
+    ui.convertPaths = [];
+    // 先读到转换插件列表，再收下带过来的文件，才能自动选插件
+    loadAll().then(async () => {
+      if (!incoming.length) return;
+      await addPaths(incoming);
+      autoPick();
+    });
     if (inTauri) {
       getCurrentWindow()
         .onDragDropEvent(ev => {

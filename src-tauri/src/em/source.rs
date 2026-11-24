@@ -1533,6 +1533,10 @@ pub fn check(rule: &Rule) -> Result<Vec<String>, Vec<Issue>> {
     Ok(out)
 }
 
+fn no_saved_cookies(_: &str) -> Option<String> {
+    None
+}
+
 /// 生效（on = true）或失效：注册 / 移除下载源 `em-<id>`
 pub fn apply(_app: &AppHandle, rule: &Rule, on: bool) {
     let pid = format!("{ID_PREFIX}{}", rule.id());
@@ -1543,7 +1547,13 @@ pub fn apply(_app: &AppHandle, rule: &Rule, on: bool) {
     match compile(rule) {
         Ok(eng) => {
             let http = net::Http::new(&Allow::new(&eng.hosts), true);
-            provider::register(Arc::new(EmProvider::new(eng, Arc::new(http), net::saved_cookies)));
+            // 随插件安装的规则：用户在插件里同意交出登录时才带 Cookie
+            let cookies: fn(&str) -> Option<String> = if crate::plugin::rule_may_use_login(rule.id()) {
+                net::saved_cookies
+            } else {
+                no_saved_cookies
+            };
+            provider::register(Arc::new(EmProvider::new(eng, Arc::new(http), cookies)));
         }
         Err(_) => provider::unregister(&pid),
     }

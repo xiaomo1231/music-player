@@ -215,6 +215,14 @@ pub fn owner_of(pid: &str) -> Option<String> {
     REG.read().iter().find(|(_, l)| l.rules.iter().any(|r| r == rule)).map(|(id, _)| id.clone())
 }
 
+/// 规则能不能带上保存的登录：随插件安装的规则要看用户有没有在插件里同意，其他规则照规则自己的设置
+pub fn rule_may_use_login(rule: &str) -> bool {
+    REG.read()
+        .values()
+        .find(|l| l.rules.iter().any(|r| r == rule))
+        .map_or(true, |l| l.granted.login)
+}
+
 /// 下载任务找不到下载源时的说明（插件停用 / 卸载）
 pub fn missing_reason(pid: &str) -> Option<String> {
     let plugin = owner_of(pid)?;
@@ -589,6 +597,10 @@ fn apply(app: &AppHandle, id: &str, on: bool, old: Option<&Loaded>) {
     }
     for r in &l.rules {
         let _ = em::set_enabled(app, r, on);
+        if on {
+            // 启动时规则可能先于插件生效：按插件的登录授权重新注册
+            em::reapply(app, r);
+        }
     }
 }
 
@@ -901,6 +913,9 @@ pub fn preview_of(dir: &Path, m: &Manifest) -> Preview {
                 b.sort();
                 if a != b {
                     p.issues.push("plugin.json 的 permissions.hosts 要和 .em 里的 hosts 一致".into());
+                }
+                if rule.header.login != em::format::Login::None && m.permissions.login() == "none" {
+                    p.issues.push(".em 里写了 login，plugin.json 的 permissions.login 也要写上".into());
                 }
                 if let Err(is) = em::check(&rule) {
                     p.issues.push(em::issues_text(&is));
@@ -1215,7 +1230,7 @@ pub fn plugin_set_enabled(app: AppHandle, st: State<AppState>, id: String, enabl
     }
     if REG.read().get(&id).is_some_and(|l| l.active()) {
         apply(&app, &id, true, None);
-        // 之前因为插件停用而暂停的任务可以继续了
+        // 因为插件停用而失败的任务，在下载列表里点“重试”就能继续
     }
     let _ = app.emit(CHANGED, "enabled");
     let _ = app.emit(em::CHANGED, "source");
@@ -1241,6 +1256,10 @@ pub fn plugin_set_login(app: AppHandle, st: State<AppState>, id: String, allow: 
             params![id, serde_json::to_string(&granted).map_err(es)?],
         )
         .map_err(es)?;
+    let rules = REG.read().get(&id).map(|l| l.rules.clone()).unwrap_or_default();
+    for r in &rules {
+        em::reapply(&app, r);
+    }
     let _ = app.emit(CHANGED, "login");
     get_view(&id)
 }

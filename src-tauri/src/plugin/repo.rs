@@ -283,7 +283,7 @@ async fn auto_update(app: &AppHandle) {
     for (id, ver, login) in list {
         if let Some(a) = available(&id, &ver) {
             if a.new_permissions.is_empty() {
-                match install_from(app, &a.repo, &id, login).await {
+                match install_from(app, &a.repo, &id, login, true).await {
                     Ok(_) => super::log(&id, "update", "info", &format!("已自动更新到 {}", a.version)),
                     Err(e) => super::log(&id, "update", "error", &format!("自动更新失败：{e}")),
                 }
@@ -293,7 +293,8 @@ async fn auto_update(app: &AppHandle) {
 }
 
 /// 从仓库下载并安装（新装或更新）
-pub async fn install_from(app: &AppHandle, repo: &str, id: &str, allow_login: bool) -> R<String> {
+/// `quiet`：自动更新和一键更新用，包里实际要的权限比已同意的多时不装（索引里写的权限不可信）
+pub async fn install_from(app: &AppHandle, repo: &str, id: &str, allow_login: bool, quiet: bool) -> R<String> {
     let entry = CACHE
         .read()
         .get(repo)
@@ -315,10 +316,23 @@ pub async fn install_from(app: &AppHandle, repo: &str, id: &str, allow_login: bo
     std::fs::create_dir_all(&dir).map_err(es)?;
     let file = dir.join(format!("{id}-{}.mpx", entry.version));
     std::fs::write(&file, &bytes).map_err(es)?;
-    let (app2, file2, repo2) = (app.clone(), file.clone(), repo.to_string());
-    let r = tauri::async_runtime::spawn_blocking(move || super::install(&app2, &file2, allow_login, &repo2))
-        .await
-        .map_err(es)?;
+    let (app2, file2, repo2, id2) = (app.clone(), file.clone(), repo.to_string(), id.to_string());
+    let r = tauri::async_runtime::spawn_blocking(move || {
+        let o = super::package::open(&file2, &super::staging_dir()).map_err(es)?;
+        if o.manifest.id != id2 {
+            return Err(format!("插件包里的 id 是“{}”，和仓库里写的“{id2}”不一致", o.manifest.id));
+        }
+        if quiet {
+            let pv = super::preview_of(&o.dir, &o.manifest);
+            if !pv.new_permissions.is_empty() {
+                return Err(format!("新版本要更多权限（{}），请在插件详情里查看后手动更新", pv.new_permissions.join("；")));
+            }
+        }
+        drop(o);
+        super::install(&app2, &file2, allow_login, &repo2)
+    })
+    .await
+    .map_err(es)?;
     let _ = std::fs::remove_file(&file);
     let got = r?;
     if got != id {
@@ -478,7 +492,7 @@ pub async fn plugin_repo_inspect(repo: String, id: String) -> R<super::Preview> 
 
 #[tauri::command]
 pub async fn plugin_repo_install(app: AppHandle, repo: String, id: String, allow_login: bool) -> R<super::PluginView> {
-    let id = install_from(&app, &repo, &id, allow_login).await?;
+    let id = install_from(&app, &repo, &id, allow_login, false).await?;
     super::get_view(&id)
 }
 
@@ -491,7 +505,7 @@ pub async fn plugin_update(app: AppHandle, id: String) -> R<super::PluginView> {
         .map(|l| (l.manifest.version.clone(), l.granted.login))
         .ok_or("找不到这个插件")?;
     let a = available(&id, &ver).ok_or("没有可用的更新，可以先刷新仓库")?;
-    install_from(&app, &a.repo, &id, login).await?;
+    install_from(&app, &a.repo, &id, login, true).await?;
     super::get_view(&id)
 }
 

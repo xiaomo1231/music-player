@@ -543,6 +543,18 @@ pub fn set_enabled(app: &AppHandle, id: &str, enabled: bool) -> R<()> {
     Ok(())
 }
 
+/// 规则已生效时重新注册一次（随插件安装的规则，插件的登录授权变了以后用）
+pub fn reapply(app: &AppHandle, id: &str) {
+    let e = REG.read().get(id).cloned();
+    if let Some(e) = e {
+        if let Some(rule) = &e.rule {
+            if e.active() {
+                apply(app, rule, true);
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub fn em_delete(app: AppHandle, st: State<AppState>, id: String) -> R<()> {
     let owner: String = st

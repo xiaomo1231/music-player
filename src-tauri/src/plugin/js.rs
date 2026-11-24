@@ -466,6 +466,10 @@ impl Provider for JsSource {
                 .call("resolve", json!({ "item": item, "quality": quality }), Duration::from_secs(120))
                 .await?;
             let r = external::parse_resolved(v).map_err(|m| provider::coded("internal", &m))?;
+            // 沙箱里的插件不能指向本机文件
+            if matches!(r.target, provider::Target::File { .. }) {
+                return Err(provider::coded("forbidden", "脚本插件不能返回本机文件"));
+            }
             check_target(&self.plugin, &r.target)?;
             Ok(r)
         })

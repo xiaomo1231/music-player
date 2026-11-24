@@ -77,7 +77,7 @@
         <input type="checkbox" checked={picked.has(i)} onchange={() => toggle(i)} aria-label="选择这一处" />
         <button type="button" onclick={() => act({ k: 'jump', hit: c })} style="border:0;padding:0;text-align:left;flex:1;background:none">
           {short(c.text)}…
-          <span class="mp-adtag {c.confidence === 'hi' ? 'hi' : 'mid'}">{c.confidence === 'hi' ? '把握高' : '需确认'}</span>
+          <span class="mp-adtag {c.confidence === 'hi' ? 'hi' : 'med'}">{c.confidence === 'hi' ? '把握高' : '需确认'}</span>
           <small style="display:block">{where(c)}</small>
         </button>
       </div>
@@ -97,7 +97,7 @@
       <div class="mp-adhit" style="display:grid;gap:4px">
         <button type="button" onclick={() => act({ k: 'jump', hit: h })} style="border:0;padding:0;text-align:left;background:none">
           {short(h.text)}…
-          <span class="mp-adtag mid">需确认</span>
+          <span class="mp-adtag med">需确认</span>
           <small style="display:block">{h.rule} · {where(h)}</small>
         </button>
         <div style="display:flex;gap:6px">

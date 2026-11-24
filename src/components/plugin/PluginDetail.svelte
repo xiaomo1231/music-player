@@ -315,7 +315,7 @@
           <button class="mp-btn" disabled={busy} onclick={test}>{busy ? '正在测试…' : '测试'}</button>
         </div>
         {#each stages as s, k (k)}
-          <div class="stage" class:bad={!s.ok}>
+          <div class="pd-stage" class:bad={!s.ok}>
             <div class="row">
               <b>{s.ok ? '✓' : '✕'} {s.name}</b>
               <small>{s.ms} 毫秒</small>
@@ -467,7 +467,7 @@
     flex-shrink: 0;
   }
   .pd-readme pre,
-  .stage pre {
+  .pd-stage pre {
     white-space: pre-wrap;
     font-size: 12px;
     max-height: 260px;
@@ -489,16 +489,16 @@
     flex-wrap: wrap;
     margin: 8px 0;
   }
-  .stage {
+  .pd-stage {
     border-left: 3px solid #6fd896;
     padding: 6px 10px;
     margin: 8px 0;
     font-size: 13px;
   }
-  .stage.bad {
+  .pd-stage.bad {
     border-color: #ff8a8a;
   }
-  .stage small {
+  .pd-stage small {
     color: var(--mp-sub);
   }
   .logs {

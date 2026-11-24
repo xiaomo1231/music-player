@@ -80,7 +80,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .mp-opt>div{flex:1;min-width:0}.mp-opt small{display:block;color:var(--mp-sub);font-size:12px;margin-top:2px;line-height:1.5;overflow-wrap:anywhere}
 /* 右边的按钮、下拉框不被长文字挤成一字一行 */
 .mp-opt>.mp-btn,.mp-opt>select,.mp-opt>.mp-sw{flex-shrink:0}.mp-opt>.mp-btn{white-space:nowrap}
-.mp-opt select,.mp-sheet textarea{background:var(--mp-panel2);color:var(--mp-text);border:1px solid var(--mp-line);border-radius:8px;padding:5px 8px;font:inherit;font-size:13px}
+.mp-opt select,.mp-opt input:not([type=checkbox]):not([type=radio]):not([type=range]):not(.tin),.mp-sheet textarea{background:var(--mp-panel2);color:var(--mp-text);border:1px solid var(--mp-line);border-radius:8px;padding:5px 8px;font:inherit;font-size:13px}
 .mp-opt select option{background:#222;color:#eee}
 .mp-sheet textarea{width:100%;height:88px;resize:vertical;font-family:Consolas,monospace;font-size:12px}
 
@@ -159,7 +159,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .mp-adhit{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;padding:7px 9px;border-radius:8px;background:rgba(128,128,128,.14);margin-bottom:5px;font-size:12px;cursor:pointer;line-height:1.5}
 .mp-adhit small{grid-column:2;opacity:.65}.mp-adhit.gone{opacity:.45;text-decoration:line-through}
 .mp-adtag{font-size:10.5px;padding:0 6px;border-radius:99px;border:1px solid currentColor;margin-left:6px;white-space:nowrap}
-.mp-adtag.hi{color:#3a9a62}.mp-adtag.mid{color:#c98a1e}
+.mp-adtag.hi{color:#3a9a62}.mp-adtag.med{color:#c98a1e}
 .mp-rbody .ad{transition:background .3s,opacity .4s,font-size .4s;border-radius:3px}
 .mp-rbody .ad.found{background:rgba(255,90,60,.22);box-shadow:0 0 0 1px rgba(255,90,60,.45)}
 .mp-rbody .ad.flash{background:rgba(255,90,60,.55)}

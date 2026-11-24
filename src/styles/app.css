@@ -21,8 +21,18 @@ input,textarea,.selectable{user-select:text}
 .np>div>span:first-of-type{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--mp-sub)}
 /* 海报左下角的标题给右下角的“⋯”留出位置 */
 .mp-poster .mp-pt{right:42px}
+/* 书本卡片（漫画 / 小说）没有封面时竖排书名：放在角标下面，长书名截断，不压住“未读”角标和底部“⋯” */
+.mp-book .mp-poster .mp-pt{top:34px;right:14px}
 /* 海报卡片：有海报时不再在图上叠作品名；比例不对的海报完整显示，背后铺模糊底 */
 .mp-poster.art .mp-pt{display:none}
 .mp-poster .mp-fit-bg{position:absolute;inset:-16px;background-size:cover;background-position:center;filter:blur(18px) brightness(.65)}
 .mp-poster .mp-fit-img{position:absolute;inset:0;background-size:contain;background-repeat:no-repeat;background-position:center}
 .mp-poster .mp-artq{position:absolute;left:8px;top:30px;font-size:10px;padding:2px 6px;border-radius:5px;background:rgba(240,180,60,.85);color:#1a1200}
+/* 侧栏歌单名太长时一行显示，不撑高侧栏 */
+#plside button span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 正在播放：歌名最多两行、艺人专辑一行，不往下压到播放条 */
+.deck .meta b{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.deck .meta>span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 沉浸模式播放条浮在底部：内容区底部留出它的高度，封面下的按钮不会被盖住 */
+body.immersive .stage{padding-bottom:calc(4vh + 96px)}
+body.immersive .deck{width:min(100%,50vh,520px)}

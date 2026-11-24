@@ -268,7 +268,7 @@
     </div>
   {/if}
 
-  <div class="ai" style="margin-top:14px">
+  <div class="aisub" style="margin-top:14px">
     <div class="card">
       <h5>任务设置</h5>
       <div class="frow">

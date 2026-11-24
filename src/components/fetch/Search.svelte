@@ -626,6 +626,7 @@
     font-size: 12.5px;
     display: grid;
     gap: 3px;
+    grid-template-columns: minmax(0, 1fr);
   }
   .chips {
     display: flex;

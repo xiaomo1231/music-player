@@ -195,11 +195,10 @@
   {#each own as s (s.id)}
     <div class="src" class:dim={!s.enabled}>
       <Icon name={ICON[s.kind] ?? 'list'} />
-      <b>{s.name}</b>
+      <b title={s.name}>{s.name}</b>
       <span class="row-end">
         {#if s.kind === 'web'}
           <span class="badge2 {s.mode === 'ai_direct' ? 'ai' : 'ok'}">{BADGE[s.mode] ?? s.mode}</span>
-          <button class="mp-btn ghost" title="网站改版后可重新生成规则" onclick={() => rebuild(s)} disabled={busy}>重新生成规则</button>
         {:else}
           <span class="badge2 ok">正常</span>
         {/if}
@@ -207,6 +206,9 @@
         <button class="mp-btn ghost" title="删除来源" aria-label="删除来源" onclick={() => remove(s)}><Icon name="trash" /></button>
       </span>
       <small>{KIND_TEXT[s.kind] ?? s.kind} · {s.url}</small>
+      {#if s.kind === 'web'}
+        <span class="src-more"><button class="mp-btn ghost" title="网站改版后可重新生成规则" onclick={() => rebuild(s)} disabled={busy}>重新生成规则</button></span>
+      {/if}
     </div>
   {/each}
 </div>
@@ -226,7 +228,7 @@
     {@const p = plugOf(s)}
     <div class="src" class:dim={!s.enabled || st.cls === 'off'}>
       <Icon name="download" />
-      <b>{s.name}</b>
+      <b title={s.name}>{s.name}</b>
       <span class="row-end">
         <span class="badge2 {st.cls}" title={st.title}>{st.text}</span>
         {#if p}<button class="mp-btn ghost" title="插件设置、测试和日志" onclick={() => (plugins.detail = p.id)}><Icon name="gear" /></button>{/if}
@@ -320,6 +322,27 @@
     align-items: center;
     justify-self: end;
     flex-wrap: wrap;
+  }
+  /* 来源一行：名字太长时截断，右侧按钮不换行，不挤出卡片 */
+  #srcs .src,
+  #plugsrcs .src {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .src b {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .src .row-end {
+    flex-wrap: nowrap;
+  }
+  .src small {
+    overflow-wrap: anywhere;
+  }
+  .src-more {
+    grid-column: 2 / -1;
+    margin-top: 4px;
   }
   .plug-head {
     margin-top: 16px;

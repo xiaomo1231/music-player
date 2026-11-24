@@ -5,7 +5,7 @@
   import SiteLogin from './SiteLogin.svelte';
   import { inTauri } from '../../lib/api';
   import { toast } from '../../lib/ui.svelte';
-  import { fetchApi, BILI_QUALITY, type FetchSettings, type SiteLoginView } from '../../lib/fetch';
+  import { fetchApi, BILI_QUALITY, gsProvidersOn, setGsProviders, type FetchSettings, type SiteLoginView } from '../../lib/fetch';
   import { fmtDate } from '../../lib/util';
 
   let { onclose, onsaved }: { onclose: () => void; onsaved?: () => void } = $props();
@@ -22,6 +22,8 @@
     bili_subs: true,
   });
   let saving = $state(false);
+  /** 顶部搜索框同时搜下载源（存在本机，不进数据库） */
+  let gs = $state(gsProvidersOn());
   // 在软件里登录过的网站
   let logins = $state<SiteLoginView[]>([]);
   let newSite = $state('');
@@ -72,6 +74,7 @@
         seed_ratio: Number(s.seed_ratio),
         bili_quality: Number(s.bili_quality),
       });
+      setGsProviders(gs);
       toast('设置已保存');
       onsaved?.();
       onclose();
@@ -114,6 +117,11 @@
         <input class="tin" type="number" min="0.1" step="0.1" bind:value={s.seed_ratio} />
       </label>
     {/if}
+    <h5 class="sec">顶部搜索</h5>
+    <label>
+      <span>搜下载源</span>
+      <span class="chk"><input type="checkbox" class="mp-sw" bind:checked={gs} /> 顶部搜索框同时搜已启用的音乐下载源，结果可以直接下载</span>
+    </label>
     <h5 class="sec">B 站</h5>
     <label>
       <span>清晰度上限</span>

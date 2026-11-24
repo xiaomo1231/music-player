@@ -206,9 +206,19 @@ pub fn allow_of(plugin: &str) -> em::net::Allow {
     em::net::Allow::new(&hosts)
 }
 
+/// 下载源属于哪个插件：`plg-<插件>[.<源>]`，或插件带的 .em 规则 `em-<规则>`
+pub fn owner_of(pid: &str) -> Option<String> {
+    if let Some((plugin, _)) = manifest::split_provider_id(pid) {
+        return Some(plugin.to_string());
+    }
+    let rule = pid.strip_prefix("em-")?;
+    REG.read().iter().find(|(_, l)| l.rules.iter().any(|r| r == rule)).map(|(id, _)| id.clone())
+}
+
 /// 下载任务找不到下载源时的说明（插件停用 / 卸载）
 pub fn missing_reason(pid: &str) -> Option<String> {
-    let (plugin, _) = manifest::split_provider_id(pid)?;
+    let plugin = owner_of(pid)?;
+    let plugin = plugin.as_str();
     let g = REG.read();
     Some(match g.get(plugin) {
         Some(l) if !l.enabled => provider::coded("plugin_disabled", &format!("插件“{}”已停用，启用后可以继续", l.manifest.name)),
@@ -1209,6 +1219,29 @@ pub fn plugin_set_enabled(app: AppHandle, st: State<AppState>, id: String, enabl
     }
     let _ = app.emit(CHANGED, "enabled");
     let _ = app.emit(em::CHANGED, "source");
+    get_view(&id)
+}
+
+/// 交出或收回“网站登录”里保存的登录（只影响之后的调用）
+#[tauri::command]
+pub fn plugin_set_login(app: AppHandle, st: State<AppState>, id: String, allow: bool) -> R<PluginView> {
+    let granted = {
+        let mut g = REG.write();
+        let l = g.get_mut(&id).ok_or("找不到这个插件")?;
+        if allow && l.manifest.permissions.login() == "none" {
+            return Err("这个插件没有声明要用登录".into());
+        }
+        l.granted.login = allow;
+        l.granted.clone()
+    };
+    st.db
+        .lock()
+        .execute(
+            "UPDATE plugins SET granted=?2 WHERE id=?1",
+            params![id, serde_json::to_string(&granted).map_err(es)?],
+        )
+        .map_err(es)?;
+    let _ = app.emit(CHANGED, "login");
     get_view(&id)
 }
 

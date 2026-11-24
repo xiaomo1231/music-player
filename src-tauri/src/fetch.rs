@@ -144,6 +144,20 @@ pub struct SearchOut {
     pub groups: Vec<Group>,
     /// 某个来源失败时的说明（其他来源照常返回结果）
     pub notes: Vec<String>,
+    /// 每个来源的结果数、用时和错误（错误码见 `provider::ERROR_CODES`）
+    pub stats: Vec<SourceStat>,
+}
+
+#[derive(Serialize, Debug, Default, Clone)]
+pub struct SourceStat {
+    pub source_id: i64,
+    pub name: String,
+    pub count: usize,
+    pub ms: u64,
+    pub error: String,
+    pub code: String,
+    /// 这个来源不支持当前类型，没有搜
+    pub skipped: bool,
 }
 
 #[derive(Serialize, Debug)]
@@ -163,6 +177,10 @@ pub struct SourceView {
     /// 网页来源：rules（已生成规则）或 ai_direct（每次让 AI 读页面）；其他类型为空
     pub mode: String,
     pub has_rule: bool,
+    /// 插件提供的下载源：插件 id（内置下载源和其他来源为空）
+    pub plugin: String,
+    /// 下载源能搜的类型（空表示不限）
+    pub media_kinds: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -188,7 +206,22 @@ impl SourceRow {
             created_at: self.created_at,
             mode: if self.kind == "web" { stored.mode } else { String::new() },
             has_rule: !self.rule_json.is_empty(),
+            plugin: self.plugin_id(),
+            media_kinds: self.media_kinds(),
         }
+    }
+
+    fn pid(&self) -> Option<&str> {
+        (self.kind == "provider").then(|| provider::provider_id(&self.url)).flatten()
+    }
+
+    /// 插件下载源所属的插件（.em 规则装进插件时也算）
+    pub fn plugin_id(&self) -> String {
+        self.pid().and_then(crate::plugin::owner_of).unwrap_or_default()
+    }
+
+    pub fn media_kinds(&self) -> Vec<String> {
+        self.pid().and_then(provider::get).map(|p| p.info().media_kinds).unwrap_or_default()
     }
 }
 
@@ -390,6 +423,27 @@ fn group_key(work: &str) -> String {
 
 /// 同时搜索所有启用的来源（only_source 指定时只搜那一个）
 pub async fn search(app: &AppHandle, query: &str, media_kind: &str, only_source: Option<i64>) -> Result<SearchOut, String> {
+    search_in(app, query, media_kind, only_source.map(|s| vec![s]).as_deref()).await
+}
+
+/// 只搜一个来源
+async fn search_one(app: &AppHandle, row: &SourceRow, q: &str, media_kind: &str) -> (Result<Vec<Hit>, String>, bool) {
+    if !row.media_kinds().is_empty() && !row.media_kinds().iter().any(|k| k == media_kind) {
+        return (Ok(vec![]), true);
+    }
+    let r = match row.kind.as_str() {
+        "rss" => source::search_rss(row, q).await,
+        "dir" => source::search_dir(row, q, media_kind).await,
+        "ytdlp" => source::search_ytdlp(row, q).await,
+        "web" => web::search(app, row, q, media_kind).await,
+        "provider" => provider::search(row, q, media_kind).await,
+        other => Err(format!("未知来源类型：{other}")),
+    };
+    (r, false)
+}
+
+/// 在指定的来源里搜（`None` 为全部启用的来源），各来源同时搜
+pub async fn search_in(app: &AppHandle, query: &str, media_kind: &str, only: Option<&[i64]>) -> Result<SearchOut, String> {
     let q = query.trim().to_string();
     if q.is_empty() {
         return Err("请输入要搜索的名字".into());
@@ -399,14 +453,23 @@ pub async fn search(app: &AppHandle, query: &str, media_kind: &str, only_source:
     if rows.is_empty() {
         out.notes.push("还没有添加任何来源".into());
     }
-    for row in rows.into_iter().filter(|r| only_source.map_or(true, |s| s == r.id)) {
-        let res: Result<Vec<Hit>, String> = match row.kind.as_str() {
-            "rss" => source::search_rss(&row, &q).await,
-            "dir" => source::search_dir(&row, &q, media_kind).await,
-            "ytdlp" => source::search_ytdlp(&row, &q).await,
-            "web" => web::search(app, &row, &q, media_kind).await,
-            "provider" => provider::search(&row, &q, media_kind).await,
-            other => Err(format!("未知来源类型：{other}")),
+    let rows: Vec<SourceRow> = rows.into_iter().filter(|r| only.map_or(true, |s| s.contains(&r.id))).collect();
+    let runs = rows.iter().map(|row| {
+        let q = q.clone();
+        async move {
+            let t = std::time::Instant::now();
+            let (r, skipped) = search_one(app, row, &q, media_kind).await;
+            (r, skipped, t.elapsed().as_millis() as u64)
+        }
+    });
+    let results = futures_util::future::join_all(runs).await;
+    for (row, (res, skipped, ms)) in rows.iter().zip(results) {
+        let mut stat = SourceStat {
+            source_id: row.id,
+            name: row.name.clone(),
+            ms,
+            skipped,
+            ..Default::default()
         };
         match res {
             Ok(mut hits) => {
@@ -418,10 +481,17 @@ pub async fn search(app: &AppHandle, query: &str, media_kind: &str, only_source:
                         enrich(h);
                     }
                 }
+                stat.count = hits.len();
                 out.hits.append(&mut hits);
             }
-            Err(msg) => out.notes.push(format!("{}：{}", row.name, msg)),
+            Err(msg) => {
+                let (code, text) = provider::split_code(&msg);
+                stat.code = code.unwrap_or("").to_string();
+                stat.error = text.to_string();
+                out.notes.push(format!("{}：{}", row.name, text));
+            }
         }
+        out.stats.push(stat);
     }
     let mut seen = HashSet::new();
     out.hits.retain(|h| seen.insert(h.url.clone()));
@@ -758,9 +828,20 @@ pub fn fetch_remove_source(st: State<AppState>, id: i64) -> Result<(), String> {
 // ---------- 搜索 / 挑选命令 ----------
 
 #[tauri::command]
-pub async fn fetch_search(app: AppHandle, query: String, media_kind: String) -> Result<SearchOut, String> {
+pub async fn fetch_search(app: AppHandle, query: String, media_kind: String, sources: Option<Vec<i64>>) -> Result<SearchOut, String> {
     let mk = if media_kind.trim().is_empty() { "anime".to_string() } else { media_kind };
-    search(&app, &query, &mk, None).await
+    let only = sources.filter(|s| !s.is_empty());
+    search_in(&app, &query, &mk, only.as_deref()).await
+}
+
+/// 启用 / 停用一个来源（停用的来源不参与搜索和追更）
+#[tauri::command]
+pub fn fetch_set_source_enabled(app: AppHandle, id: i64, enabled: bool) -> Result<(), String> {
+    with_db(&app, |c| {
+        c.execute("UPDATE fetch_sources SET enabled=?2 WHERE id=?1", params![id, enabled as i64])?;
+        Ok(())
+    })
+    .map_err(e)
 }
 
 #[tauri::command]

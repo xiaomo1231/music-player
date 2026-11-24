@@ -7,6 +7,7 @@ import { player } from './player.svelte';
 import { lyricsfx } from './lyricsfx.svelte';
 import { ui, toast } from './ui.svelte';
 import { takeEm } from './em.svelte';
+import { takePlugins } from './plugin.svelte';
 
 /** 桌面歌词窗口加载的地址是 index.html#lyrics */
 export const isLyricsWindow = (): boolean => typeof location !== 'undefined' && location.hash === '#lyrics';
@@ -154,7 +155,7 @@ export async function setDesktopLyrics(on: boolean): Promise<void> {
 
 async function openPaths(paths: string[], addOnly: boolean): Promise<void> {
   // .em 规则文件走导入确认，不进媒体库
-  paths = takeEm(paths);
+  paths = takePlugins(takeEm(paths));
   if (!paths.length) return;
   const added = await invoke<[number, string][]>('add_files', { paths });
   await lib.refresh();

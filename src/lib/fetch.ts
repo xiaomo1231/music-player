@@ -11,6 +11,10 @@ export interface Source {
   /** 网页来源：rules 或 ai_direct */
   mode: string;
   has_rule: boolean;
+  /** 插件提供的下载源：插件 id（其他来源为空） */
+  plugin: string;
+  /** 下载源能搜的类型（空表示不限） */
+  media_kinds: string[];
 }
 
 export interface Hit {
@@ -40,6 +44,20 @@ export interface SearchOut {
   hits: Hit[];
   groups: Group[];
   notes: string[];
+  stats: SourceStat[];
+}
+
+/** 每个来源这次搜索的情况 */
+export interface SourceStat {
+  source_id: number;
+  name: string;
+  count: number;
+  ms: number;
+  error: string;
+  /** 错误码：login_required / captcha / forbidden / not_found / rate_limited / network / bad_config / unsupported / internal / plugin_disabled */
+  code: string;
+  /** 不支持当前类型，没有搜 */
+  skipped: boolean;
 }
 
 export interface Pick {
@@ -187,7 +205,8 @@ export const fetchApi = {
     invoke<Source>('fetch_add_source', { kind, url, name, searchTemplate }),
   removeSource: (id: number) => invoke<void>('fetch_remove_source', { id }),
   rebuildRule: (id: number) => invoke<Source>('fetch_rebuild_rule', { id }),
-  search: (query: string, mediaKind: string) => invoke<SearchOut>('fetch_search', { query, mediaKind }),
+  search: (query: string, mediaKind: string, sources?: number[]) => invoke<SearchOut>('fetch_search', { query, mediaKind, sources: sources?.length ? sources : null }),
+  setSourceEnabled: (id: number, enabled: boolean) => invoke<void>('fetch_set_source_enabled', { id, enabled }),
   aiPick: (results: Hit[], prefs: string) => invoke<Pick[]>('fetch_ai_pick', { results, prefs }),
   download: (items: DlItem[]) => invoke<number[]>('fetch_download', { items }),
   inspectTorrent: (url: string) => invoke<TorrentInfo>('fetch_inspect_torrent', { url }),

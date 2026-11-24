@@ -343,7 +343,7 @@ pub fn file_name(item: &Item, ext: &str) -> String {
 /// 搜索一个下载源，把结果转换成搜索页通用的 `Hit`
 pub async fn search(row: &super::SourceRow, query: &str, media_kind: &str) -> Result<Vec<Hit>, String> {
     let id = provider_id(&row.url).ok_or("来源地址不正确")?;
-    let p = get(id).ok_or_else(|| format!("这个版本的软件里没有下载源“{id}”"))?;
+    let p = get(id).ok_or_else(|| crate::plugin::missing_reason(id).unwrap_or_else(|| format!("这个版本的软件里没有下载源“{id}”")))?;
     let info = p.info();
     if !info.media_kinds.is_empty() && !info.media_kinds.iter().any(|k| k == media_kind) {
         return Ok(vec![]);

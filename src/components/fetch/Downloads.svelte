@@ -9,6 +9,11 @@
   // 下载列表：进度、速度、状态，暂停 / 继续 / 取消 / 重试，完成后显示整理到的路径
   import { toast } from '../../lib/ui.svelte';
   import { fetchApi, canResume, fmtBytes, isActive, MEDIA_TEXT, STATUS_TEXT, type TaskRow } from '../../lib/fetch';
+  import { plugins, splitCode, CODE_TEXT } from '../../lib/plugin.svelte';
+
+  /** 插件下载源的任务：任务地址 provider://plg-<插件>[.<源>]/… */
+  const pluginOf = (t: TaskRow) => /^provider:\/\/plg-([a-z0-9_-]+)/i.exec(t.url)?.[1] ?? '';
+  const ACT_TEXT: Record<string, string> = { settings: '去填设置', enable: '去启用', logs: '看日志' };
 
   let { tasks, onchange }: { tasks: TaskRow[]; onchange?: () => void } = $props();
 
@@ -75,7 +80,14 @@
       <code>→ {t.save_path}</code>
     {/if}
     {#if t.error}
-      <div class="err">{t.error}</div>
+      {@const e = splitCode(t.error)}
+      {@const act2 = CODE_TEXT[e.code]?.action}
+      <div class="err">
+        {#if e.code}<b>{CODE_TEXT[e.code].label}：</b>{/if}{e.text}
+        {#if act2 && ACT_TEXT[act2] && pluginOf(t)}
+          <button class="mp-btn ghost" onclick={ev => { ev.stopPropagation(); plugins.detail = pluginOf(t); }}>{ACT_TEXT[act2]}</button>
+        {/if}
+      </div>
     {/if}
     <div class="acts">
       {#if t.status === 'downloading' || t.status === 'queued'}

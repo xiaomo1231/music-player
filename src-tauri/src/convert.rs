@@ -685,6 +685,8 @@ fn report(app: &AppHandle, id: i64, progress: f64, speed: Option<f64>, status: &
 
 pub struct JobCtl {
     canceled: AtomicBool,
+    /// 停下来是因为“全部暂停”：任务回到已暂停状态，之后可以继续
+    paused: AtomicBool,
     child: Mutex<Option<Child>>,
 }
 
@@ -692,6 +694,7 @@ impl JobCtl {
     fn new() -> Self {
         JobCtl {
             canceled: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
             child: Mutex::new(None),
         }
     }
@@ -834,6 +837,7 @@ fn run_job(app: AppHandle, id: i64, ctl: Arc<JobCtl>) {
     };
     let (status, output, error) = match res {
         Ok(out) => ("done", Some(out), None),
+        Err(_) if canceled && ctl.paused.load(Ordering::SeqCst) => ("paused", None, None),
         Err(_) if canceled => ("canceled", None, None),
         Err(e) => ("failed", None, Some(e)),
     };
@@ -841,7 +845,8 @@ fn run_job(app: AppHandle, id: i64, ctl: Arc<JobCtl>) {
         let st = app.state::<AppState>();
         let conn = st.db.lock();
         let _ = conn.execute(
-            "UPDATE jobs SET status=?1, progress=CASE WHEN ?1='done' THEN 1 ELSE progress END, error=?2, output=COALESCE(?3, output), finished_at=?4 WHERE id=?5",
+            "UPDATE jobs SET status=?1, progress=CASE WHEN ?1='done' THEN 1 WHEN ?1='paused' THEN 0 ELSE progress END, error=?2, \
+             output=COALESCE(?3, output), finished_at=CASE WHEN ?1='paused' THEN NULL ELSE ?4 END WHERE id=?5",
             params![status, error, output, db::now(), id],
         );
     }
@@ -1296,8 +1301,8 @@ pub fn convert_list(st: State<AppState>) -> R<Vec<JobView>> {
     let mut stmt = conn
         .prepare(
             "SELECT id,input,output,preset,after,status,progress,error,backup,created_at,finished_at FROM jobs \
-             ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, \
-             CASE WHEN status IN ('running','queued') THEN id ELSE -id END",
+             ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 WHEN 'paused' THEN 1 ELSE 2 END, \
+             CASE WHEN status IN ('running','queued','paused') THEN id ELSE -id END",
         )
         .map_err(s)?;
     let rows = stmt
@@ -1369,7 +1374,7 @@ pub fn convert_cancel(st: State<AppState>, app: AppHandle, id: i64) -> R<()> {
     let conn = st.db.lock();
     let n = conn
         .execute(
-            "UPDATE jobs SET status='canceled', finished_at=?1 WHERE id=?2 AND status='queued'",
+            "UPDATE jobs SET status='canceled', finished_at=?1 WHERE id=?2 AND status IN ('queued','paused')",
             params![db::now(), id],
         )
         .map_err(s)?;
@@ -1385,8 +1390,11 @@ pub fn convert_cancel(st: State<AppState>, app: AppHandle, id: i64) -> R<()> {
 pub fn convert_cancel_all(st: State<AppState>) -> R<usize> {
     let queued = {
         let conn = st.db.lock();
-        conn.execute("UPDATE jobs SET status='canceled', finished_at=?1 WHERE status='queued'", params![db::now()])
-            .map_err(s)?
+        conn.execute(
+            "UPDATE jobs SET status='canceled', finished_at=?1 WHERE status IN ('queued','paused')",
+            params![db::now()],
+        )
+        .map_err(s)?
     };
     let running: Vec<Arc<JobCtl>> = RUNNING.lock().iter().map(|(_, c)| c.clone()).collect();
     for ctl in &running {
@@ -1396,6 +1404,32 @@ pub fn convert_cancel_all(st: State<AppState>) -> R<usize> {
         }
     }
     Ok(queued + running.len())
+}
+
+/// 全部暂停：排队中的标成已暂停（重启后也保持暂停），正在转换的立即停下、删掉半成品，也回到已暂停。返回暂停的数量
+#[tauri::command]
+pub fn convert_pause_all(st: State<AppState>) -> R<usize> {
+    let queued = {
+        let conn = st.db.lock();
+        conn.execute("UPDATE jobs SET status='paused' WHERE status='queued'", []).map_err(s)?
+    };
+    let running: Vec<Arc<JobCtl>> = RUNNING.lock().iter().map(|(_, c)| c.clone()).collect();
+    for ctl in &running {
+        ctl.paused.store(true, Ordering::SeqCst);
+        ctl.canceled.store(true, Ordering::SeqCst);
+        if let Some(c) = ctl.child.lock().as_mut() {
+            let _ = c.kill();
+        }
+    }
+    Ok(queued + running.len())
+}
+
+/// 全部继续：已暂停的放回队列，按原来的顺序接着转。返回继续的数量
+#[tauri::command]
+pub fn convert_resume_all(st: State<AppState>) -> R<usize> {
+    let conn = st.db.lock();
+    conn.execute("UPDATE jobs SET status='queued', progress=0, error=NULL WHERE status='paused'", [])
+        .map_err(s)
 }
 
 /// 清掉已结束的任务记录（不删文件）

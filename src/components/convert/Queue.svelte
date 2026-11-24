@@ -34,7 +34,7 @@
 
   // 多选删除记录：进行中 / 排队中的任务不能选
   const sel = new Selection();
-  const removable = (j: ConvertJob) => j.status !== 'queued' && j.status !== 'running';
+  const removable = (j: ConvertJob) => j.status !== 'queued' && j.status !== 'running' && j.status !== 'paused';
   const order = $derived(jobs.filter(removable).map(j => j.id));
   $effect(() => { const o = order; untrack(() => sel.prune(o)); });
   function rowClick(e: MouseEvent, j: ConvertJob) {
@@ -80,9 +80,30 @@
   const running = $derived(jobs.filter(j => j.status === 'running').length);
   const queued = $derived(jobs.filter(j => j.status === 'queued').length);
   const failed = $derived(jobs.filter(j => j.status === 'failed').length);
+  const paused = $derived(jobs.filter(j => j.status === 'paused').length);
+
+  async function pauseAll() {
+    try {
+      const k = await invoke<number>('convert_pause_all');
+      toast(`已暂停 ${k} 个任务，关掉软件也会保持暂停，点“全部继续”接着转`);
+    } catch (e) {
+      toast(String(e));
+    }
+    onremoved?.();
+  }
+
+  async function resumeAll() {
+    try {
+      const k = await invoke<number>('convert_resume_all');
+      toast(`已继续 ${k} 个任务`);
+    } catch (e) {
+      toast(String(e));
+    }
+    onremoved?.();
+  }
 
   async function cancelAll() {
-    const n = running + queued;
+    const n = running + queued + paused;
     if (!(await confirmDlg('全部取消', `取消全部 ${n} 个转换任务？正在转换的会立即停止并删除半成品，已完成的不受影响。`, { ok: '全部取消' }))) return;
     try {
       const k = await invoke<number>('convert_cancel_all');
@@ -98,11 +119,13 @@
 
 <div class="qhead">
   <h5>队列 <span class="badge2">{jobs.length}</span>
-    {#if running || queued || failed}<small class="qcount">{[running ? `转换中 ${running}` : '', queued ? `等待 ${queued}` : '', failed ? `失败 ${failed}` : ''].filter(Boolean).join(' · ')}</small>{/if}
+    {#if running || queued || paused || failed}<small class="qcount">{[running ? `转换中 ${running}` : '', queued ? `等待 ${queued}` : '', paused ? `已暂停 ${paused}` : '', failed ? `失败 ${failed}` : ''].filter(Boolean).join(' · ')}</small>{/if}
   </h5>
   <span class="qacts">
     {#if order.length}<button class="mp-btn ghost" class:on={sel.on} onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}>{sel.on ? '退出多选' : '多选'}</button>{/if}
-    {#if running || queued}<button class="mp-btn ghost" onclick={cancelAll}>全部取消</button>{/if}
+    {#if running || queued}<button class="mp-btn ghost" onclick={pauseAll}>全部暂停</button>{/if}
+    {#if paused}<button class="mp-btn ghost" onclick={resumeAll}>全部继续</button>{/if}
+    {#if running || queued || paused}<button class="mp-btn ghost" onclick={cancelAll}>全部取消</button>{/if}
     <button class="mp-btn ghost" onclick={onclear}>清除已结束</button>
   </span>
 </div>
@@ -134,7 +157,7 @@
             <span>已取消，半成品已删除</span>
           {/if}
           <span class="acts">
-            {#if j.status === 'queued' || j.status === 'running'}
+            {#if j.status === 'queued' || j.status === 'running' || j.status === 'paused'}
               <button onclick={() => actions.cancel(j.id)}>取消</button>
             {/if}
             {#if (j.status === 'failed' || j.status === 'canceled') && !j.can_undo}

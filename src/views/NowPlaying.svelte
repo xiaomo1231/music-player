@@ -134,6 +134,7 @@
   <Lyrics />
   <div class="qpanel">
     <h6>接下来播放 · {player.order.length} 首</h6>
+    <div class="qlist">
     {#each player.order as qi, p (p + ':' + qi)}
       {@const t = player.queue[qi]}
       {#if t && p >= player.pos - 1}
@@ -144,5 +145,6 @@
         </div>
       {/if}
     {/each}
+    </div>
   </div>
 </section>

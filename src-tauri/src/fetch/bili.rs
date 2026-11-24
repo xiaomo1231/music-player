@@ -449,7 +449,7 @@ impl provider::Provider for BiliProvider {
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("https://www.bilibili.com/video/{}", item.id));
             Ok(provider::Resolved {
-                target: provider::Target::Ytdlp { url },
+                target: provider::Target::Ytdlp { url, format: String::new() },
                 lyric: None,
             })
         })
@@ -480,6 +480,8 @@ pub struct YtOpts {
     pub subs: bool,
     pub ffmpeg: Option<PathBuf>,
     pub cookies: Option<PathBuf>,
+    /// 下载源（插件）指定的格式选择（`-f`），空表示按上面的规则
+    pub format: String,
 }
 
 impl YtOpts {
@@ -494,6 +496,7 @@ impl YtOpts {
             subs: s.bili_subs,
             ffmpeg: tools::ffmpeg(),
             cookies: None,
+            format: String::new(),
         }
     }
 }
@@ -517,7 +520,13 @@ pub fn ytdlp_args(o: &YtOpts, out_dir: &Path) -> Vec<OsString> {
     };
     a.push("-o".into());
     a.push(template.into());
-    if o.audio_only {
+    if !o.format.is_empty() {
+        a.push("-f".into());
+        a.push(o.format.clone().into());
+        if o.ffmpeg.is_some() && !o.audio_only {
+            a.extend(["--merge-output-format".into(), "mp4".into()]);
+        }
+    } else if o.audio_only {
         a.push("-f".into());
         a.push("ba/b".into());
         if o.ffmpeg.is_some() {
@@ -527,7 +536,7 @@ pub fn ytdlp_args(o: &YtOpts, out_dir: &Path) -> Vec<OsString> {
     }
     if o.bili {
         a.extend(["--sleep-requests".into(), "1".into()]);
-        if !o.audio_only {
+        if !o.audio_only && o.format.is_empty() {
             let sort = if o.quality > 0 {
                 format!("res:{},codec:h264", o.quality)
             } else {
@@ -675,7 +684,8 @@ mod tests {
         assert_eq!(
             r.target,
             provider::Target::Ytdlp {
-                url: "https://www.bilibili.com/video/BV1ab".into()
+                url: "https://www.bilibili.com/video/BV1ab".into(),
+                format: String::new(),
             }
         );
     }
@@ -741,5 +751,18 @@ mod tests {
         let s = args_text(&g);
         assert!(!s.contains("--sleep-requests") && !s.contains("--write-subs"));
         assert!(s.starts_with("--newline --no-playlist"));
+    }
+
+    #[test]
+    fn ytdlp_args_with_plugin_format() {
+        let o = YtOpts {
+            bili: true,
+            format: "bv*[height<=720]+ba/b".into(),
+            ffmpeg: Some(PathBuf::from("ffmpeg.exe")),
+            ..Default::default()
+        };
+        let s = args_text(&o);
+        assert!(s.contains("-f bv*[height<=720]+ba/b --merge-output-format mp4"));
+        assert!(!s.contains("-S "), "插件指定了格式时不再按清晰度排序");
     }
 }

@@ -27,6 +27,7 @@
   import FxSettings from '../components/settings/FxSettings.svelte';
   import ReaderSettings from '../components/settings/ReaderSettings.svelte';
   import RulesCard from '../components/em/RulesCard.svelte';
+  import PluginsCard from '../components/plugin/PluginsCard.svelte';
   import { updater } from '../lib/updater.svelte';
 
   // 设置项的当前值（启动时从 settings 表读取）
@@ -388,6 +389,7 @@
     <LyricsSettings />
     <FxSettings />
     <ReaderSettings />
+    <PluginsCard />
     <RulesCard />
 
     <!-- 快捷键 -->

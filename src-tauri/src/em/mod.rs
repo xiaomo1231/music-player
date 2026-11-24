@@ -52,6 +52,8 @@ pub fn init(conn: &Connection) -> Result<()> {
             updated_at INTEGER NOT NULL
         );",
     )?;
+    // 随插件安装的规则：记下是哪个插件的（插件卸载时一起删，规则页不能单独删）
+    crate::db::add_column(conn, "em_rules", "owner", "TEXT NOT NULL DEFAULT ''")?;
     comic::init(conn)?;
     Ok(())
 }
@@ -264,11 +266,13 @@ pub struct RuleRow {
     pub updated_at: i64,
     /// 有问题时的说明（规则不会生效）
     pub problem: String,
+    /// 随哪个插件安装（空表示用户自己导入的）
+    pub owner: String,
 }
 
 fn load_rows(conn: &Connection) -> Result<Vec<RuleRow>> {
     let mut st =
-        conn.prepare("SELECT id,kind,name,version,author,note,hosts,granted_hosts,enabled,installed_at,updated_at FROM em_rules ORDER BY kind,name")?;
+        conn.prepare("SELECT id,kind,name,version,author,note,hosts,granted_hosts,enabled,installed_at,updated_at,owner FROM em_rules ORDER BY kind,name")?;
     let rows = st
         .query_map([], |r| {
             let kind: String = r.get(1)?;
@@ -288,6 +292,7 @@ fn load_rows(conn: &Connection) -> Result<Vec<RuleRow>> {
                 installed_at: r.get(9)?,
                 updated_at: r.get(10)?,
                 problem: String::new(),
+                owner: r.get(11)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -420,9 +425,31 @@ pub fn em_inspect(st: State<AppState>, path: String) -> R<Preview> {
 
 /// 导入（或更新）规则：复制到规则目录、记录已授权的网站、生效
 #[tauri::command]
-pub fn em_install(app: AppHandle, st: State<AppState>, path: String) -> R<RuleRow> {
+pub fn em_install(app: AppHandle, path: String) -> R<RuleRow> {
     let text = read_file(&path).map_err(es)?;
-    let rule = format::parse(&text).map_err(|is| issues_text(&is))?;
+    install_text(&app, &text, "")
+}
+
+/// 安装规则文本。`owner` 是插件 id（随插件安装时），用户自己导入时为空
+pub fn install_text(app: &AppHandle, text: &str, owner: &str) -> R<RuleRow> {
+    let st = app.state::<AppState>();
+    if let Ok(r) = format::parse(text) {
+        let cur: Option<String> = st
+            .db
+            .lock()
+            .query_row("SELECT owner FROM em_rules WHERE id=?1", [r.id()], |x| x.get(0))
+            .optional()
+            .map_err(es)?;
+        if let Some(o) = cur.filter(|o| o != owner) {
+            return Err(if o.is_empty() {
+                format!("已经导入过 id 为“{}”的规则，请先在规则页删掉它", r.id())
+            } else {
+                format!("id 为“{}”的规则属于插件“{o}”，不能覆盖", r.id())
+            });
+        }
+    }
+    let app = app.clone();
+    let rule = format::parse(text).map_err(|is| issues_text(&is))?;
     check(&rule).map_err(|is| issues_text(&is))?;
     let id = rule.id().to_string();
     // 先停掉旧版本
@@ -434,8 +461,7 @@ pub fn em_install(app: AppHandle, st: State<AppState>, path: String) -> R<RuleRo
     }
     std::fs::create_dir_all(rules_dir()).map_err(es)?;
     let dst = rule_path(&id);
-    let same_file = std::fs::canonicalize(&path).ok() == std::fs::canonicalize(&dst).ok();
-    if !same_file {
+    if std::fs::read_to_string(&dst).ok().as_deref() != Some(rule.text.as_str()) {
         std::fs::write(&dst, &rule.text).map_err(|e| format!("保存规则失败：{e}"))?;
     }
     let h = &rule.header;
@@ -445,10 +471,10 @@ pub fn em_install(app: AppHandle, st: State<AppState>, path: String) -> R<RuleRo
     {
         let conn = st.db.lock();
         conn.execute(
-            "INSERT INTO em_rules(id,kind,name,version,author,note,hosts,granted_hosts,sha256,enabled,installed_at,updated_at)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?7,?8,1,?9,?9)
-             ON CONFLICT(id) DO UPDATE SET kind=?2,name=?3,version=?4,author=?5,note=?6,hosts=?7,granted_hosts=?7,sha256=?8,enabled=1,updated_at=?9",
-            params![id, h.kind.as_str(), h.name, h.version, h.author, h.note, hosts, sha, t],
+            "INSERT INTO em_rules(id,kind,name,version,author,note,hosts,granted_hosts,sha256,enabled,installed_at,updated_at,owner)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?7,?8,1,?9,?9,?10)
+             ON CONFLICT(id) DO UPDATE SET kind=?2,name=?3,version=?4,author=?5,note=?6,hosts=?7,granted_hosts=?7,sha256=?8,enabled=1,updated_at=?9,owner=?10",
+            params![id, h.kind.as_str(), h.name, h.version, h.author, h.note, hosts, sha, t, owner],
         )
         .map_err(es)?;
     }
@@ -483,7 +509,14 @@ pub fn em_list(st: State<AppState>) -> R<Vec<RuleRow>> {
 }
 
 #[tauri::command]
-pub fn em_set_enabled(app: AppHandle, st: State<AppState>, id: String, enabled: bool) -> R<()> {
+pub fn em_set_enabled(app: AppHandle, id: String, enabled: bool) -> R<()> {
+    set_enabled(&app, &id, enabled)
+}
+
+/// 启用 / 停用规则（插件启停时也用）
+pub fn set_enabled(app: &AppHandle, id: &str, enabled: bool) -> R<()> {
+    let (app, id) = (app.clone(), id.to_string());
+    let st = app.state::<AppState>();
     st.db
         .lock()
         .execute("UPDATE em_rules SET enabled=?2 WHERE id=?1", params![id, enabled as i64])
@@ -510,8 +543,37 @@ pub fn em_set_enabled(app: AppHandle, st: State<AppState>, id: String, enabled: 
     Ok(())
 }
 
+/// 规则已生效时重新注册一次（随插件安装的规则，插件的登录授权变了以后用）
+pub fn reapply(app: &AppHandle, id: &str) {
+    let e = REG.read().get(id).cloned();
+    if let Some(e) = e {
+        if let Some(rule) = &e.rule {
+            if e.active() {
+                apply(app, rule, true);
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub fn em_delete(app: AppHandle, st: State<AppState>, id: String) -> R<()> {
+    let owner: String = st
+        .db
+        .lock()
+        .query_row("SELECT owner FROM em_rules WHERE id=?1", [&id], |r| r.get(0))
+        .optional()
+        .map_err(es)?
+        .unwrap_or_default();
+    if !owner.is_empty() {
+        return Err(format!("这个规则随插件“{owner}”安装，请在插件页卸载插件"));
+    }
+    delete(&app, &id)
+}
+
+/// 删除规则（插件卸载时也用）
+pub fn delete(app: &AppHandle, id: &str) -> R<()> {
+    let (app, id) = (app.clone(), id.to_string());
+    let st = app.state::<AppState>();
     let e = REG.write().remove(&id);
     if let Some(e) = &e {
         if let Some(rule) = &e.rule {

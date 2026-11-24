@@ -1,0 +1,24 @@
+{
+  "manifest": 1,
+  "id": "my-em-source",
+  "name": "我的规则下载源（规则模板）",
+  "version": "0.1.0",
+  "author": "你的名字",
+  "description": "rule 插件模板：把一个 .em 下载源规则包装成插件。",
+  "license": "MIT",
+  "engines": { "app": ">=0.6.0" },
+  "runtime": { "type": "rule", "file": "source.em" },
+  "contributes": {
+    "sources": [
+      {
+        "id": "main",
+        "media_kinds": ["music"],
+        "capabilities": ["search", "resolve"]
+      }
+    ]
+  },
+  "permissions": {
+    "hosts": ["example.org"],
+    "login": "none"
+  }
+}

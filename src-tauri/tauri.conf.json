@@ -34,7 +34,10 @@
     "shortDescription": "极光播放器",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "resources": { "bin/": "bin/" },
-    "fileAssociations": [{ "ext": ["em"], "name": "AuroraPlayerRule", "description": "极光播放器规则文件", "role": "Viewer" }],
+    "fileAssociations": [
+      { "ext": ["em"], "name": "AuroraPlayerRule", "description": "极光播放器规则文件", "role": "Viewer" },
+      { "ext": ["mpx"], "name": "AuroraPlayerPlugin", "description": "极光播放器插件包", "role": "Viewer" }
+    ],
     "windows": { "nsis": { "languages": ["SimpChinese"], "installMode": "currentUser" } }
   },
   "plugins": {

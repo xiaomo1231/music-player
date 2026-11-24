@@ -65,6 +65,7 @@ librqbit = { version = "9", default-features = false, features = ["default-tls"]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tract-onnx = "0.23"
+rquickjs = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

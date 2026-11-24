@@ -7,6 +7,7 @@
   import { toast } from '../../lib/ui.svelte';
   import { fetchApi, needsLogin, KIND_TEXT, MEDIA_TEXT, metaApi, type MetaInfo, type ProviderInfo, type Source, type SourceStep } from '../../lib/fetch';
   import { em, pickEm } from '../../lib/em.svelte';
+  import { plugins, pluginApi, pickPlugin, CODE_TEXT, type PluginView } from '../../lib/plugin.svelte';
 
   let { onchange }: { onchange?: () => void } = $props();
 
@@ -30,11 +31,48 @@
   const ICON: Record<string, string> = { rss: 'list', ytdlp: 'video', dir: 'folder', web: 'search', provider: 'download' };
   const BADGE: Record<string, string> = { rules: '规则已生成', ai_direct: 'AI 直接读取' };
 
+  // 已安装的插件：插件提供的来源单独成组，显示状态
+  let pls = $state.raw<PluginView[]>([]);
+  const plugOf = (s: Source) => pls.find(p => p.id === s.plugin);
+  let own = $derived(list.filter(s => !s.plugin));
+  let fromPlugins = $derived(list.filter(s => s.plugin));
+
+  /** 插件来源的状态：停用、有问题、缺设置、上次调用出错 */
+  function plugState(s: Source): { cls: string; text: string; title: string } {
+    const p = plugOf(s);
+    if (!p) return { cls: 'off', text: '插件已卸载', title: '' };
+    if (p.problem) return { cls: 'bad', text: '有问题', title: p.problem };
+    if (!p.enabled) return { cls: 'off', text: '插件已停用', title: '' };
+    if (p.needs_settings.length) return { cls: 'warn', text: '要填设置', title: p.needs_settings.join('、') };
+    const st = p.sources.find(x => `provider://${x.provider_id}` === s.url)?.status;
+    if (st?.code) return { cls: 'bad', text: CODE_TEXT[st.code]?.label ?? st.code, title: st.message };
+    return { cls: 'ok', text: '正常', title: '' };
+  }
+
+  async function toggle(s: Source) {
+    try {
+      await fetchApi.setSourceEnabled(s.id, !s.enabled);
+      list = list.map(x => (x.id === s.id ? { ...x, enabled: !s.enabled } : x));
+      onchange?.();
+    } catch (err) {
+      toast(String(err));
+    }
+  }
+
+  let plSeen = plugins.version;
+  $effect(() => {
+    const v = plugins.version;
+    if (v === plSeen) return;
+    plSeen = v;
+    void load();
+  });
+
   async function load() {
     if (!inTauri) return;
     try {
       list = await fetchApi.sources();
       providers = await fetchApi.providers();
+      pls = await pluginApi.list();
     } catch (err) {
       toast(String(err));
     }
@@ -150,12 +188,12 @@
   <span class="badge2">{list.length} 个</span>
 </div>
 
-{#if list.length === 0}
+{#if own.length === 0}
   <div class="empty" style="padding:18px 6px">还没有来源。添加你有权获取内容的网站、订阅链接或自己的网盘目录。</div>
 {/if}
 <div id="srcs">
-  {#each list as s (s.id)}
-    <div class="src">
+  {#each own as s (s.id)}
+    <div class="src" class:dim={!s.enabled}>
       <Icon name={ICON[s.kind] ?? 'list'} />
       <b>{s.name}</b>
       <span class="row-end">
@@ -165,9 +203,36 @@
         {:else}
           <span class="badge2 ok">正常</span>
         {/if}
+        <input type="checkbox" class="mp-sw" checked={s.enabled} title={s.enabled ? '停用：搜索时跳过这个来源' : '启用'} onchange={() => toggle(s)} />
         <button class="mp-btn ghost" title="删除来源" aria-label="删除来源" onclick={() => remove(s)}><Icon name="trash" /></button>
       </span>
       <small>{KIND_TEXT[s.kind] ?? s.kind} · {s.url}</small>
+    </div>
+  {/each}
+</div>
+
+<div class="card-head plug-head">
+  <h5>插件</h5>
+  <span class="row-end">
+    <button class="mp-btn ghost" title="安装 .mpx 插件包：装好的下载源会出现在这里" onclick={pickPlugin} disabled={busy}>安装插件…</button>
+  </span>
+</div>
+{#if fromPlugins.length === 0}
+  <div class="note">装了插件以后，它提供的下载源会出现在这里，搜索时一起搜。双击或拖入 .mpx 文件也能安装；插件的设置、测试和日志在“设置 → 插件”。</div>
+{/if}
+<div id="plugsrcs">
+  {#each fromPlugins as s (s.id)}
+    {@const st = plugState(s)}
+    {@const p = plugOf(s)}
+    <div class="src" class:dim={!s.enabled || st.cls === 'off'}>
+      <Icon name="download" />
+      <b>{s.name}</b>
+      <span class="row-end">
+        <span class="badge2 {st.cls}" title={st.title}>{st.text}</span>
+        {#if p}<button class="mp-btn ghost" title="插件设置、测试和日志" onclick={() => (plugins.detail = p.id)}><Icon name="gear" /></button>{/if}
+        <input type="checkbox" class="mp-sw" checked={s.enabled} title={s.enabled ? '停用：搜索时跳过这个下载源' : '启用'} onchange={() => toggle(s)} />
+      </span>
+      <small>插件 {p?.name ?? s.plugin}{p ? ` v${p.version}` : ''} · {kindsText(s.media_kinds)}</small>
     </div>
   {/each}
 </div>
@@ -255,6 +320,21 @@
     align-items: center;
     justify-self: end;
     flex-wrap: wrap;
+  }
+  .plug-head {
+    margin-top: 16px;
+  }
+  .dim {
+    opacity: 0.55;
+  }
+  :global(.badge2.warn) {
+    color: #ffb45a;
+  }
+  :global(.badge2.bad) {
+    color: #ff8a8a;
+  }
+  :global(.badge2.off) {
+    opacity: 0.7;
   }
   .metas {
     display: flex;

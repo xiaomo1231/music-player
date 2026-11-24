@@ -33,6 +33,9 @@
   import CloseModal from './components/CloseModal.svelte';
   import EmImportModal from './components/em/ImportModal.svelte';
   import { takeEm, startEm } from './lib/em.svelte';
+  import PluginInstallModal from './components/plugin/InstallModal.svelte';
+  import PluginDetail from './components/plugin/PluginDetail.svelte';
+  import { takePlugins, startPlugins } from './lib/plugin.svelte';
   import { updater } from './lib/updater.svelte';
   import VideoPlayer from './overlays/VideoPlayer.svelte';
   import NovelReader from './overlays/NovelReader.svelte';
@@ -218,6 +221,7 @@
   onMount(() => {
     wake();
     startEm();
+    startPlugins();
     const offs: Promise<() => void>[] = [];
     if (inTauri) {
       offs.push(
@@ -228,7 +232,7 @@
           else if (p.type === 'drop') {
             dragging = false;
             if (ui.view === 'convert') return; // 转换页自己接收
-            const paths = takeEm(p.paths); // .em 规则文件走导入确认
+            const paths = takePlugins(takeEm(p.paths)); // .em 规则文件、.mpx 插件包走安装确认
             if (!paths.length) return;
             const added = await invoke<[number, string][]>('add_files', { paths });
             await lib.refresh();
@@ -361,6 +365,8 @@
 {#if updater.show}<UpdateModal />{/if}
 <CloseModal />
 <EmImportModal />
+<PluginInstallModal />
+<PluginDetail />
 
 <div class="mp-dim"></div>
 <div class="mp-refresh" class:run={ui.refreshRun > 0}></div>

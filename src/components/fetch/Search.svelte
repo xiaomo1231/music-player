@@ -27,8 +27,12 @@
     type ProviderInfo,
     type ProviderItem,
     type SearchOut,
+    type Source,
+    type SourceStat,
     type SubRow,
   } from '../../lib/fetch';
+  import { plugins, pickPlugin, CODE_TEXT } from '../../lib/plugin.svelte';
+  import { em } from '../../lib/em.svelte';
 
   let { onqueued }: { onqueued?: () => void } = $props();
 
@@ -72,7 +76,13 @@
 
   onMount(() => {
     loadSubs();
-    loadProviders();
+  });
+
+  // 来源或插件有变化时重新读（装了插件就能马上在这里选）
+  $effect(() => {
+    void plugins.version;
+    void em.version;
+    void loadProviders();
   });
 
   async function loadProviders() {
@@ -82,6 +92,28 @@
     } catch {
       /* 旧版本没有这些命令时忽略 */
     }
+    try {
+      sources = (await fetchApi.sources()).filter(s => s.enabled);
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  // 搜索范围：不选表示全部启用的来源
+  let sources = $state.raw<Source[]>([]);
+  let scope = $state<number[]>([]);
+  const scoped = $derived(sources.filter(s => supportsKind(s.media_kinds ?? [], mk)));
+  const toggleScope = (id: number) => (scope = scope.includes(id) ? scope.filter(x => x !== id) : [...scope, id]);
+  const srcOf = (id: number) => sources.find(s => s.id === id);
+  /** 出错的来源能做的事：插件来源打开插件详情 */
+  function statAction(st: SourceStat): { text: string; run: () => void } | null {
+    const act = CODE_TEXT[st.code]?.action;
+    const plugin = srcOf(st.source_id)?.plugin;
+    if (!act) return null;
+    if (act === 'login') return { text: '怎么登录', run: () => toast(CODE_TEXT[st.code].hint) };
+    if (!plugin) return null;
+    const text = act === 'settings' ? '去填设置' : act === 'enable' ? '去启用' : '看日志';
+    return { text, run: () => (plugins.detail = plugin) };
   }
 
   /** 查作品资料（没有资料源时什么都不做，不影响搜索） */
@@ -136,7 +168,7 @@
     qsel = {};
     loadCards(text);
     try {
-      out = await fetchApi.search(text, mk);
+      out = await fetchApi.search(text, mk, scope.filter(id => scoped.some(s => s.id === id)));
     } catch (err) {
       toast(String(err));
     } finally {
@@ -278,6 +310,16 @@
   <button class="mp-btn" onclick={doSearch} disabled={searching}>{searching ? '搜索中…' : '搜索'}</button>
 </div>
 
+{#if scoped.length > 1}
+  <div class="scope">
+    <span>搜索范围</span>
+    <button class="mp-chip" class:on={!scope.some(id => scoped.some(s => s.id === id))} onclick={() => (scope = [])}>全部 {scoped.length} 个</button>
+    {#each scoped as s (s.id)}
+      <button class="mp-chip" class:on={scope.includes(s.id)} title={s.plugin ? `插件提供的下载源` : ''} onclick={() => toggleScope(s.id)}>{s.name}</button>
+    {/each}
+  </div>
+{/if}
+
 <div class="frow" style="margin-top:10px">
   <input class="tin" style="flex:1;min-width:140px" placeholder={PREFS_HINT[mk]} bind:value={prefs} />
   <button class="mp-btn ghost" onclick={aiPick} disabled={!out || out.hits.length === 0 || picking}>{picking ? 'AI 挑选中…' : 'AI 挑选推荐'}</button>
@@ -326,14 +368,30 @@
 
 <div style="margin-top:12px">
   {#if noBookSource && !out && !searching}
-    <div class="note" style="margin-bottom:10px">还没有能搜{MEDIA_TEXT[mk]}的下载源。接入后会出现在左边“可添加的下载源”里，添加一下就能在这里搜索和下载；也可以添加你自己的网盘 / NAS 目录。</div>
+    <div class="note" style="margin-bottom:10px">
+      还没有能搜{MEDIA_TEXT[mk]}的下载源。可以安装提供{MEDIA_TEXT[mk]}下载源的插件，或添加你自己的网盘 / NAS 目录。
+      <div style="margin-top:6px"><button class="mp-btn ghost" onclick={pickPlugin}>安装插件…</button></div>
+    </div>
   {/if}
   {#if searching}
     <div class="empty">正在搜索你添加的所有来源…</div>
   {:else if !out}
     <div class="empty">输入名字后点“搜索”。会同时搜索左边所有来源，结果按作品分组，可以用 AI 挑出推荐的版本。</div>
   {:else}
-    {#if out.notes.length > 0}
+    {#if out.stats?.length}
+      <div class="stats">
+        {#each out.stats.filter(st => !st.skipped) as st (st.source_id)}
+          {@const a = statAction(st)}
+          <span class="stat" class:bad={!!st.error} title={st.error ? `${st.error}${CODE_TEXT[st.code] ? '\n' + CODE_TEXT[st.code].hint : ''}` : `${st.ms} 毫秒`}>
+            {st.name}：{st.error ? (CODE_TEXT[st.code]?.label ?? '出错') : `${st.count} 条`}
+            {#if a}<button class="linkbtn" onclick={a.run}>{a.text}</button>{/if}
+          </span>
+        {/each}
+      </div>
+      {#if out.stats.some(st => st.error)}
+        <div class="note" style="margin-bottom:10px">{#each out.stats.filter(st => st.error) as st (st.source_id)}<div>{st.name}：{st.error}</div>{/each}</div>
+      {/if}
+    {:else if out.notes.length > 0}
       <div class="note" style="margin-bottom:10px">{#each out.notes as n (n)}<div>{n}</div>{/each}</div>
     {/if}
     {#if out.hits.length === 0}
@@ -415,6 +473,36 @@
 {/if}
 
 <style>
+  .scope {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 8px;
+    font-size: 12.5px;
+  }
+  .scope > span {
+    color: var(--mp-sub);
+  }
+  .stats {
+    display: flex;
+    gap: 6px 12px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--mp-sub);
+    margin-bottom: 8px;
+  }
+  .stat.bad {
+    color: #ff8a8a;
+  }
+  .linkbtn {
+    background: none;
+    border: 0;
+    padding: 0 0 0 4px;
+    color: var(--mp-accent, #7aa7ff);
+    cursor: pointer;
+    font: inherit;
+  }
   .card-head h5,
   .subs h5 {
     margin: 0 0 8px;

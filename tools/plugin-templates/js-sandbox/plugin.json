@@ -1,0 +1,28 @@
+{
+  "manifest": 1,
+  "id": "my-js-source",
+  "name": "我的下载源（脚本模板）",
+  "version": "0.1.0",
+  "author": "你的名字",
+  "description": "js 沙箱插件模板：把 example.org 和选择器换成你有权使用的网站。",
+  "license": "MIT",
+  "engines": { "app": ">=0.6.0", "protocol": 2 },
+  "runtime": { "type": "js", "file": "main.js" },
+  "contributes": {
+    "sources": [
+      {
+        "id": "main",
+        "media_kinds": ["manga"],
+        "capabilities": ["search", "episodes", "resolve"],
+        "note": "模板：网址和选择器是占位的"
+      }
+    ]
+  },
+  "permissions": {
+    "hosts": ["example.org", "img.example.org"],
+    "login": "optional"
+  },
+  "settings": [
+    { "key": "lang", "type": "select", "label": "语言", "default": "zh", "options": ["zh", "en"] }
+  ]
+}

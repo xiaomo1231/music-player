@@ -1,10 +1,13 @@
 // 界面状态：当前页面、弹窗、提示、沉浸 / 迷你模式、OLED 防烧屏
 export type View = 'now' | 'music' | 'video' | 'movie' | 'anime' | 'manga' | 'novel' | 'daily' | 'convert' | 'aisub' | 'get' | 'org' | 'settings';
-export type Modal = null | 'scan' | 'eq' | 'oled' | 'ai' | 'keys' | 'playlist-add' | 'about';
+export type Modal = null | 'scan' | 'eq' | 'oled' | 'ai' | 'keys' | 'playlist-add' | 'about' | 'mini';
 
 const load = <T>(k: string, d: T): T => {
   try { const v = localStorage.getItem('mp.' + k); return v == null ? d : { ...d, ...JSON.parse(v) }; } catch { return d; }
 };
+
+/** 迷你播放器外观：底色、强调色（空 = 跟随主题）、第二行显示什么、封面是否转动 */
+export interface MiniCfg { bg: 'theme' | 'dark' | 'black' | 'light'; accent: string; line: 'lyric' | 'artist'; spin: boolean }
 
 export interface Oled { black: boolean; shift: boolean; shiftSec: number; drift: boolean; dim: boolean; dimSec: number; dimLv: number; hide: boolean; stat: boolean }
 
@@ -21,6 +24,7 @@ class UI {
   dimmed = $state(false);
   refreshRun = $state(0);
   oled = $state<Oled>(load('oled', { black: false, shift: true, shiftSec: 60, drift: true, dim: true, dimSec: 300, dimLv: 0.65, hide: true, stat: false }));
+  miniCfg = $state<MiniCfg>(load('mini', { bg: 'theme', accent: '', line: 'lyric', spin: true }));
   /** 当前打开的覆盖层：视频播放器 / 阅读器 */
   videoId = $state<number | null>(null);
   videoList = $state<number[]>([]);
@@ -38,7 +42,7 @@ class UI {
   fetchQuery = $state<{ q: string; mk: string } | null>(null);
 
   setImmersive: (v?: boolean) => void = () => {};
-  setMini: (v?: boolean) => void = () => {};
+  setMini: (v?: boolean) => void | Promise<void> = () => {};
 
   go(v: View) { this.view = v; }
   /** 按类型打开一个媒体项（视频 / 小说 / 漫画） */
@@ -49,6 +53,7 @@ class UI {
   }
   open(m: Modal, arg: unknown = null) { this.modal = m; this.modalArg = arg; }
   close() { this.modal = null; }
+  saveMini() { try { localStorage.setItem('mp.mini', JSON.stringify(this.miniCfg)); } catch {} }
   saveOled() { try { localStorage.setItem('mp.oled', JSON.stringify(this.oled)); } catch {} }
 }
 export const ui = new UI();

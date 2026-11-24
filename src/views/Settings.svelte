@@ -337,7 +337,8 @@
         <input type="checkbox" class="mp-sw" checked={lyrics} onchange={onLyrics} />
       </label>
       <div class="mp-opt">
-        <div>迷你播放器<small>置顶小窗，显示封面、歌词和基本控制</small></div>
+        <div>迷你播放器<small>置顶小窗，显示封面、歌词和基本控制；可以改背景、强调色等</small></div>
+        <button class="mp-btn ghost" onclick={() => ui.open('mini')}>设置</button>
         <button class="mp-btn ghost" onclick={() => ui.setMini(true)}>进入</button>
       </div>
       <label class="mp-opt">

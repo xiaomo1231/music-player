@@ -22,7 +22,7 @@ input,textarea,.selectable{user-select:text}
 /* 海报左下角的标题给右下角的“⋯”留出位置 */
 .mp-poster .mp-pt{right:42px}
 /* 书本卡片（漫画 / 小说）没有封面时竖排书名：放在角标下面，长书名截断，不压住“未读”角标和底部“⋯” */
-.mp-book .mp-poster .mp-pt{inset:34px 12px 36px auto;max-height:calc(100% - 70px);overflow:hidden}
+.mp-book .mp-poster .mp-pt{top:34px;right:14px}
 /* 海报卡片：有海报时不再在图上叠作品名；比例不对的海报完整显示，背后铺模糊底 */
 .mp-poster.art .mp-pt{display:none}
 .mp-poster .mp-fit-bg{position:absolute;inset:-16px;background-size:cover;background-position:center;filter:blur(18px) brightness(.65)}

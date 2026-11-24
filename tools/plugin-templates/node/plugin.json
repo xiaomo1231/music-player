@@ -1,0 +1,33 @@
+{
+  "manifest": 1,
+  "id": "my-node-source",
+  "name": "我的下载源（Node 模板）",
+  "version": "0.1.0",
+  "author": "你的名字",
+  "description": "process 插件模板（Node.js）：把 example.org 换成你有权使用的网站或自己的服务。",
+  "license": "MIT",
+  "engines": { "app": ">=0.5.0", "protocol": 2 },
+  "runtime": {
+    "type": "process",
+    "command": { "default": ["node", "main.js"] }
+  },
+  "contributes": {
+    "sources": [
+      {
+        "id": "main",
+        "media_kinds": ["video"],
+        "capabilities": ["search", "resolve"],
+        "note": "模板：返回的是假数据"
+      }
+    ]
+  },
+  "permissions": {
+    "hosts": ["example.org"],
+    "login": "none",
+    "tools": []
+  },
+  "settings": [
+    { "key": "quality", "type": "select", "label": "默认清晰度", "default": "1080",
+      "options": [{ "value": "1080", "label": "1080P" }, { "value": "720", "label": "720P" }] }
+  ]
+}

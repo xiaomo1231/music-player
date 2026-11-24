@@ -1,0 +1,214 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://music-player.invalid/plugin.schema.json",
+  "title": "播放器插件清单 plugin.json（manifest 1）",
+  "description": "和 src-tauri/src/plugin/manifest.rs 的 Manifest::check 对应。软件会忽略不认识的字段，这里把它们标成错误是为了尽早发现拼写错误。说明见 docs/插件开发.md",
+  "type": "object",
+  "required": ["manifest", "id", "name", "version", "runtime", "contributes"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "manifest": { "description": "清单格式版本，写 1", "type": "integer", "const": 1 },
+    "id": {
+      "description": "插件 id：小写字母、数字、-，3–64 位，不能以 - 开头或结尾。装好后不要再改",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$"
+    },
+    "name": { "description": "显示名", "type": "string", "pattern": "\\S" },
+    "version": {
+      "description": "主.次.修，可带 -beta.1 之类的后缀",
+      "type": "string",
+      "pattern": "^\\s*[0-9]+\\.[0-9]+\\.[0-9]+([-+].*)?\\s*$"
+    },
+    "author": { "type": "string" },
+    "description": { "type": "string" },
+    "homepage": { "type": "string" },
+    "license": { "type": "string" },
+    "icon": { "description": "图标文件，相对插件文件夹，不能含 ..", "type": "string" },
+    "engines": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "description": "最低软件版本，如 >=0.5.0；空或 * 表示不限",
+          "type": "string",
+          "pattern": "^\\s*(\\*|(>=|\\^)?\\s*[0-9]+\\.[0-9]+\\.[0-9]+([-+].*)?)?\\s*$"
+        },
+        "protocol": { "description": "调用协议。process 写 2（1 是旧协议），js 只能写 2，rule 不用写", "type": "integer" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["rule", "process", "js"] },
+        "command": {
+          "description": "process：按系统写命令数组，键为 windows / macos / linux / default",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "windows": { "$ref": "#/definitions/argv" },
+            "macos": { "$ref": "#/definitions/argv" },
+            "linux": { "$ref": "#/definitions/argv" },
+            "default": { "$ref": "#/definitions/argv" }
+          }
+        },
+        "file": { "description": "rule / js：入口文件，相对插件文件夹", "$ref": "#/definitions/relpath" }
+      }
+    },
+    "contributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sources": { "type": "array", "items": { "$ref": "#/definitions/source" } },
+        "rules": { "description": "随插件安装的其他 .em 规则（相对路径）", "type": "array", "items": { "$ref": "#/definitions/relpath" } }
+      },
+      "anyOf": [
+        { "required": ["sources"], "properties": { "sources": { "minItems": 1 } } },
+        { "required": ["rules"], "properties": { "rules": { "minItems": 1 } } }
+      ]
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hosts": {
+          "description": "要访问的网站：只写域名，可带端口和 *.，不写 http:// 和路径",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^(?!\\s*$)[^/]+$" }
+        },
+        "login": { "enum": ["", "none", "optional", "required"] },
+        "tools": { "type": "array", "items": { "enum": ["ytdlp", "ffmpeg", "ffprobe"] } },
+        "paths": {
+          "description": "要读写的文件夹，只能引用 folder 设置项：setting:<key>",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^setting:.+$" }
+        }
+      },
+      "if": { "properties": { "login": { "enum": ["optional", "required"] } }, "required": ["login"] },
+      "then": { "required": ["hosts"], "properties": { "hosts": { "minItems": 1 } } }
+    },
+    "settings": { "type": "array", "items": { "$ref": "#/definitions/setting" } },
+    "update": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "index": { "description": "仓库索引地址（目前软件不读这个字段）", "type": "string" } }
+    },
+    "legacy_ids": {
+      "description": "这个插件替代的旧下载源 id（ext- 外部程序或 em- 规则），安装时把来源和任务迁过来",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^(ext-|em-)" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "runtime": { "properties": { "type": { "const": "process" } } } } },
+      "then": {
+        "required": ["engines"],
+        "properties": {
+          "runtime": { "required": ["command"] },
+          "engines": { "required": ["protocol"], "properties": { "protocol": { "enum": [1, 2] } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "runtime": { "properties": { "type": { "const": "js" } } } } },
+      "then": {
+        "required": ["engines"],
+        "properties": {
+          "runtime": { "required": ["file"] },
+          "engines": { "required": ["protocol"], "properties": { "protocol": { "const": 2 } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "runtime": { "properties": { "type": { "const": "rule" } } } } },
+      "then": {
+        "properties": {
+          "runtime": { "required": ["file"] },
+          "contributes": { "properties": { "sources": { "maxItems": 1 } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "runtime": { "properties": { "type": { "enum": ["rule", "js"] } } } } },
+      "then": {
+        "properties": {
+          "contributes": {
+            "properties": {
+              "sources": { "items": { "properties": { "capabilities": { "not": { "contains": { "const": "download" } } } } } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "engines": { "properties": { "protocol": { "const": 1 } }, "required": ["protocol"] } }, "required": ["engines"] },
+      "then": {
+        "properties": {
+          "contributes": {
+            "properties": {
+              "sources": { "items": { "properties": { "capabilities": { "items": { "enum": ["search", "resolve"] } } } } }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "argv": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "relpath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "(^/|^\\\\|^[A-Za-z]:|(^|[/\\\\])\\.\\.([/\\\\]|$))" }
+    },
+    "source": {
+      "type": "object",
+      "required": ["id", "capabilities"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "下载源 id：小写字母、数字、-。写 main 时注册成 plg-<插件>，否则 plg-<插件>.<id>",
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$"
+        },
+        "name": { "description": "显示名，不写用插件名", "type": "string" },
+        "media_kinds": { "type": "array", "items": { "enum": ["music", "video", "anime", "manga", "novel"] } },
+        "capabilities": {
+          "type": "array",
+          "items": { "enum": ["search", "episodes", "resolve", "download"] },
+          "allOf": [
+            { "contains": { "const": "search" } },
+            { "anyOf": [{ "contains": { "const": "resolve" } }, { "contains": { "const": "download" } }] }
+          ]
+        },
+        "note": { "description": "一句话说明，显示在来源列表里", "type": "string" }
+      }
+    },
+    "setting": {
+      "type": "object",
+      "required": ["key", "type", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["string", "secret", "bool", "int", "select", "folder"] },
+        "label": { "type": "string", "minLength": 1 },
+        "help": { "type": "string" },
+        "default": {},
+        "required": { "type": "boolean" },
+        "options": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              { "type": "string" },
+              { "type": "object", "required": ["value"], "properties": { "value": { "type": "string" }, "label": { "type": "string" } } }
+            ]
+          }
+        }
+      },
+      "if": { "properties": { "type": { "const": "select" } } },
+      "then": { "required": ["options"], "properties": { "options": { "minItems": 1 } } }
+    }
+  }
+}

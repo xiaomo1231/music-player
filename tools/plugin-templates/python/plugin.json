@@ -1,0 +1,37 @@
+{
+  "manifest": 1,
+  "id": "my-python-source",
+  "name": "我的下载源（Python 模板）",
+  "version": "0.1.0",
+  "author": "你的名字",
+  "description": "process 插件模板：把 example.org 换成你有权使用的网站或自己的服务。",
+  "license": "MIT",
+  "engines": { "app": ">=0.5.0", "protocol": 2 },
+  "runtime": {
+    "type": "process",
+    "command": {
+      "default": ["python", "main.py"],
+      "macos": ["python3", "main.py"],
+      "linux": ["python3", "main.py"]
+    }
+  },
+  "contributes": {
+    "sources": [
+      {
+        "id": "main",
+        "media_kinds": ["music"],
+        "capabilities": ["search", "resolve"],
+        "note": "模板：返回的是假数据"
+      }
+    ]
+  },
+  "permissions": {
+    "hosts": ["example.org"],
+    "login": "none",
+    "tools": []
+  },
+  "settings": [
+    { "key": "token", "type": "secret", "label": "访问令牌", "help": "可选。存在系统凭据管理器里" },
+    { "key": "max_results", "type": "int", "label": "最多显示几条", "default": 20 }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "manifest": 1,
+  "id": "local-library",
+  "name": "本地曲库（示例）",
+  "version": "1.0.0",
+  "author": "示例",
+  "description": "在你自己的曲库文件夹（本机或 NAS 共享）里按关键字搜索，把选中的曲目和同名歌词复制进播放器整理入库。不联网。",
+  "license": "MIT",
+  "engines": { "app": ">=0.5.0", "protocol": 2 },
+  "runtime": {
+    "type": "process",
+    "command": {
+      "default": ["python", "main.py"],
+      "macos": ["python3", "main.py"],
+      "linux": ["python3", "main.py"]
+    }
+  },
+  "contributes": {
+    "sources": [
+      {
+        "id": "main",
+        "name": "本地曲库",
+        "media_kinds": ["music"],
+        "capabilities": ["search", "download"],
+        "note": "只读取你在设置里选的文件夹，复制不移动"
+      }
+    ]
+  },
+  "permissions": {
+    "hosts": [],
+    "login": "none",
+    "tools": [],
+    "paths": ["setting:library_dir"]
+  },
+  "settings": [
+    { "key": "library_dir", "type": "folder", "label": "曲库文件夹", "required": true,
+      "help": "例如 D:\\Music 或 \\\\nas\\music" },
+    { "key": "max_results", "type": "int", "label": "最多显示几条", "default": 50 }
+  ]
+}

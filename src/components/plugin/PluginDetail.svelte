@@ -115,6 +115,14 @@
     close();
   }
 
+  /** 文件夹已被手动删掉：不用再确认，直接去掉记录（保留设置） */
+  async function removeMissing() {
+    if (!v) return;
+    const name = v.name;
+    await run(() => pluginApi.uninstall(id, false), `已移除「${name}」`);
+    close();
+  }
+
   async function test() {
     if (!v || busy) return;
     busy = true;
@@ -148,13 +156,20 @@
         <span class="badge2">{RUNTIME_TEXT[v.runtime] ?? v.runtime}</span>
         <small>v{v.version}{v.author ? ` · ${v.author}` : ''}{v.dev ? ' · 开发者模式' : ''}</small>
         <span class="grow"></span>
+        {#if !v.missing}
         <label class="sw" title={v.enabled ? '停用' : '启用'}>
           <input type="checkbox" class="mp-sw" checked={v.enabled} disabled={busy} onchange={() => run(() => pluginApi.setEnabled(id, !v!.enabled))} />
           {v.enabled ? '已启用' : '已停用'}
         </label>
+        {/if}
       </div>
       {#if v.description}<p class="note">{v.description}</p>{/if}
-      {#if v.problem}<p class="pd-err">{v.problem}</p>{/if}
+      {#if v.missing}
+        <div class="pd-missing">
+          <span>插件文件夹不见了（可能被手动删除），已经停用。把它从列表里移除就行；设置会保留，重新安装后还能用。</span>
+          <button class="mp-btn ghost danger" disabled={busy} onclick={removeMissing}>移除</button>
+        </div>
+      {:else if v.problem}<p class="pd-err">{v.problem}</p>{/if}
       {#if v.needs_settings.length}<p class="pd-warn">先填写：{v.needs_settings.join('、')}</p>{/if}
       {#if v.update}
         <div class="pd-upd">
@@ -274,8 +289,10 @@
         {/if}
 
         <div class="rowbtns pd-actions">
-          <button class="mp-btn ghost" disabled={!inTauri} onclick={() => run(() => pluginApi.openDir(id))}>打开文件夹</button>
-          <button class="mp-btn ghost" disabled={!inTauri || busy} onclick={exportPkg}>导出插件包</button>
+          {#if !v.missing}
+            <button class="mp-btn ghost" disabled={!inTauri} onclick={() => run(() => pluginApi.openDir(id))}>打开文件夹</button>
+            <button class="mp-btn ghost" disabled={!inTauri || busy} onclick={exportPkg}>导出插件包</button>
+          {/if}
           {#if v.has_prev}<button class="mp-btn ghost" disabled={busy} onclick={() => run(() => pluginApi.rollback(id), '已回到上一个版本')}>回到上一版本</button>{/if}
           <button class="mp-btn ghost danger" disabled={busy} onclick={uninstall}>卸载</button>
         </div>
@@ -356,6 +373,24 @@
     font-size: 13px;
     white-space: pre-line;
     margin: 6px 0;
+  }
+  .pd-missing {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    color: #ff8a8a;
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 8px 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(255, 110, 110, 0.1);
+  }
+  .pd-missing span {
+    flex: 1;
+  }
+  .pd-missing .mp-btn {
+    flex-shrink: 0;
   }
   .pd-warn {
     color: #ffb45a;

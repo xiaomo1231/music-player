@@ -7,7 +7,7 @@
   import { toast } from '../../lib/ui.svelte';
   import { fetchApi, needsLogin, KIND_TEXT, MEDIA_TEXT, metaApi, type MetaInfo, type ProviderInfo, type Source, type SourceStep } from '../../lib/fetch';
   import { em, pickEm } from '../../lib/em.svelte';
-  import { plugins, pluginApi, pickPlugin, CODE_TEXT, type PluginView } from '../../lib/plugin.svelte';
+  import { plugins, pluginApi, pickPlugin, splitCode, CODE_TEXT, type PluginView } from '../../lib/plugin.svelte';
 
   let { onchange }: { onchange?: () => void } = $props();
 
@@ -37,16 +37,41 @@
   let own = $derived(list.filter(s => !s.plugin));
   let fromPlugins = $derived(list.filter(s => s.plugin));
 
-  /** 插件来源的状态：停用、有问题、缺设置、上次调用出错 */
-  function plugState(s: Source): { cls: string; text: string; title: string } {
+  /** 插件来源的状态：停用、有问题、缺设置、上次调用出错（出错的可以重试） */
+  function plugState(s: Source): { cls: string; text: string; title: string; retry?: { plugin: string; source: string } } {
     const p = plugOf(s);
     if (!p) return { cls: 'off', text: '插件已卸载', title: '' };
     if (p.problem) return { cls: 'bad', text: '有问题', title: p.problem };
     if (!p.enabled) return { cls: 'off', text: '插件已停用', title: '' };
     if (p.needs_settings.length) return { cls: 'warn', text: '要填设置', title: p.needs_settings.join('、') };
-    const st = p.sources.find(x => `provider://${x.provider_id}` === s.url)?.status;
-    if (st?.code) return { cls: 'bad', text: CODE_TEXT[st.code]?.label ?? st.code, title: st.message };
+    const ps = p.sources.find(x => `provider://${x.provider_id}` === s.url);
+    const st = ps?.status;
+    if (st?.code) {
+      const hint = CODE_TEXT[st.code]?.hint;
+      return { cls: 'bad', text: CODE_TEXT[st.code]?.label ?? st.code, title: `${st.message}${hint ? '\n' + hint : ''}`, retry: ps && { plugin: p.id, source: ps.id } };
+    }
     return { cls: 'ok', text: '正常', title: '' };
+  }
+
+  // 正在重新检查的来源
+  let checking = $state<number[]>([]);
+  /** 出错的插件来源：重新连一次，看是不是好了（状态由插件那边更新，列表会跟着刷新） */
+  async function recheck(s: Source, r: { plugin: string; source: string }) {
+    if (checking.includes(s.id)) return;
+    checking = [...checking, s.id];
+    try {
+      const err = await pluginApi.recheck(r.plugin, r.source);
+      if (!err) toast(`${s.name}：已恢复正常`);
+      else {
+        const e = splitCode(err);
+        toast(`${s.name}：还是不行（${CODE_TEXT[e.code]?.label ?? '出错'}）${e.text}`);
+      }
+    } catch (err) {
+      toast(String(err));
+    } finally {
+      checking = checking.filter(x => x !== s.id);
+      void load();
+    }
   }
 
   async function toggle(s: Source) {
@@ -231,6 +256,10 @@
       <b title={s.name}>{s.name}</b>
       <span class="row-end">
         <span class="badge2 {st.cls}" title={st.title}>{st.text}</span>
+        {#if st.retry}
+          {@const r = st.retry}
+          <button class="mp-btn ghost" class:spin={checking.includes(s.id)} title="重新连接一次，看看是不是好了" aria-label="重试" disabled={checking.includes(s.id)} onclick={() => recheck(s, r)}><Icon name="refresh" /></button>
+        {/if}
         {#if p}<button class="mp-btn ghost" title="插件设置、测试和日志" onclick={() => (plugins.detail = p.id)}><Icon name="gear" /></button>{/if}
         <input type="checkbox" class="mp-sw" checked={s.enabled} title={s.enabled ? '停用：搜索时跳过这个下载源' : '启用'} onchange={() => toggle(s)} />
       </span>
@@ -343,6 +372,14 @@
   .src-more {
     grid-column: 2 / -1;
     margin-top: 4px;
+  }
+  .spin :global(.mp-ico) {
+    animation: src-spin 0.9s linear infinite;
+  }
+  @keyframes src-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .plug-head {
     margin-top: 16px;

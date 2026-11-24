@@ -229,6 +229,8 @@ export const pluginApi = {
   openDir: (id: string) => invoke<void>('plugin_open_dir', { id }),
   pack: (id: string, path: string) => invoke<void>('plugin_pack', { id, path }),
   packDir: (dir: string, path: string) => invoke<void>('plugin_pack_dir', { dir, path }),
+  /** 重新检查一个下载源：返回空字符串表示正常，否则是错误 */
+  recheck: (id: string, source: string) => invoke<string>('plugin_recheck', { id, source }),
   test: (id: string, source: string, query: string, mediaKind: string) => invoke<Stage[]>('plugin_test', { id, source, query, mediaKind }),
   getSettings: (id: string) => invoke<SettingsView>('plugin_get_settings', { id }),
   saveSettings: (id: string, values: Record<string, unknown>) => invoke<void>('plugin_save_settings', { id, values }),

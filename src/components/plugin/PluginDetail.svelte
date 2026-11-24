@@ -11,6 +11,7 @@
     RUNTIME_TEXT,
     TOOL_TEXT,
     CODE_TEXT,
+    splitCode,
     fmtTime,
     type PluginView,
     type SettingsView,
@@ -89,6 +90,14 @@
       busy = false;
     }
   }
+
+  /** 下载源上次出错：重新连一次，看是不是好了 */
+  const recheck = (source: string) =>
+    run(async () => {
+      const err = await pluginApi.recheck(id, source);
+      const e = splitCode(err);
+      toast(err ? `还是不行（${CODE_TEXT[e.code]?.label ?? '出错'}）${e.text}` : '已恢复正常');
+    });
 
   const save = () =>
     run(async () => {
@@ -199,6 +208,7 @@
               {#if s.status}
                 {#if s.status.code}
                   <span class="st bad" title={s.status.message}>{CODE_TEXT[s.status.code]?.label ?? s.status.code}</span>
+                  <button class="mp-btn ghost" title="重新连接一次，看看是不是好了" disabled={busy} onclick={() => recheck(s.id)}>{busy ? '检查中…' : '重试'}</button>
                 {:else}
                   <span class="st ok">{s.status.method} 正常</span>
                 {/if}

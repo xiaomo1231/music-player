@@ -3,7 +3,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use std::path::Path;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 pub fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
@@ -67,8 +67,27 @@ fn migrate(conn: &Connection) -> Result<()> {
         add_column(conn, "tracks", "net_lock", "INTEGER NOT NULL DEFAULT 0")?;
         add_column(conn, "tracks", "art_rules", "INTEGER NOT NULL DEFAULT 0")?;
     }
+    if v < 7 {
+        // v7：0.6.3 之前“替换原文件”转换加密格式后，记录换成了 flac/mp3 但 encrypted 没清，歌一直留在“加密格式”里
+        fix_encrypted_flags(conn)?;
+    }
     conn.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION}"))?;
     Ok(())
+}
+
+/// 按路径扩展名重新算 encrypted，返回改了几条
+pub(crate) fn fix_encrypted_flags(conn: &Connection) -> Result<usize> {
+    let wrong: Vec<i64> = conn
+        .prepare("SELECT id,path FROM files WHERE encrypted=1")?
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .flatten()
+        .filter(|(_, p)| !crate::parse::is_encrypted(Path::new(p)))
+        .map(|(id, _)| id)
+        .collect();
+    for id in &wrong {
+        conn.execute("UPDATE files SET encrypted=0 WHERE id=?1", [id])?;
+    }
+    Ok(wrong.len())
 }
 
 /// v2：从媒体库移除的路径（自定义名字、封面的列由 add_column 加）
@@ -273,6 +292,26 @@ mod tests {
         c.execute_batch("PRAGMA user_version=2").unwrap();
         super::migrate(&c).unwrap();
         super::migrate(&c).unwrap();
+    }
+
+    #[test]
+    fn fixes_encrypted_flag_of_replaced_files() {
+        let c = super::open_memory().unwrap();
+        c.execute_batch(
+            "INSERT INTO files(path,kind,size,mtime,added_at,encrypted) VALUES
+             ('D:/a/1.flac','music',1,1,1,1),('D:/a/2.ncm','music',1,1,1,1),('D:/a/3.mp3','music',1,1,1,0);
+             PRAGMA user_version=6;",
+        )
+        .unwrap();
+        super::migrate(&c).unwrap();
+        let enc: Vec<(String, i64)> = c
+            .prepare("SELECT path,encrypted FROM files ORDER BY path")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(enc, vec![("D:/a/1.flac".into(), 0), ("D:/a/2.ncm".into(), 1), ("D:/a/3.mp3".into(), 0)]);
     }
 
     #[test]

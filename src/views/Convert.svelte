@@ -327,7 +327,7 @@
     j.progress = p.progress;
     j.status = p.status;
     if (p.error) j.error = p.error;
-    if (p.status === 'done' || p.status === 'failed' || p.status === 'canceled' || p.status === 'undone') {
+    if (p.status === 'done' || p.status === 'failed' || p.status === 'canceled' || p.status === 'undone' || p.status === 'paused') {
       if (p.status === 'done') toast('转换完成：' + baseName(j.input));
       if (p.status === 'failed') toast('转换失败：' + (p.error ?? '未知错误'));
       reloadSoon();

@@ -685,6 +685,8 @@ fn report(app: &AppHandle, id: i64, progress: f64, speed: Option<f64>, status: &
 
 pub struct JobCtl {
     canceled: AtomicBool,
+    /// 停下来是因为“全部暂停”：任务回到已暂停状态，之后可以继续
+    paused: AtomicBool,
     child: Mutex<Option<Child>>,
 }
 
@@ -692,6 +694,7 @@ impl JobCtl {
     fn new() -> Self {
         JobCtl {
             canceled: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
             child: Mutex::new(None),
         }
     }
@@ -834,6 +837,7 @@ fn run_job(app: AppHandle, id: i64, ctl: Arc<JobCtl>) {
     };
     let (status, output, error) = match res {
         Ok(out) => ("done", Some(out), None),
+        Err(_) if canceled && ctl.paused.load(Ordering::SeqCst) => ("paused", None, None),
         Err(_) if canceled => ("canceled", None, None),
         Err(e) => ("failed", None, Some(e)),
     };
@@ -841,7 +845,8 @@ fn run_job(app: AppHandle, id: i64, ctl: Arc<JobCtl>) {
         let st = app.state::<AppState>();
         let conn = st.db.lock();
         let _ = conn.execute(
-            "UPDATE jobs SET status=?1, progress=CASE WHEN ?1='done' THEN 1 ELSE progress END, error=?2, output=COALESCE(?3, output), finished_at=?4 WHERE id=?5",
+            "UPDATE jobs SET status=?1, progress=CASE WHEN ?1='done' THEN 1 WHEN ?1='paused' THEN 0 ELSE progress END, error=?2, \
+             output=COALESCE(?3, output), finished_at=CASE WHEN ?1='paused' THEN NULL ELSE ?4 END WHERE id=?5",
             params![status, error, output, db::now(), id],
         );
     }
@@ -1296,8 +1301,8 @@ pub fn convert_list(st: State<AppState>) -> R<Vec<JobView>> {
     let mut stmt = conn
         .prepare(
             "SELECT id,input,output,preset,after,status,progress,error,backup,created_at,finished_at FROM jobs \
-             ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, \
-             CASE WHEN status IN ('running','queued') THEN id ELSE -id END",
+             ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 WHEN 'paused' THEN 1 ELSE 2 END, \
+             CASE WHEN status IN ('running','queued','paused') THEN id ELSE -id END",
         )
         .map_err(s)?;
     let rows = stmt
@@ -1369,7 +1374,7 @@ pub fn convert_cancel(st: State<AppState>, app: AppHandle, id: i64) -> R<()> {
     let conn = st.db.lock();
     let n = conn
         .execute(
-            "UPDATE jobs SET status='canceled', finished_at=?1 WHERE id=?2 AND status='queued'",
+            "UPDATE jobs SET status='canceled', finished_at=?1 WHERE id=?2 AND status IN ('queued','paused')",
             params![db::now(), id],
         )
         .map_err(s)?;
@@ -1378,6 +1383,53 @@ pub fn convert_cancel(st: State<AppState>, app: AppHandle, id: i64) -> R<()> {
     }
     report(&app, id, 0.0, None, "canceled", None, None);
     Ok(())
+}
+
+/// 全部取消：先把排队中的全部标成已取消（免得调度器接着领新任务），再停掉正在转换的。返回取消的数量
+#[tauri::command]
+pub fn convert_cancel_all(st: State<AppState>) -> R<usize> {
+    let queued = {
+        let conn = st.db.lock();
+        conn.execute(
+            "UPDATE jobs SET status='canceled', finished_at=?1 WHERE status IN ('queued','paused')",
+            params![db::now()],
+        )
+        .map_err(s)?
+    };
+    let running: Vec<Arc<JobCtl>> = RUNNING.lock().iter().map(|(_, c)| c.clone()).collect();
+    for ctl in &running {
+        ctl.canceled.store(true, Ordering::SeqCst);
+        if let Some(c) = ctl.child.lock().as_mut() {
+            let _ = c.kill();
+        }
+    }
+    Ok(queued + running.len())
+}
+
+/// 全部暂停：排队中的标成已暂停（重启后也保持暂停），正在转换的立即停下、删掉半成品，也回到已暂停。返回暂停的数量
+#[tauri::command]
+pub fn convert_pause_all(st: State<AppState>) -> R<usize> {
+    let queued = {
+        let conn = st.db.lock();
+        conn.execute("UPDATE jobs SET status='paused' WHERE status='queued'", []).map_err(s)?
+    };
+    let running: Vec<Arc<JobCtl>> = RUNNING.lock().iter().map(|(_, c)| c.clone()).collect();
+    for ctl in &running {
+        ctl.paused.store(true, Ordering::SeqCst);
+        ctl.canceled.store(true, Ordering::SeqCst);
+        if let Some(c) = ctl.child.lock().as_mut() {
+            let _ = c.kill();
+        }
+    }
+    Ok(queued + running.len())
+}
+
+/// 全部继续：已暂停的放回队列，按原来的顺序接着转。返回继续的数量
+#[tauri::command]
+pub fn convert_resume_all(st: State<AppState>) -> R<usize> {
+    let conn = st.db.lock();
+    conn.execute("UPDATE jobs SET status='queued', progress=0, error=NULL WHERE status='paused'", [])
+        .map_err(s)
 }
 
 /// 清掉已结束的任务记录（不删文件）
@@ -1520,16 +1572,41 @@ pub fn convert_expand(paths: Vec<String>) -> Vec<String> {
     out
 }
 
+/// 上次关机 / 退出时正在转换的任务：原文件还在、还没开始替换的放回队列从头转（排在最前面，id 不变）；
+/// 已经动过原文件的（backup 有值）或原文件不见了的标成失败，让用户自己看。排队中的任务本来就留在数据库里，启动后接着转。
+/// 返回放回队列的数量
+fn recover_interrupted(conn: &Connection) -> R<usize> {
+    let rows: Vec<(i64, String, Option<String>)> = conn
+        .prepare("SELECT id,input,backup FROM jobs WHERE status='running'")
+        .map_err(s)?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .map_err(s)?
+        .flatten()
+        .collect();
+    let mut n = 0;
+    for (id, input, backup) in rows {
+        if backup.is_none() && Path::new(&input).is_file() {
+            conn.execute("UPDATE jobs SET status='queued', progress=0, error=NULL WHERE id=?1", [id])
+                .map_err(s)?;
+            n += 1;
+        } else {
+            conn.execute(
+                "UPDATE jobs SET status='failed', error='程序退出时中断，可以重试', finished_at=?1 WHERE id=?2",
+                params![db::now(), id],
+            )
+            .map_err(s)?;
+        }
+    }
+    Ok(n)
+}
+
 /// 启动时调用一次：清理上次意外退出的任务，启动调度线程，后台检测硬件编码器
 pub fn setup(app: &AppHandle) {
     {
         let st = app.state::<AppState>();
         let _ = std::fs::create_dir_all(st.dirs.data.join("plugins"));
         let conn = st.db.lock();
-        let _ = conn.execute(
-            "UPDATE jobs SET status='failed', error='程序退出时中断，可以重试', finished_at=?1 WHERE status='running'",
-            [db::now()],
-        );
+        let _ = recover_interrupted(&conn);
     }
     let hw_app = app.clone();
     std::thread::spawn(move || {
@@ -1544,6 +1621,34 @@ pub fn setup(app: &AppHandle) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn interrupted_jobs_go_back_to_queue() {
+        let c = db::open_memory().unwrap();
+        let tmp = std::env::temp_dir().join(format!("mp-resume-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let ok = tmp.join("a.flac");
+        std::fs::write(&ok, b"x").unwrap();
+        let ok = ok.to_string_lossy().to_string();
+        let gone = tmp.join("gone.flac").to_string_lossy().to_string();
+        c.execute(
+            "INSERT INTO jobs(input,preset,after,status,progress,created_at,backup) VALUES
+             (?1,'mp3','lib','running',0.5,1,NULL),(?2,'mp3','lib','running',0.5,1,NULL),
+             (?1,'mp3','replace','running',0.99,1,'x'),(?1,'mp3','lib','queued',0,1,NULL)",
+            params![ok, gone],
+        )
+        .unwrap();
+        assert_eq!(recover_interrupted(&c).unwrap(), 1);
+        let st: Vec<String> = c
+            .prepare("SELECT status FROM jobs ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(st, vec!["queued", "failed", "failed", "queued"]);
+    }
 
     #[test]
     fn concurrency_follows_cpu_count() {

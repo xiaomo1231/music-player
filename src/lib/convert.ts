@@ -1,6 +1,6 @@
 // 格式转换页面的类型、常量和小工具（后端命令见 src-tauri/src/convert.rs）
 export type ConvertAfter = 'lib' | 'replace' | 'side' | 'dir';
-export type ConvertStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled' | 'undone';
+export type ConvertStatus = 'queued' | 'paused' | 'running' | 'done' | 'failed' | 'canceled' | 'undone';
 
 export interface PresetInfo {
   id: string;
@@ -84,6 +84,7 @@ export const MEDIA_EXTS = [...AUDIO_EXTS, ...VIDEO_EXTS, ...ENCRYPTED_EXTS];
 
 export const STATUS_LABEL: Record<ConvertStatus, string> = {
   queued: '等待中',
+  paused: '已暂停',
   running: '转换中',
   done: '完成',
   failed: '失败',

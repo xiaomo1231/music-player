@@ -118,6 +118,10 @@ export interface PluginPreview {
   installed_version: string | null;
   new_permissions: string[];
   downgrade: boolean;
+  /** 和已装的版本号一样（重新安装） */
+  same_version: boolean;
+  /** 已装版本有没有同意交出登录（升级时默认沿用） */
+  login_granted: boolean;
   dev_installed: boolean;
 }
 

@@ -63,7 +63,7 @@ async function main() {
   for await (const chunk of process.stdin) raw += chunk;
   const req = raw.trim() ? JSON.parse(raw) : {};
   if (req.protocol !== 2) {
-    process.stderr.write("这个插件需要协议 2（0.5.0 以上版本的软件）\n");
+    process.stderr.write("这个插件需要协议 2（0.6.0 以上版本的软件）\n");
     process.exit(2);
   }
   const fn = methods[method];

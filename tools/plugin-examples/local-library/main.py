@@ -137,7 +137,7 @@ def main():
     req = json.loads(raw) if raw else None
     if not (isinstance(req, dict) and req.get("protocol") == 2):
         # 协议 1 的软件会直接把 params 写进来；这个示例只支持协议 2
-        sys.stderr.write("这个插件需要 0.5.0 以上版本的软件（协议 2）\n")
+        sys.stderr.write("这个插件需要 0.6.0 以上版本的软件（协议 2）\n")
         sys.exit(2)
     params, settings = req.get("params") or {}, req.get("settings") or {}
     if method == "info":

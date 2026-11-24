@@ -6,7 +6,7 @@
   "author": "你的名字",
   "description": "process 插件模板（Node.js）：把 example.org 换成你有权使用的网站或自己的服务。",
   "license": "MIT",
-  "engines": { "app": ">=0.5.0", "protocol": 2 },
+  "engines": { "app": ">=0.6.0", "protocol": 2 },
   "runtime": {
     "type": "process",
     "command": { "default": ["node", "main.js"] }

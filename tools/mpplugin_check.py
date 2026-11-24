@@ -2,7 +2,7 @@
 
 用法：
     python tools/mpplugin_check.py <插件文件夹或 .mpx> [--query 关键字] [--set key=value ...]
-                                   [--source 源 id] [--kind music] [--download] [--app-version 0.5.0]
+                                   [--source 源 id] [--kind music] [--download] [--app-version 0.6.0]
 
 - process 入口（协议 2）：依次调用 info、search、episodes、resolve（不下载），加 --download 时把第一条
   结果实际 download 到临时文件夹，检查返回值的格式。
@@ -128,7 +128,7 @@ def check_manifest(root, app_version):
     if app and app != "*":
         need = parse_version(app.lstrip(">=^").strip())
         if need is None:
-            err(f"engines.app 写成 >=主.次.修，如 >=0.5.0：{app}")
+            err(f"engines.app 写成 >=主.次.修，如 >=0.6.0：{app}")
         elif app_version and parse_version(app_version) and parse_version(app_version) < need:
             err(f"这个插件需要 {app} 版本的软件，当前是 {app_version}")
     protocol = eng.get("protocol") or 0
@@ -665,7 +665,7 @@ def run(a):
 
     data_dir = tempfile.mkdtemp(prefix="mp-data-")
     a.cleanup.append(data_dir)
-    runner = Runner(root, m, a.app_version or "0.5.0", data_dir)
+    runner = Runner(root, m, a.app_version or "0.6.0", data_dir)
     hosts = lst(obj(m.get("permissions")).get("hosts"))
     sources = m["contributes"].get("sources") or []
     if a.source:
@@ -747,7 +747,7 @@ def main():
     ap.add_argument("--source", default="", help="只检查这个下载源 id")
     ap.add_argument("--set", action="append", default=[], metavar="key=value", help="设置项的值，可以写多次")
     ap.add_argument("--download", action="store_true", help="实际调用 download（下到临时文件夹，用完删掉）")
-    ap.add_argument("--app-version", default="", help="按这个软件版本检查 engines.app，如 0.5.0")
+    ap.add_argument("--app-version", default="", help="按这个软件版本检查 engines.app，如 0.6.0")
     a = ap.parse_args()
     a.cleanup = []
     try:

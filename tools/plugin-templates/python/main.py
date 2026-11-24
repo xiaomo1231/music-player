@@ -105,7 +105,7 @@ def main():
     raw = sys.stdin.buffer.read().decode("utf-8").strip()
     req = json.loads(raw) if raw else {}
     if req.get("protocol") != 2:
-        sys.stderr.write("这个插件需要协议 2（0.5.0 以上版本的软件）\n")
+        sys.stderr.write("这个插件需要协议 2（0.6.0 以上版本的软件）\n")
         sys.exit(2)
     fn = METHODS.get(method)
     if not fn:

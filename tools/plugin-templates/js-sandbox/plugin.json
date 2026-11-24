@@ -6,7 +6,7 @@
   "author": "你的名字",
   "description": "js 沙箱插件模板：把 example.org 和选择器换成你有权使用的网站。",
   "license": "MIT",
-  "engines": { "app": ">=0.5.0", "protocol": 2 },
+  "engines": { "app": ">=0.6.0", "protocol": 2 },
   "runtime": { "type": "js", "file": "main.js" },
   "contributes": {
     "sources": [

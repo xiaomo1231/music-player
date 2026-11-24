@@ -6,7 +6,7 @@
   "author": "示例",
   "description": "在你自己的曲库文件夹（本机或 NAS 共享）里按关键字搜索，把选中的曲目和同名歌词复制进播放器整理入库。不联网。",
   "license": "MIT",
-  "engines": { "app": ">=0.5.0", "protocol": 2 },
+  "engines": { "app": ">=0.6.0", "protocol": 2 },
   "runtime": {
     "type": "process",
     "command": {

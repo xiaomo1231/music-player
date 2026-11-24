@@ -87,8 +87,8 @@
       { label: '打开', run: () => open(d, g.key) },
       { label: '播放', run: () => play(g.tracks) },
       { label: '随机播放', run: () => play(g.tracks, 0, true) },
-      { label: '下一首播放', run: () => { player.playNext(g.tracks); toast(`已插到下一首：${ids.length} 首`); } },
-      { label: '加入播放队列', run: () => { player.enqueue(g.tracks); toast(`已加入队列：${ids.length} 首`); } },
+      { label: '下一首播放', run: () => player.playNext(g.tracks) },
+      { label: '加入播放队列', run: () => player.enqueue(g.tracks) },
       { label: '加入歌单…', run: () => ui.open('playlist-add', ids) },
       { label: '转换格式…', run: () => { ui.convertPaths = g.tracks.map(t => t.path); ui.go('convert'); } },
       // 专辑：按这张专辑联网搜封面、整张一起换；其他分组可以批量重新获取

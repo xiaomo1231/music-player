@@ -25,6 +25,7 @@
   let open = $state(false);
   let input: HTMLInputElement;
   let t: ReturnType<typeof setTimeout> | undefined;
+  let localSeq = 0;
   const LABEL: Record<string, string> = { music: '歌曲', anime: '番剧', video: '视频', manga: '漫画', novel: '小说' };
   const groups = $derived(Object.keys(LABEL).map(k => [k, hits.filter(h => h.kind === k)] as const).filter(g => g[1].length));
 
@@ -55,9 +56,13 @@
 
   function onInput() {
     clearTimeout(t);
+    const lseq = ++localSeq;
     t = setTimeout(async () => {
       if (!q.trim() || !inTauri) { hits = []; return; }
-      hits = await invoke<Hit[]>('search', { q });
+      // 打字快时前一次查询可能比后一次晚回来：只用最新一次的结果
+      const res = await invoke<Hit[]>('search', { q }).catch(() => null);
+      if (lseq !== localSeq || !res) return;
+      hits = res;
       open = true;
     }, 140);
     clearTimeout(rt);

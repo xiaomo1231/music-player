@@ -1,6 +1,7 @@
 //! 自动获取：来源（订阅 RSS / yt-dlp / 目录 / 网页 AI 解析）、下载引擎（HTTP / BT / yt-dlp）、
 //! 自动归类入库、追更。子模块：source（各类来源）、web（网页 AI 规则）、download（下载队列）、organize（整理入库）。
 pub mod bili;
+pub mod descramble;
 pub mod download;
 pub mod external;
 pub mod login;

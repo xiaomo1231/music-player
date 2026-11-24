@@ -9,6 +9,11 @@
   import {
     AFTER_OPTIONS,
     MEDIA_EXTS,
+    VIDEO_EXTS,
+    converterAccepts,
+    converterPreset,
+    extOf,
+    parseConverterPreset,
     baseName,
     dirName,
     encoderLabel,
@@ -23,6 +28,7 @@
     type PresetInfo,
   } from '../lib/convert';
   import Queue from '../components/convert/Queue.svelte';
+  import type { ConverterView, SettingDef } from '../lib/plugin.svelte';
 
   let presets = $state<PresetInfo[]>([]);
   let presetId = $state('mp3');
@@ -36,10 +42,38 @@
   let pluginAck = $state(false);
   let dragging = $state(false);
   let starting = $state(false);
+  /** 已启用的插件提供的转换器 */
+  let converters = $state<ConverterView[]>([]);
+  /** 每个转换器的参数（键：插件/转换器） */
+  let optValues = $state<Record<string, Record<string, unknown>>>({});
 
   const preset = $derived(presets.find(p => p.id === presetId));
+  const plg = $derived(parseConverterPreset(presetId));
+  const conv = $derived(plg ? converters.find(c => c.plugin === plg.plugin && c.id === plg.id) : undefined);
+  const convOut = $derived(conv && plg ? conv.outputs.find(o => o.ext === plg.ext) : undefined);
+  const convKey = (c: ConverterView) => `${c.plugin}/${c.id}`;
+  /** 待转换的文件里这个转换器不支持的格式 */
+  function unsupported(c: ConverterView): string[] {
+    const bad = pending.filter(p => !converterAccepts(c.inputs, p)).map(p => extOf(p) || '无扩展名');
+    return [...new Set(bad)];
+  }
+  const defaults = (c: ConverterView) => Object.fromEntries(c.options.map(o => [o.key, o.default ?? (o.type === 'bool' ? false : '')]));
+  function optionsFor(c: ConverterView): Record<string, unknown> {
+    return optValues[convKey(c)] ?? defaults(c);
+  }
+  // 选中转换器时准备好它的参数（保留之前填过的）
+  $effect(() => {
+    if (conv && !optValues[convKey(conv)]) optValues[convKey(conv)] = defaults(conv);
+  });
+  function optLabel(o: SettingDef['options'][number]): [string, string] {
+    return typeof o === 'string' ? [o, o] : [o.value, o.label ?? o.value];
+  }
   const afterOpt = $derived(AFTER_OPTIONS.find(a => a.value === after) ?? AFTER_OPTIONS[0]);
-  const shownDir = $derived(cfg ? (preset?.kind === 'video' ? cfg.out_dir_video : cfg.out_dir_audio) : '');
+  const shownDir = $derived.by(() => {
+    if (!cfg) return '';
+    if (plg) return VIDEO_EXTS.includes(plg.ext) || ['gif', 'png', 'jpg', 'webp'].includes(plg.ext) ? cfg.out_dir_video : cfg.out_dir_audio;
+    return preset?.kind === 'video' ? cfg.out_dir_video : cfg.out_dir_audio;
+  });
   /** 这个预设实际会用到的编码器说明 */
   const hwNote = $derived.by(() => {
     if (!hw) return '';
@@ -79,6 +113,18 @@
     }
   }
 
+  async function loadConverters() {
+    if (!inTauri) return;
+    try {
+      converters = await invoke<ConverterView[]>('convert_converters');
+      // 选中的转换器被停用或卸载了：回到默认预设
+      const p = parseConverterPreset(presetId);
+      if (p && !converters.some(c => c.plugin === p.plugin && c.id === p.id && c.outputs.some(o => o.ext === p.ext))) presetId = 'mp3';
+    } catch {
+      converters = [];
+    }
+  }
+
   async function loadAll() {
     if (!inTauri) return;
     try {
@@ -86,7 +132,7 @@
     } catch (e) {
       toast(String(e));
     }
-    await Promise.all([loadHw(), loadCfg(), loadJobs()]);
+    await Promise.all([loadHw(), loadCfg(), loadJobs(), loadConverters()]);
   }
 
   /** 把拖入或选择的路径加入待转换列表（文件夹会展开成媒体文件） */
@@ -107,7 +153,10 @@
 
   async function pickFiles() {
     if (!inTauri) return;
-    const sel = await open({ multiple: true, filters: [{ name: '音频和视频', extensions: MEDIA_EXTS }] });
+    const extra = [...new Set(converters.flatMap(c => c.inputs).filter(i => /^[a-z0-9]+$/.test(i) && i !== 'audio' && i !== 'video'))];
+    const filters = [{ name: '音频和视频', extensions: [...new Set([...MEDIA_EXTS, ...extra])] }];
+    if (converters.some(c => c.inputs.includes('*'))) filters.push({ name: '所有文件', extensions: ['*'] });
+    const sel = await open({ multiple: true, filters });
     if (sel) await addPaths(Array.isArray(sel) ? sel : [sel]);
   }
 
@@ -157,7 +206,8 @@
     if (!pending.length) return toast('先拖入或选择要转换的文件');
     starting = true;
     try {
-      const ids = await invoke<number[]>('convert_add', { paths: pending, preset: presetId, after, outDir: null });
+      const options = conv ? optionsFor(conv) : null;
+      const ids = await invoke<number[]>('convert_add', { paths: pending, preset: presetId, after, outDir: null, options });
       pending = [];
       toast(`已加入队列：${ids.length} 个任务`);
       await loadJobs();
@@ -281,6 +331,7 @@
         .then(off => (dropOff = off));
       listen<ConvertProgress>('convert://progress', p => onProgress(p)).then(off => unlisten.push(off));
       listen('convert://hw', () => loadHw()).then(off => unlisten.push(off));
+      listen('plugin://changed', () => loadConverters()).then(off => unlisten.push(off));
     }
   });
 
@@ -310,7 +361,7 @@
       }}
     >
       <b>把文件或文件夹拖到这里，或点击选择</b>
-      内置 FFmpeg，支持音频、视频的转码与换封装，可批量排队
+      内置 FFmpeg，支持音频、视频的转码与换封装，可批量排队{converters.length ? '；装好的转换插件支持的格式也可以拖进来' : ''}
       <div class="acts" style="justify-content:center;margin-top:12px">
         <button
           class="mp-btn ghost"
@@ -346,7 +397,57 @@
         {/each}
       </div>
     </div>
-    {#if preset}
+    <div class="frow">
+      <span>插件</span>
+      {#if converters.length}
+        <div class="chips">
+          {#each converters as c (convKey(c))}
+            {@const bad = unsupported(c)}
+            {#each c.outputs as o (o.ext)}
+              {@const id = converterPreset(c.plugin, c.id, o.ext)}
+              <button
+                class="mp-chip"
+                class:on={presetId === id}
+                disabled={bad.length > 0}
+                title={bad.length ? `不支持 .${bad.join(' / .')} 文件` : `${c.plugin_name}：${c.note || c.inputs.join(' / ')}`}
+                onclick={() => (presetId = id)}>{c.name} → {o.name}</button
+              >
+            {/each}
+          {/each}
+        </div>
+      {:else}
+        <span class="sub">还没有转换插件。装了提供格式转换的插件（设置 → 插件）后会出现在这里，可以处理任何它声明的格式。</span>
+      {/if}
+    </div>
+
+    {#if conv && convOut}
+      {@const vals = optionsFor(conv)}
+      <div class="note">
+        插件“{conv.plugin_name}”：{conv.name} → {convOut.name}（支持 {conv.inputs.join(' / ')}）{conv.note ? `。${conv.note}` : ''}{conv.exec
+          ? '。这个转换器不报告进度，进度条会停在开头直到完成'
+          : ''}
+        {#if conv.needs_settings.length}<br />先在“设置 → 插件 → {conv.plugin_name}”里填写：{conv.needs_settings.join('、')}{/if}
+      </div>
+      {#each conv.options as o (o.key)}
+        <div class="frow">
+          <span title={o.help}>{o.label}</span>
+          {#if o.type === 'bool'}
+            <input type="checkbox" checked={Boolean(vals[o.key])} onchange={e => (vals[o.key] = e.currentTarget.checked)} />
+          {:else if o.type === 'select'}
+            <select class="sel" value={String(vals[o.key] ?? '')} onchange={e => (vals[o.key] = e.currentTarget.value)}>
+              {#each o.options as op (optLabel(op)[0])}
+                <option value={optLabel(op)[0]}>{optLabel(op)[1]}</option>
+              {/each}
+            </select>
+          {:else if o.type === 'int'}
+            <input class="tin" type="number" step="1" value={String(vals[o.key] ?? '')} onchange={e => (vals[o.key] = e.currentTarget.value)} />
+          {:else}
+            <input class="tin" value={String(vals[o.key] ?? '')} onchange={e => (vals[o.key] = e.currentTarget.value)} />
+          {/if}
+          {#if o.help}<span class="sub">{o.help}</span>{/if}
+        </div>
+      {/each}
+    {:else if preset}
       <div class="note">{preset.note}{hwNote ? `　·　${hwNote}` : ''}</div>
     {/if}
 

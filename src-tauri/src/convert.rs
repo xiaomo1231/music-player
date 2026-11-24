@@ -4,6 +4,9 @@
 //! - 排队 / 运行 / 失败 / 取消时 `output` 保存“请求的输出目录”；完成后保存实际输出文件路径。
 //! - 替换原文件时 `backup` 保存原文件路径（原文件已移入回收站），撤销时按这个路径还原。
 //!
+//! 插件转换器（`plugin.json` 的 `contributes.converters`）的任务：`preset` 是 `plg:<插件>/<转换器>:<输出扩展名>`，
+//! 参数存在 `convert_plugin_jobs` 表，转换过程见 `convert/plug.rs`。
+//!
 //! 事件：`convert://progress`（进度）、`convert://hw`（硬件检测完成）、`library://changed`（媒体库变化）。
 use crate::{db, indexer, library, parse, tools, AppState};
 use anyhow::Result;
@@ -26,8 +29,16 @@ const PLUGIN_OFF: &str = "加密格式需要先启用解锁插件：请在格式
 const PLUGIN_MISSING: &str = "没有找到解锁插件：请把插件 .exe 放到应用数据目录下的 plugins 文件夹";
 const LOUDNORM: &str = "loudnorm=I=-16:TP=-1.5:LRA=11";
 
-/// 启动时建表（jobs 表已在 db.rs 建好，这里不需要额外建表）
-pub fn init(_conn: &rusqlite::Connection) -> Result<()> {
+mod plug;
+
+/// 启动时建表（jobs 表已在 db.rs 建好；插件转换任务的参数另存一张表）
+pub fn init(conn: &rusqlite::Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS convert_plugin_jobs(
+            job_id INTEGER PRIMARY KEY,
+            options TEXT NOT NULL DEFAULT '{}'
+        );",
+    )?;
     Ok(())
 }
 
@@ -819,7 +830,7 @@ fn run_job(app: AppHandle, id: i64, ctl: Arc<JobCtl>) {
     RUNNING.lock().retain(|(j, _)| *j != id);
 }
 
-fn execute(app: &AppHandle, ctl: &JobCtl, id: i64) -> R<String> {
+fn execute(app: &AppHandle, ctl: &Arc<JobCtl>, id: i64) -> R<String> {
     let st = app.state::<AppState>();
     let (job, settings, plugin) = {
         let conn = st.db.lock();
@@ -828,6 +839,9 @@ fn execute(app: &AppHandle, ctl: &JobCtl, id: i64) -> R<String> {
     let input = PathBuf::from(&job.input);
     if !input.is_file() {
         return Err("原文件不存在，可能已被移动或删除".into());
+    }
+    if let Some(spec) = plug::Spec::parse(&job.preset) {
+        return plug::execute(app, ctl, id, &job, &settings, &spec);
     }
     let preset = find_preset(&job.preset)?;
     let work = Guard(st.dirs.data.join("convert-work").join(id.to_string()));
@@ -875,20 +889,7 @@ fn execute(app: &AppHandle, ctl: &JobCtl, id: i64) -> R<String> {
     }
 
     // 输出目录：替换 / 旁边 → 原文件所在目录；加入媒体库 / 只输出 → 任务里的目录、设置里的目录、默认目录
-    let target: PathBuf = match job.after.as_str() {
-        "replace" | "side" => input.parent().map(|p| p.to_path_buf()).ok_or("原文件路径无效")?,
-        _ => {
-            let custom = job
-                .output
-                .clone()
-                .filter(|x| !x.trim().is_empty())
-                .or_else(|| settings.out_dir.clone().filter(|x| !x.trim().is_empty()));
-            match custom {
-                Some(d) => PathBuf::from(d),
-                None => default_out_dir(parse::AUDIO.contains(&built.ext.as_str()), &st.dirs.data),
-            }
-        }
-    };
+    let target = target_dir(&job, &settings, &input, parse::AUDIO.contains(&built.ext.as_str()), &st.dirs.data)?;
     std::fs::create_dir_all(&target).map_err(|e| format!("无法创建输出目录：{e}"))?;
     // 临时文件放在隐藏子目录里：扫描器会跳过以 . 开头的目录，不会把半成品当成新文件入库
     let tmp_dir = target.join(".mpc-convert");
@@ -929,10 +930,28 @@ fn execute(app: &AppHandle, ctl: &JobCtl, id: i64) -> R<String> {
     report(app, id, 0.99, None, "running", None, None);
 
     if job.after == "replace" {
-        finalize_replace(&st, id, &input, &tmp.0, &built.ext, dur)
+        finalize_replace(&st, id, &input, &tmp.0, &built.ext, dur, true)
     } else {
         finalize_new(&st, &job.after, &input, &tmp.0, &built.ext, &target)
     }
+}
+
+/// 输出目录：替换 / 旁边 → 原文件所在目录；加入媒体库 / 只输出 → 任务里的目录、设置里的目录、默认目录
+fn target_dir(job: &Job, settings: &ConvertSettings, input: &Path, audio: bool, data: &Path) -> R<PathBuf> {
+    Ok(match job.after.as_str() {
+        "replace" | "side" => input.parent().map(|p| p.to_path_buf()).ok_or("原文件路径无效")?,
+        _ => {
+            let custom = job
+                .output
+                .clone()
+                .filter(|x| !x.trim().is_empty())
+                .or_else(|| settings.out_dir.clone().filter(|x| !x.trim().is_empty()));
+            match custom {
+                Some(d) => PathBuf::from(d),
+                None => default_out_dir(audio, data),
+            }
+        }
+    })
 }
 
 // ---------- 完成后处理 ----------
@@ -952,9 +971,14 @@ fn finalize_new(st: &AppState, after: &str, input: &Path, tmp: &Path, ext: &str,
     Ok(fin.to_string_lossy().to_string())
 }
 
-/// 替换原文件：校验新文件 → 原文件进回收站 → 新文件改名到原位置 → 库里换路径（保留 id）
-fn finalize_replace(st: &AppState, id: i64, input: &Path, tmp: &Path, ext: &str, src_dur: f64) -> R<String> {
-    validate_output(tmp, src_dur)?;
+/// 替换原文件：校验新文件 → 原文件进回收站 → 新文件改名到原位置 → 库里换路径（保留 id）。
+/// `media` 为 false 时（小说、漫画之类）不用 FFmpeg 校验，只看文件不是空的；`src_dur` 为 0 时不比较时长
+fn finalize_replace(st: &AppState, id: i64, input: &Path, tmp: &Path, ext: &str, src_dur: f64, media: bool) -> R<String> {
+    if media {
+        validate_output(tmp, src_dur)?;
+    } else if std::fs::metadata(tmp).map(|m| m.len()).unwrap_or(0) == 0 {
+        return Err("新文件是空的，已取消替换".into());
+    }
     let fid: Option<i64> = {
         let conn = st.db.lock();
         conn.query_row("SELECT id FROM files WHERE path=?1", [input.to_string_lossy().to_string()], |r| r.get(0))
@@ -1136,14 +1160,46 @@ pub fn convert_set_plugin(st: State<AppState>, enabled: bool, ack: bool) -> R<()
 }
 
 #[tauri::command]
-pub fn convert_add(st: State<AppState>, paths: Vec<String>, preset: String, after: String, out_dir: Option<String>) -> R<Vec<i64>> {
-    let p = find_preset(&preset)?;
+pub fn convert_add(
+    st: State<AppState>,
+    paths: Vec<String>,
+    preset: String,
+    after: String,
+    out_dir: Option<String>,
+    options: Option<serde_json::Map<String, Value>>,
+) -> R<Vec<i64>> {
     if !matches!(after.as_str(), "lib" | "replace" | "side" | "dir") {
         return Err("未知的完成后处理方式".into());
     }
     if paths.is_empty() {
         return Err("没有选择文件".into());
     }
+    if let Some(spec) = plug::Spec::parse(&preset) {
+        let opts = plug::check_add(&spec, &paths, &after, &options.unwrap_or_default())?;
+        let output = if after == "lib" || after == "dir" {
+            out_dir.filter(|d| !d.trim().is_empty())
+        } else {
+            None
+        };
+        let text = serde_json::to_string(&opts).map_err(s)?;
+        let mut conn = st.db.lock();
+        let tx = conn.transaction().map_err(s)?;
+        let mut ids = vec![];
+        for path in &paths {
+            tx.execute(
+                "INSERT INTO jobs(input,output,preset,after,status,progress,created_at) VALUES(?1,?2,?3,?4,'queued',0,?5)",
+                params![path, output, preset, after, db::now()],
+            )
+            .map_err(s)?;
+            let id = tx.last_insert_rowid();
+            tx.execute("INSERT OR REPLACE INTO convert_plugin_jobs(job_id, options) VALUES(?1, ?2)", params![id, text])
+                .map_err(s)?;
+            ids.push(id);
+        }
+        tx.commit().map_err(s)?;
+        return Ok(ids);
+    }
+    let p = find_preset(&preset)?;
     let mut bad: Vec<String> = vec![];
     for path in &paths {
         let pb = PathBuf::from(path);
@@ -1227,11 +1283,14 @@ pub fn convert_list(st: State<AppState>) -> R<Vec<JobView>> {
     let mut out = vec![];
     for (id, input, output, preset, after, status, progress, error, backup, created_at, finished_at) in rows {
         let name = Path::new(&input).file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-        let preset_name = PRESETS
-            .iter()
-            .find(|p| p.id == preset)
-            .map(|p| p.name.to_string())
-            .unwrap_or_else(|| preset.clone());
+        let preset_name = match plug::Spec::parse(&preset) {
+            Some(sp) => sp.label(),
+            None => PRESETS
+                .iter()
+                .find(|p| p.id == preset)
+                .map(|p| p.name.to_string())
+                .unwrap_or_else(|| preset.clone()),
+        };
         let done = status == "done" || status == "undone";
         let is_dir_mode = after == "lib" || after == "dir";
         let can_undo = after == "replace" && backup.is_some() && (status == "done" || status == "failed") && output.is_some();
@@ -1286,8 +1345,16 @@ pub fn convert_cancel(st: State<AppState>, app: AppHandle, id: i64) -> R<()> {
 #[tauri::command]
 pub fn convert_clear_done(st: State<AppState>) -> R<usize> {
     let conn = st.db.lock();
-    conn.execute("DELETE FROM jobs WHERE status IN ('done','failed','canceled','undone')", [])
-        .map_err(s)
+    let n = conn
+        .execute("DELETE FROM jobs WHERE status IN ('done','failed','canceled','undone')", [])
+        .map_err(s)?;
+    drop_orphans(&conn);
+    Ok(n)
+}
+
+/// 任务删掉后，插件转换的参数也删掉
+fn drop_orphans(conn: &Connection) {
+    let _ = conn.execute("DELETE FROM convert_plugin_jobs WHERE job_id NOT IN (SELECT id FROM jobs)", []);
 }
 
 /// 失败或取消的任务重新排队。替换过原文件的任务不能直接重试（要先撤销）
@@ -1382,15 +1449,32 @@ pub fn convert_undo(st: State<AppState>, app: AppHandle, id: i64) -> R<()> {
 pub fn convert_expand(paths: Vec<String>) -> Vec<String> {
     let mut out = vec![];
     let cancel = AtomicBool::new(false);
+    // 插件转换器能处理的格式也收进来（任何扩展名，由插件自己声明）
+    let convs = crate::plugin::converter::active();
+    let by_plugin = |f: &Path| {
+        let e = parse::ext(f);
+        !e.is_empty() && convs.iter().any(|c| plug::accepts(&c.inputs, &e))
+    };
+    let media = |f: &Path| matches!(parse::classify(f), Some("music") | Some("video") | Some("anime"));
     for p in paths {
         let pb = PathBuf::from(&p);
         if pb.is_dir() {
-            crate::scanner::enumerate(&pb, &cancel, |f, k| {
-                if matches!(k, "music" | "video" | "anime") {
-                    out.push(f.to_string_lossy().to_string());
+            if convs.is_empty() {
+                crate::scanner::enumerate(&pb, &cancel, |f, k| {
+                    if matches!(k, "music" | "video" | "anime") {
+                        out.push(f.to_string_lossy().to_string());
+                    }
+                });
+            } else {
+                let walker = jwalk::WalkDir::new(&pb).skip_hidden(true).follow_links(false).sort(true);
+                for e in walker.into_iter().flatten() {
+                    let f = e.path();
+                    if e.file_type().is_file() && (media(&f) || by_plugin(&f)) {
+                        out.push(f.to_string_lossy().to_string());
+                    }
                 }
-            });
-        } else if pb.is_file() && matches!(parse::classify(&pb), Some("music") | Some("video") | Some("anime")) {
+            }
+        } else if pb.is_file() && (media(&pb) || by_plugin(&pb)) {
             out.push(p);
         }
     }
@@ -1620,8 +1704,16 @@ mod tests {
 /// 删除一条已结束的记录（不动任何文件）
 #[tauri::command]
 pub fn convert_remove(st: State<AppState>, id: i64) -> R<usize> {
-    st.db
-        .lock()
+    let conn = st.db.lock();
+    let n = conn
         .execute("DELETE FROM jobs WHERE id=?1 AND status IN ('done','failed','canceled','undone')", [id])
-        .map_err(s)
+        .map_err(s)?;
+    drop_orphans(&conn);
+    Ok(n)
+}
+
+/// 已启用的插件提供的格式转换器
+#[tauri::command]
+pub fn convert_converters() -> Vec<crate::plugin::converter::ConverterView> {
+    crate::plugin::converter::active()
 }

@@ -194,6 +194,18 @@
           <p class="note">在“自动获取 → 我的来源”里可以单独开关每个下载源。</p>
         {/if}
 
+        {#if v.converters?.length}
+          <h6>格式转换</h6>
+          {#each v.converters as c (c.id)}
+            <div class="pd-src">
+              <b>{c.name}</b>
+              <small>{c.inputs.join(' / ')} → {c.outputs.map(o => o.name).join(' / ')}{c.exec ? ' · 命令行程序' : ''}</small>
+            </div>
+            {#if c.note}<div class="note">{c.note}</div>{/if}
+          {/each}
+          <p class="note">在“格式转换”页的“插件”一行里使用。</p>
+        {/if}
+
         {#if sv && sv.schema.length}
           <h6>设置</h6>
           <div class="pd-form">
@@ -267,6 +279,8 @@
           {#if v.has_prev}<button class="mp-btn ghost" disabled={busy} onclick={() => run(() => pluginApi.rollback(id), '已回到上一个版本')}>回到上一版本</button>{/if}
           <button class="mp-btn ghost danger" disabled={busy} onclick={uninstall}>卸载</button>
         </div>
+      {:else if tab === 'test' && !v.sources.length}
+        <p class="note">这个插件没有下载源。格式转换器请直接在“格式转换”页拖入文件试转，过程和出错信息记在“日志”里。</p>
       {:else if tab === 'test'}
         <p class="note">自检、搜索一次、解析第一条结果的下载地址（不会真的下载）。每一步的用时、错误码和返回内容都会列出来。</p>
         <div class="frow">

@@ -7,6 +7,9 @@ export interface MediaInfo { duration: number; width: number; height: number; co
 export interface SubItem { kind: 'external' | 'embedded'; path?: string; stream?: number; label: string }
 export interface Cue { start: number; end: number; text: string }
 
+/** 视频控制栏自动隐藏的默认延迟（秒）；设置项 video_autohide，0 = 不隐藏 */
+export const VIDEO_AUTOHIDE_DEFAULT = 3;
+
 class MediaState {
   /** 缩略图目录（media_thumb_dir） */
   thumbDir = $state('');

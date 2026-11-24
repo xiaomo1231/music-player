@@ -1,6 +1,6 @@
 [package]
 name = "music-player"
-version = "0.6.3"
+version = "0.6.4"
 description = "Windows 综合媒体播放 / 管理软件"
 edition = "2021"
 rust-version = "1.80"

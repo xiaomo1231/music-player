@@ -29,6 +29,7 @@
   import RulesCard from '../components/em/RulesCard.svelte';
   import PluginsCard from '../components/plugin/PluginsCard.svelte';
   import { updater } from '../lib/updater.svelte';
+  import { VIDEO_AUTOHIDE_DEFAULT } from '../lib/media.svelte';
 
   // 设置项的当前值（启动时从 settings 表读取）
   let watch = $state(true);
@@ -47,6 +48,7 @@
   let clearCovers = $state(false);
   let clearing = $state(false);
   let autoUpdate = $state(true);
+  let vHide = $state(VIDEO_AUTOHIDE_DEFAULT);
 
   const inp = (e: Event) => (e.currentTarget as HTMLInputElement);
 
@@ -68,6 +70,7 @@
     useDefVol = dv != null;
     defVol = dv ?? Math.round(player.vol * 100);
     closeAction = await getCloseAction();
+    vHide = await getSetting('video_autohide', VIDEO_AUTOHIDE_DEFAULT);
     explorer = await getSetting('explorer_menu', false);
     lyrics = await getSetting('desktop_lyrics', false);
     if (inTauri) {
@@ -275,6 +278,16 @@
           <input type="range" min="0" max="100" value={defVol} oninput={onDefVolValue} aria-label="默认音量" />
         </div>
       {/if}
+      <label class="mp-opt">
+        <div>视频控制栏自动隐藏<small>播放视频时鼠标不动多久后收起标题栏、控制栏和鼠标指针；暂停或鼠标停在控制栏上时不收</small></div>
+        <select value={String(vHide)} onchange={e => { vHide = Number(e.currentTarget.value); setSetting('video_autohide', vHide); }}>
+          <option value="1.5">1.5 秒</option>
+          <option value="3">3 秒</option>
+          <option value="5">5 秒</option>
+          <option value="10">10 秒</option>
+          <option value="0">不隐藏</option>
+        </select>
+      </label>
       <label class="mp-opt">
         <div>淡入淡出<small>切歌和暂停时渐变音量（即将支持）</small></div>
         <input type="checkbox" class="mp-sw" checked={fade} onchange={flag('fade', v => (fade = v))} />

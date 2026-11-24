@@ -864,6 +864,10 @@ pub struct Preview {
     /// 比已装版本多出来的权限（新网站、开始要登录、新工具、变成程序）
     pub new_permissions: Vec<String>,
     pub downgrade: bool,
+    /// 和已装的版本号一样（重新安装）
+    pub same_version: bool,
+    /// 已装版本有没有同意交出登录（升级时默认沿用）
+    pub login_granted: bool,
     pub dev_installed: bool,
 }
 
@@ -961,7 +965,9 @@ pub fn preview_of(dir: &Path, m: &Manifest) -> Preview {
         }
         if let (Some(a), Some(b)) = (manifest::parse_version(&m.version), manifest::parse_version(&l.manifest.version)) {
             p.downgrade = a < b;
+            p.same_version = a == b;
         }
+        p.login_granted = l.granted.login;
     }
     p.ok = p.issues.is_empty();
     p
@@ -1005,6 +1011,42 @@ pub async fn plugin_install(app: AppHandle, path: String, allow_login: bool) -> 
     get_view(&id)
 }
 
+fn remove_if_exists(p: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(p) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        r => r,
+    }
+}
+
+/// 文件操作失败时隔一会儿再试（Windows 上杀毒软件、缩略图等会短暂占用文件）
+fn retry<T>(mut f: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut last = None;
+    for i in 0..6 {
+        match f() {
+            Ok(v) => return Ok(v),
+            Err(e) => last = Some(e),
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100 << i.min(3)));
+    }
+    Err(last.unwrap())
+}
+
+/// 用新文件夹换掉已装的：旧的挪到 `prev`（可以回滚），挪不动就删掉
+fn replace_dir(fresh: &Path, target: &Path, prev: &Path) -> Result<()> {
+    if target.exists() {
+        let _ = retry(|| remove_if_exists(prev));
+        if let Some(p) = prev.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        // Windows 上文件可能短暂被占用，多试几次
+        if retry(|| std::fs::rename(target, prev)).is_err() {
+            retry(|| remove_if_exists(target)).map_err(|e| anyhow!("旧版本的文件正被占用，没法替换（{e}）。等正在进行的下载或转换结束后再装一次"))?;
+        }
+    }
+    retry(|| std::fs::rename(fresh, target))?;
+    Ok(())
+}
+
 /// 安装的实际步骤（仓库更新也用）
 pub fn install(app: &AppHandle, path: &Path, allow_login: bool, origin: &str) -> R<String> {
     let o = package::open(path, &staging_dir()).map_err(es)?;
@@ -1028,17 +1070,7 @@ pub fn install(app: &AppHandle, path: &Path, allow_login: bool, origin: &str) ->
         package::copy_dir(&o.dir, &fresh)?;
         let sha = package::digest(&fresh)?;
         let target = installed_dir(&id);
-        if target.exists() {
-            let prev = prev_dir(&id);
-            let _ = std::fs::remove_dir_all(&prev);
-            std::fs::create_dir_all(prev.parent().unwrap())?;
-            if old.as_ref().is_some_and(|l| !l.dev) {
-                std::fs::rename(&target, &prev).or_else(|_| std::fs::remove_dir_all(&target))?;
-            } else {
-                std::fs::remove_dir_all(&target)?;
-            }
-        }
-        std::fs::rename(&fresh, &target)?;
+        replace_dir(&fresh, &target, &prev_dir(&id))?;
         // 规则：rule 入口的 .em 和 contributes.rules
         let mut files: Vec<String> = vec![];
         if m.runtime.kind == "rule" {
@@ -1218,11 +1250,14 @@ pub fn plugin_load_dev(app: AppHandle, path: String) -> R<PluginView> {
     }
     let m = o.manifest.clone();
     let id = m.id.clone();
+    // 已经安装过：直接换成开发者模式加载的文件夹（设置保留；装好的文件留着，之后重新安装 .mpx 会覆盖回来）
     if let Some(l) = REG.read().get(&id).cloned() {
-        if !l.dev {
-            return Err(format!("已经安装了“{}”，请先卸载再用开发者模式加载", l.manifest.name));
+        if l.active() {
+            apply(&app, &id, false, Some(&l));
         }
-        apply(&app, &id, false, Some(&l));
+        for r in &l.rules {
+            let _ = em::delete(&app, r);
+        }
     }
     let granted = Granted::of(&m, true);
     let now = crate::db::now();
@@ -1232,7 +1267,7 @@ pub fn plugin_load_dev(app: AppHandle, path: String) -> R<PluginView> {
         .execute(
             "INSERT INTO plugins(id,name,version,runtime,manifest,enabled,granted,settings,sha256,origin,dev_path,rules,installed_at,updated_at)
              VALUES(?1,?2,?3,?4,?5,1,?6,'{}','','dev',?7,'[]',?8,?8)
-             ON CONFLICT(id) DO UPDATE SET name=?2,version=?3,runtime=?4,manifest=?5,enabled=1,granted=?6,dev_path=?7,updated_at=?8",
+             ON CONFLICT(id) DO UPDATE SET name=?2,version=?3,runtime=?4,manifest=?5,enabled=1,granted=?6,dev_path=?7,rules='[]',updated_at=?8",
             params![
                 id,
                 m.name,
@@ -1567,5 +1602,22 @@ mod tests {
             }
         }
         assert!(n >= 5, "模板和示例应该有 5 个，实际 {n}");
+    }
+
+    #[test]
+    fn replace_keeps_previous_version() {
+        let d = std::env::temp_dir().join(format!("mp-plg-replace-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let (target, prev) = (d.join("demo"), d.join(".prev/demo"));
+        for v in ["1", "2", "3"] {
+            let fresh = d.join(".new-demo");
+            std::fs::create_dir_all(&fresh).unwrap();
+            std::fs::write(fresh.join("v.txt"), v).unwrap();
+            replace_dir(&fresh, &target, &prev).unwrap();
+            assert_eq!(std::fs::read_to_string(target.join("v.txt")).unwrap(), v);
+            assert!(!fresh.exists());
+        }
+        assert_eq!(std::fs::read_to_string(prev.join("v.txt")).unwrap(), "2", "上一版本留着可以回滚");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

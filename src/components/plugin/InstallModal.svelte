@@ -37,7 +37,8 @@
       .then(r => {
         if (key === cur && r) {
           p = r;
-          allowLogin = r.login === 'required';
+          // 升级时沿用已装版本的登录授权
+          allowLogin = r.installed_version !== null ? r.login_granted || (r.login === 'required' && r.new_permissions.some(n => n.includes('登录'))) : r.login === 'required';
         }
       })
       .catch(e => {
@@ -60,7 +61,8 @@
       plugins.version++;
       const where = v.sources.length || v.rules.length ? '，下载源已加到“自动获取 → 我的来源”' : '';
       if (v.problem) toast(`已安装「${v.name}」，但：${v.problem}`);
-      else toast(`已${p.installed_version ? '更新' : '安装'}插件「${v.name}」${where}`);
+      else if (p.installed_version) toast(`已把「${v.name}」从 v${p.installed_version} ${p.downgrade ? '换成' : '升级到'} v${v.version}，设置和来源都保留了`);
+      else toast(`已安装插件「${v.name}」${where}`);
       next();
       // 有必填设置没填：直接打开设置
       if (v.needs_settings.length) plugins.detail = v.id;
@@ -71,12 +73,14 @@
     }
   }
 
+  /** 已装时：升级 / 重新安装 / 降级 */
+  const action = $derived(!p?.installed_version ? '安装' : p.dev_installed ? '换成安装包' : p.same_version ? '重新安装' : p.downgrade ? '降级安装' : '升级');
   const fileName = $derived(path.split(/[\\/]/).pop() ?? repo?.id ?? '');
   const kinds = $derived((p?.media_kinds ?? []).map(k => MEDIA_TEXT[k] ?? k).join('、'));
 </script>
 
 {#if key}
-  <Modal title={p?.installed_version ? '更新插件' : '安装插件'} onclose={next}>
+  <Modal title={p?.installed_version ? (p.downgrade ? '降级插件' : p.same_version ? '重新安装插件' : '升级插件') : '安装插件'} onclose={next}>
     {#if err}
       <p class="pl-err">{err}</p>
       <div class="rowbtns"><button class="mp-btn" onclick={next}>关闭</button></div>
@@ -95,9 +99,12 @@
         {#if p.version}<small>v{p.version}</small>{/if}
       </div>
       {#if p.installed_version}
-        <p class="note">
-          已装 v{p.installed_version}{#if p.downgrade}<span class="tag warn">这是更旧的版本</span>{/if}{#if p.dev_installed}<span class="tag warn">会替换开发者模式加载的文件夹</span>{/if}
-        </p>
+        <div class="upgrade">
+          <b>v{p.installed_version} → v{p.version}</b>
+          {#if p.downgrade}<span class="tag warn">这是更旧的版本</span>{:else if p.same_version}<span class="tag">版本相同，会重新安装</span>{/if}
+          {#if p.dev_installed}<span class="tag warn">会替换开发者模式加载的文件夹</span>{/if}
+          <div class="note">已经装过这个插件，会直接覆盖，不用先卸载。设置、密钥、“我的来源”里的开关和追更都会保留；上一个版本留着，有问题可以在插件详情里回滚。</div>
+        </div>
       {/if}
       <div class="pl-kv">
         {#if p.author}<div><span>作者</span>{p.author}</div>{/if}
@@ -154,7 +161,7 @@
 
       <div class="rowbtns">
         <button class="mp-btn ghost" onclick={next}>取消</button>
-        <button class="mp-btn" disabled={busy || (full && !agreed)} onclick={install}>{busy ? '正在安装…' : p.installed_version ? '更新' : '安装'}</button>
+        <button class="mp-btn" disabled={busy || (full && !agreed)} onclick={install}>{busy ? '正在安装…' : action}</button>
       </div>
     {/if}
   </Modal>
@@ -176,6 +183,16 @@
   }
   .pl-head small {
     color: var(--mp-sub);
+  }
+  .upgrade {
+    margin: 6px 0 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(127, 127, 127, 0.08);
+    font-size: 13px;
+  }
+  .upgrade .tag {
+    background: rgba(127, 127, 127, 0.15);
   }
   .pl-kv div {
     display: flex;

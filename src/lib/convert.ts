@@ -19,7 +19,12 @@ export interface ConvertSettingsView {
   out_dir: string | null;
   out_dir_audio: string;
   out_dir_video: string;
+  /** 实际使用的同时转换数 */
   concurrency: number;
+  /** true：没有手动设置，按 CPU 核数自动 */
+  concurrency_auto: boolean;
+  concurrency_default: number;
+  concurrency_max: number;
   plugin_enabled: boolean;
   plugin_ack: boolean;
   plugin_dir: string;

@@ -65,6 +65,9 @@ pub fn init(conn: &Connection) -> Result<()> {
     )?;
     // 种子任务只下载选中的文件：JSON 数组（文件序号），空表示全部
     db::add_column(conn, "fetch_tasks", "files", "TEXT NOT NULL DEFAULT ''")?;
+    // 从搜索页作品卡订阅时记下作品条目（检查更新直接取这部作品的各集）和封面（书架上显示）
+    db::add_column(conn, "fetch_subs", "work_url", "TEXT NOT NULL DEFAULT ''")?;
+    db::add_column(conn, "fetch_subs", "cover", "TEXT NOT NULL DEFAULT ''")?;
     Ok(())
 }
 
@@ -130,6 +133,8 @@ pub struct Hit {
     pub special: bool,
     /// 这次搜索是否重新生成了网页提取规则
     pub rule_updated: bool,
+    /// 下载源的作品条目（还没展开成各集）：搜索页点开作品卡时用 `fetch_episodes` 取各集
+    pub expand: bool,
 }
 
 #[derive(Serialize, Debug)]
@@ -272,6 +277,15 @@ pub struct SubView {
     pub last_check: Option<i64>,
     /// 已记为“见过”的条目数
     pub seen: usize,
+    /// 作品封面网址（可能为空）
+    pub cover: String,
+}
+
+/// 手动检查一部追更的结果
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct SubCheck {
+    /// 新加入下载的集标题
+    pub titles: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -423,11 +437,11 @@ fn group_key(work: &str) -> String {
 
 /// 同时搜索所有启用的来源（only_source 指定时只搜那一个）
 pub async fn search(app: &AppHandle, query: &str, media_kind: &str, only_source: Option<i64>) -> Result<SearchOut, String> {
-    search_in(app, query, media_kind, only_source.map(|s| vec![s]).as_deref()).await
+    search_in(app, query, media_kind, only_source.map(|s| vec![s]).as_deref(), false).await
 }
 
 /// 只搜一个来源
-async fn search_one(app: &AppHandle, row: &SourceRow, q: &str, media_kind: &str) -> (Result<Vec<Hit>, String>, bool) {
+async fn search_one(app: &AppHandle, row: &SourceRow, q: &str, media_kind: &str, works: bool) -> (Result<Vec<Hit>, String>, bool) {
     if !row.media_kinds().is_empty() && !row.media_kinds().iter().any(|k| k == media_kind) {
         return (Ok(vec![]), true);
     }
@@ -436,14 +450,15 @@ async fn search_one(app: &AppHandle, row: &SourceRow, q: &str, media_kind: &str)
         "dir" => source::search_dir(row, q, media_kind).await,
         "ytdlp" => source::search_ytdlp(row, q).await,
         "web" => web::search(app, row, q, media_kind).await,
-        "provider" => provider::search(row, q, media_kind).await,
+        "provider" => provider::search(row, q, media_kind, works).await,
         other => Err(format!("未知来源类型：{other}")),
     };
     (r, false)
 }
 
-/// 在指定的来源里搜（`None` 为全部启用的来源），各来源同时搜
-pub async fn search_in(app: &AppHandle, query: &str, media_kind: &str, only: Option<&[i64]>) -> Result<SearchOut, String> {
+/// 在指定的来源里搜（`None` 为全部启用的来源），各来源同时搜。
+/// `works`：搜索页用，有分集能力的下载源只取作品，点开再取各集（追更传 false，照旧展开）
+pub async fn search_in(app: &AppHandle, query: &str, media_kind: &str, only: Option<&[i64]>, works: bool) -> Result<SearchOut, String> {
     let q = query.trim().to_string();
     if q.is_empty() {
         return Err("请输入要搜索的名字".into());
@@ -458,7 +473,7 @@ pub async fn search_in(app: &AppHandle, query: &str, media_kind: &str, only: Opt
         let q = q.clone();
         async move {
             let t = std::time::Instant::now();
-            let (r, skipped) = search_one(app, row, &q, media_kind).await;
+            let (r, skipped) = search_one(app, row, &q, media_kind, works).await;
             (r, skipped, t.elapsed().as_millis() as u64)
         }
     });
@@ -831,7 +846,21 @@ pub fn fetch_remove_source(st: State<AppState>, id: i64) -> Result<(), String> {
 pub async fn fetch_search(app: AppHandle, query: String, media_kind: String, sources: Option<Vec<i64>>) -> Result<SearchOut, String> {
     let mk = if media_kind.trim().is_empty() { "anime".to_string() } else { media_kind };
     let only = sources.filter(|s| !s.is_empty());
-    search_in(&app, &query, &mk, only.as_deref()).await
+    search_in(&app, &query, &mk, only.as_deref(), true).await
+}
+
+/// 搜索页点开作品卡：把一条作品结果展开成各集 / 话 / 章（按集数排好）
+#[tauri::command]
+pub async fn fetch_episodes(app: AppHandle, source_id: i64, url: String) -> Result<Vec<Hit>, String> {
+    let name = with_db(&app, |c| Ok(list_sources(c, false)?.into_iter().find(|r| r.id == source_id).map(|r| r.name)))
+        .map_err(e)?
+        .ok_or("这个来源已经删除了")?;
+    let mut hits = provider::episodes(&url).await?;
+    for h in hits.iter_mut() {
+        h.source_id = source_id;
+        h.source_name = name.clone();
+    }
+    Ok(hits)
 }
 
 /// 启用 / 停用一个来源（停用的来源不参与搜索和追更）
@@ -952,24 +981,58 @@ pub fn fetch_set_settings(app: AppHandle, value: FetchSettings) -> Result<FetchS
 // ---------- 追更 ----------
 
 #[tauri::command]
-pub async fn fetch_subscribe(app: AppHandle, source_id: i64, query: String, media_kind: String) -> Result<i64, String> {
+pub async fn fetch_subscribe(
+    app: AppHandle,
+    source_id: i64,
+    query: String,
+    media_kind: String,
+    work_url: Option<String>,
+    cover: Option<String>,
+) -> Result<i64, String> {
     let q = query.trim().to_string();
     if q.is_empty() {
         return Err("请输入要追更的作品名".into());
     }
     let mk = if media_kind.trim().is_empty() { "anime".to_string() } else { media_kind };
+    let work_url = work_url.unwrap_or_default();
     // 订阅时把当前已有的结果记为“已见”，之后只下载新出现的集
-    let out = search(&app, &q, &mk, Some(source_id)).await?;
-    let seen: Vec<String> = out.hits.iter().map(seen_key).collect();
+    let hits = sub_hits(&app, source_id, &q, &mk, &work_url).await?;
+    let seen: Vec<String> = hits.iter().map(seen_key).collect();
     let id = with_db(&app, |c| {
         c.execute(
-            "INSERT INTO fetch_subs(source_id,query,media_kind,last_check,seen_json) VALUES(?1,?2,?3,?4,?5)",
-            params![source_id, q, mk, db::now(), serde_json::to_string(&seen)?],
+            "INSERT INTO fetch_subs(source_id,query,media_kind,last_check,seen_json,work_url,cover) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![source_id, q, mk, db::now(), serde_json::to_string(&seen)?, work_url, cover.unwrap_or_default()],
         )?;
         Ok(c.last_insert_rowid())
     })
     .map_err(e)?;
     Ok(id)
+}
+
+/// 一部追更现在能看到的各集：记了作品条目时直接展开这部作品，否则按作品名搜（只留同名作品的结果，没有同名时全留）
+async fn sub_hits(app: &AppHandle, source_id: i64, query: &str, media_kind: &str, work_url: &str) -> Result<Vec<Hit>, String> {
+    if !work_url.is_empty() {
+        return provider::episodes(work_url).await;
+    }
+    let out = search(app, query, media_kind, Some(source_id)).await?;
+    Ok(same_work(out.hits, query))
+}
+
+fn same_work(hits: Vec<Hit>, query: &str) -> Vec<Hit> {
+    let k = group_key(query);
+    if hits.iter().any(|h| group_key(&h.work) == k) {
+        hits.into_iter().filter(|h| group_key(&h.work) == k).collect()
+    } else {
+        hits
+    }
+}
+
+/// 手动检查一部追更：有新集就加入下载
+#[tauri::command]
+pub async fn fetch_sub_check(app: AppHandle, id: i64) -> Result<SubCheck, String> {
+    let sub = load_subs(&app).map_err(e)?.into_iter().find(|s| s.id == id).ok_or("这个追更已经取消了")?;
+    let titles = check_one(&app, sub).await?;
+    Ok(SubCheck { titles })
 }
 
 #[tauri::command]
@@ -983,7 +1046,7 @@ pub fn fetch_subs(st: State<AppState>) -> Result<Vec<SubView>, String> {
     let c = st.db.lock();
     let mut s = c
         .prepare(
-            "SELECT s.id, s.source_id, COALESCE(src.name,''), s.query, s.media_kind, s.last_check, s.seen_json
+            "SELECT s.id, s.source_id, COALESCE(src.name,''), s.query, s.media_kind, s.last_check, s.seen_json, s.cover
              FROM fetch_subs s LEFT JOIN fetch_sources src ON src.id = s.source_id ORDER BY s.id",
         )
         .map_err(e)?;
@@ -998,6 +1061,7 @@ pub fn fetch_subs(st: State<AppState>) -> Result<Vec<SubView>, String> {
                 media_kind: r.get(4)?,
                 last_check: r.get(5)?,
                 seen: serde_json::from_str::<Vec<String>>(&seen).map(|v| v.len()).unwrap_or(0),
+                cover: r.get(7)?,
             })
         })
         .map_err(e)?
@@ -1006,63 +1070,93 @@ pub fn fetch_subs(st: State<AppState>) -> Result<Vec<SubView>, String> {
     Ok(rows)
 }
 
-/// 检查所有订阅：新出现的集自动下载，并推送 fetch://new
-pub async fn check_subs(app: &AppHandle) {
-    type SubRow = (i64, i64, String, String, Vec<String>);
-    let subs: Vec<SubRow> = with_db(app, |c| {
-        let mut st = c.prepare("SELECT id,source_id,query,media_kind,seen_json FROM fetch_subs")?;
+struct SubRec {
+    id: i64,
+    source_id: i64,
+    query: String,
+    media_kind: String,
+    work_url: String,
+    seen: Vec<String>,
+}
+
+fn load_subs(app: &AppHandle) -> Result<Vec<SubRec>> {
+    with_db(app, |c| {
+        let mut st = c.prepare("SELECT id,source_id,query,media_kind,seen_json,work_url FROM fetch_subs")?;
         let rows = st
             .query_map([], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                ))
+                let seen: String = r.get(4)?;
+                Ok(SubRec {
+                    id: r.get(0)?,
+                    source_id: r.get(1)?,
+                    query: r.get(2)?,
+                    media_kind: r.get(3)?,
+                    seen: serde_json::from_str(&seen).unwrap_or_default(),
+                    work_url: r.get(5)?,
+                })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows
-            .into_iter()
-            .map(|(a, b, q, m, s)| (a, b, q, m, serde_json::from_str(&s).unwrap_or_default()))
-            .collect())
+        Ok(rows)
     })
-    .unwrap_or_default();
-    for (sub_id, source_id, query, media_kind, mut seen) in subs {
-        let out = match search(app, &query, &media_kind, Some(source_id)).await {
-            Ok(o) => o,
-            Err(_) => continue,
-        };
-        let mut fresh = vec![];
-        for h in out.hits {
-            let key = seen_key(&h);
-            if seen.contains(&key) {
-                continue;
-            }
-            seen.push(key);
-            if h.episode.is_some() {
-                fresh.push(h);
-            }
+}
+
+/// 新出现、带集数的条目；同时把它们记进 `seen`（最多留 3000 条）
+fn fresh_hits(hits: Vec<Hit>, seen: &mut Vec<String>) -> Vec<Hit> {
+    let mut fresh = vec![];
+    for h in hits {
+        let key = seen_key(&h);
+        if seen.contains(&key) {
+            continue;
         }
-        if seen.len() > 3000 {
-            let drop = seen.len() - 3000;
-            seen.drain(0..drop);
+        seen.push(key);
+        if h.episode.is_some() {
+            fresh.push(h);
         }
-        let titles: Vec<String> = fresh.iter().map(|h| h.title.clone()).collect();
-        let _ = with_db(app, |c| {
-            for h in &fresh {
-                insert_task(c, Some(source_id), &h.title, &h.kind, &h.url, &media_kind, h.size.unwrap_or(0))?;
-            }
-            c.execute(
-                "UPDATE fetch_subs SET last_check=?2, seen_json=?3 WHERE id=?1",
-                params![sub_id, db::now(), serde_json::to_string(&seen)?],
-            )?;
-            Ok(())
-        });
-        if !fresh.is_empty() {
-            download::pump(app);
-            let _ = app.emit("fetch://new", json!({ "subId": sub_id, "query": query, "titles": titles }));
+    }
+    if seen.len() > 3000 {
+        let drop = seen.len() - 3000;
+        seen.drain(0..drop);
+    }
+    fresh
+}
+
+/// 检查一部追更：新出现的集加入下载，推送 fetch://new，返回新集的标题
+async fn check_one(app: &AppHandle, sub: SubRec) -> Result<Vec<String>, String> {
+    let SubRec {
+        id: sub_id,
+        source_id,
+        query,
+        media_kind,
+        work_url,
+        mut seen,
+    } = sub;
+    let mut hits = sub_hits(app, source_id, &query, &media_kind, &work_url).await?;
+    for h in hits.iter_mut() {
+        h.source_id = source_id;
+    }
+    let fresh = fresh_hits(hits, &mut seen);
+    let titles: Vec<String> = fresh.iter().map(|h| h.title.clone()).collect();
+    with_db(app, |c| {
+        for h in &fresh {
+            insert_task(c, Some(source_id), &h.title, &h.kind, &h.url, &media_kind, h.size.unwrap_or(0))?;
         }
+        c.execute(
+            "UPDATE fetch_subs SET last_check=?2, seen_json=?3 WHERE id=?1",
+            params![sub_id, db::now(), serde_json::to_string(&seen)?],
+        )?;
+        Ok(())
+    })
+    .map_err(e)?;
+    if !fresh.is_empty() {
+        download::pump(app);
+        let _ = app.emit("fetch://new", json!({ "subId": sub_id, "query": query, "titles": titles }));
+    }
+    Ok(titles)
+}
+
+/// 检查所有订阅：新出现的集自动下载，并推送 fetch://new
+pub async fn check_subs(app: &AppHandle) {
+    for sub in load_subs(app).unwrap_or_default() {
+        let _ = check_one(app, sub).await;
     }
 }
 
@@ -1169,6 +1263,37 @@ mod tests {
         h.kind = "magnet".into();
         h.url = "magnet:?xt=1".into();
         assert_eq!(seen_key(&h), "magnet:?xt=1");
+    }
+
+    #[test]
+    fn subscription_keeps_only_same_work() {
+        let hit = |work: &str, ep: f64| Hit {
+            work: work.into(),
+            url: format!("u/{work}/{ep}"),
+            episode: Some(ep),
+            ..Default::default()
+        };
+        let hits = vec![hit("星屑邮局", 1.0), hit("星屑邮局 外传", 1.0), hit("星屑 邮局", 2.0)];
+        let kept = same_work(hits.clone(), "星屑邮局");
+        assert_eq!(kept.len(), 2);
+        // 没有同名作品时全留（作品名和搜索词写法不同）
+        assert_eq!(same_work(hits, "Stardust").len(), 3);
+    }
+
+    #[test]
+    fn fresh_hits_only_new_episodes() {
+        let hit = |u: &str, ep: Option<f64>| Hit {
+            url: u.into(),
+            episode: ep,
+            ..Default::default()
+        };
+        let mut seen = vec!["a".to_string()];
+        let fresh = fresh_hits(vec![hit("a", Some(1.0)), hit("b", Some(2.0)), hit("c", None)], &mut seen);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].url, "b");
+        assert_eq!(seen, vec!["a", "b", "c"]);
+        // 再查一次没有新的
+        assert!(fresh_hits(vec![hit("b", Some(2.0))], &mut seen).is_empty());
     }
 
     #[test]

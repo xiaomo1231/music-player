@@ -33,6 +33,8 @@ export interface Hit {
   resolution: string | null;
   special: boolean;
   rule_updated: boolean;
+  /** 下载源的作品条目（还没展开成各集），点开作品卡时用 fetchApi.episodes 取各集 */
+  expand?: boolean;
 }
 
 export interface Group {
@@ -104,6 +106,8 @@ export interface SubRow {
   media_kind: string;
   last_check: number | null;
   seen: number;
+  /** 作品封面网址（从搜索页作品卡订阅时记下，可能为空） */
+  cover?: string;
 }
 
 export interface SourceStep {
@@ -217,8 +221,12 @@ export const fetchApi = {
   cancel: (id: number, deleteFiles: boolean) => invoke<void>('fetch_cancel', { id, deleteFiles }),
   getSettings: () => invoke<FetchSettings>('fetch_get_settings'),
   setSettings: (value: FetchSettings) => invoke<FetchSettings>('fetch_set_settings', { value }),
-  subscribe: (sourceId: number, query: string, mediaKind: string) =>
-    invoke<number>('fetch_subscribe', { sourceId, query, mediaKind }),
+  /** 点开作品卡：一部作品的各集 / 话 / 章（已按集数排好） */
+  episodes: (sourceId: number, url: string) => invoke<Hit[]>('fetch_episodes', { sourceId, url }),
+  subscribe: (sourceId: number, query: string, mediaKind: string, workUrl?: string, cover?: string) =>
+    invoke<number>('fetch_subscribe', { sourceId, query, mediaKind, workUrl: workUrl ?? null, cover: cover ?? null }),
+  /** 手动检查一部追更：有新集就加入下载，返回新集标题 */
+  subCheck: (id: number) => invoke<{ titles: string[] }>('fetch_sub_check', { id }),
   unsubscribe: (id: number) => invoke<void>('fetch_unsubscribe', { id }),
   subs: () => invoke<SubRow[]>('fetch_subs'),
   providers: () => invoke<ProviderInfo[]>('fetch_providers'),
@@ -324,6 +332,21 @@ export function providerItem(h: Hit): ProviderItem | null {
   if (!d) return null;
   try {
     return JSON.parse(d) as ProviderItem;
+  } catch {
+    return null;
+  }
+}
+
+/** 下载源条目的身份：“下载源 id/条目 id”（判断某一话是否已经下过；档位、封面变了也不变） */
+export function providerKey(url: string): string | null {
+  if (!url.startsWith('provider://')) return null;
+  const pid = url.slice('provider://'.length).split(/[/?]/)[0];
+  const i = url.indexOf('?');
+  const d = i < 0 ? null : new URLSearchParams(url.slice(i + 1)).get('d');
+  if (!pid || !d) return null;
+  try {
+    const id = (JSON.parse(d) as { id?: string }).id;
+    return id ? `${pid}/${id}` : null;
   } catch {
     return null;
   }

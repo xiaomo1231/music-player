@@ -10,6 +10,7 @@
   import { coverCSS, hueOf } from '../../lib/util';
   import type { MenuEntry } from '../../lib/items.svelte';
   import { loadShelfView, saveShelfView, type Vol } from '../../lib/shelf';
+  import FollowBar from './FollowBar.svelte';
 
   // 漫画 / 小说共用的作品详情页：横幅、继续阅读、正篇 / 番外分组、网格 / 列表、多选
   let {
@@ -137,6 +138,7 @@
         {/if}
         {#if onheadmenu}<MoreButton floating={false} title="更多" onopen={onheadmenu} />{/if}
       </div>
+      <FollowBar kind={kind === '漫画' ? 'manga' : 'novel'} name={title} />
     </div>
   </div>
 

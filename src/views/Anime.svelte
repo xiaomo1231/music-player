@@ -9,6 +9,7 @@
   import Poster from '../components/media/Poster.svelte';
   import CoverPicker from '../components/media/CoverPicker.svelte';
   import SeriesDetail from '../components/media/SeriesDetail.svelte';
+  import FollowStrip from '../components/shelf/FollowStrip.svelte';
   import { lib } from '../lib/library.svelte';
   import { ui } from '../lib/ui.svelte';
   import { invoke, inTauri, type Series } from '../lib/api';
@@ -129,6 +130,8 @@
         <button class="mp-chip" class:on={filter === f} onclick={() => (filter = f)}>{label}</button>
       {/each}
     </div>
+
+    <FollowStrip kind="anime" names={list.map(s => s.title)} />
 
     {#if sel.on}
       <BatchBar {sel} unit="部" total={order.length} onall={() => sel.selectAll(order)} entries={batch()} />

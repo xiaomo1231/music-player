@@ -10,6 +10,7 @@
   import { ui, toast } from '../../lib/ui.svelte';
   import { lib } from '../../lib/library.svelte';
   import { fmtT, hueOf, coverCSS } from '../../lib/util';
+  import FollowBar from '../shelf/FollowBar.svelte';
   import { posterBg, subBadge, fmtEp, thumbUrl, lazyThumb } from '../../lib/media.svelte';
 
   // 番剧 / 电视剧共用的剧集详情页：横幅、继续观看、季切换、每集卡片
@@ -170,6 +171,7 @@
         <button class="mp-btn ghost" onclick={markSeason} disabled={!curEps.length}>标记本季已看完</button>
         <MoreButton floating={false} title="更多" onopen={seriesMenu} />
       </div>
+      {#if kind === 'anime'}<FollowBar kind="anime" name={series.title} />{/if}
     </div>
   </div>
 

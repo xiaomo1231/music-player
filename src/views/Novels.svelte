@@ -11,6 +11,7 @@
   import { ui } from '../lib/ui.svelte';
   import Cover from '../components/Cover.svelte';
   import WorkDetail from '../components/shelf/WorkDetail.svelte';
+  import FollowStrip from '../components/shelf/FollowStrip.svelte';
   import { bookSeriesKey, bookProgress, bookVol, nextVol, naturalCmp, type Vol } from '../lib/shelf';
 
   /** 一部小说：按卷拆成多个文件的合在一起，单本自成一部 */
@@ -173,6 +174,8 @@
       <button class="mp-chip msel" class:on={sel.on} onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}><Icon name="check" /> {sel.on ? '退出多选' : '多选'}</button>
     {/if}
   </header>
+
+  <FollowStrip kind="novel" names={works.map(w => w.name)} />
 
   {#if sel.on}
     <BatchBar {sel} unit="部" total={order.length} onall={() => sel.selectAll(order)} entries={batch()} />

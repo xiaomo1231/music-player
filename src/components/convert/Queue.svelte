@@ -77,11 +77,16 @@
     }
   }
 
+  const running = $derived(jobs.filter(j => j.status === 'running').length);
+  const queued = $derived(jobs.filter(j => j.status === 'queued').length);
+
   const canPlay = (j: ConvertJob) => !!j.output && (isAudioPath(j.output) || isVideoPath(j.output));
 </script>
 
 <div class="qhead">
-  <h5>队列 <span class="badge2">{jobs.length}</span></h5>
+  <h5>队列 <span class="badge2">{jobs.length}</span>
+    {#if running || queued}<small class="qcount">{running ? `转换中 ${running}` : ''}{running && queued ? ' · ' : ''}{queued ? `等待 ${queued}` : ''}</small>{/if}
+  </h5>
   <span class="qacts">
     {#if order.length}<button class="mp-btn ghost" class:on={sel.on} onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}>{sel.on ? '退出多选' : '多选'}</button>{/if}
     <button class="mp-btn ghost" onclick={onclear}>清除已结束</button>
@@ -149,6 +154,9 @@
     margin: 18px 0 10px;
   }
   .qacts { display: flex; gap: 6px; }
+  .qcount { margin-left: 6px; font-weight: 400; font-size: 12px; color: var(--mp-sub); }
+  /* 几百条任务时只绘制看得见的行（行高不固定，用 content-visibility 代替手写虚拟列表） */
+  .mp-q > :global(.mp-qi) { content-visibility: auto; contain-intrinsic-size: auto 72px; }
   .qacts .on { border-color: var(--mp-accent); color: var(--mp-accent); }
   .qname { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

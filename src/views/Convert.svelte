@@ -95,6 +95,16 @@
     }
   }
 
+  // 多个任务同时结束时合并成一次刷新，避免几百条的列表被反复重读
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  function reloadSoon() {
+    if (reloadTimer) return;
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null;
+      void loadJobs();
+    }, 400);
+  }
+
   async function loadCfg() {
     if (!inTauri) return;
     try {
@@ -311,7 +321,7 @@
     speeds[p.id] = p.speed;
     const j = jobs.find(x => x.id === p.id);
     if (!j) {
-      await loadJobs();
+      reloadSoon();
       return;
     }
     j.progress = p.progress;
@@ -320,7 +330,7 @@
     if (p.status === 'done' || p.status === 'failed' || p.status === 'canceled' || p.status === 'undone') {
       if (p.status === 'done') toast('转换完成：' + baseName(j.input));
       if (p.status === 'failed') toast('转换失败：' + (p.error ?? '未知错误'));
-      await loadJobs();
+      reloadSoon();
     }
   }
 
@@ -354,6 +364,7 @@
   onDestroy(() => {
     dropOff?.();
     for (const off of unlisten) off();
+    if (reloadTimer) clearTimeout(reloadTimer);
   });
 </script>
 
@@ -502,11 +513,13 @@
     {#if cfg}
       <div class="frow">
         <span>同时转换</span>
-        <select class="sel" value={String(cfg.concurrency)} onchange={e => setConcurrency(Number(e.currentTarget.value))}>
-          {#each [1, 2, 3, 4] as n (n)}
+        <select class="sel" value={cfg.concurrency_auto ? '0' : String(cfg.concurrency)} onchange={e => setConcurrency(Number(e.currentTarget.value))}>
+          <option value="0">自动（{cfg.concurrency_default} 个）</option>
+          {#each Array.from({ length: cfg.concurrency_max }, (_, i) => i + 1) as n (n)}
             <option value={String(n)}>{n} 个</option>
           {/each}
         </select>
+        <small style="color: var(--mp-sub)">按 CPU 核数自动；电脑性能好可以调高，最多 {cfg.concurrency_max} 个</small>
       </div>
     {/if}
 

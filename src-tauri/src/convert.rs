@@ -586,8 +586,31 @@ fn load_plugin(conn: &Connection) -> PluginSetting {
         .unwrap_or_default()
 }
 
+/// 本机逻辑核数（取不到时按 4 算）
+fn cpu_count() -> u32 {
+    std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(4)
+}
+
+/// 同时转换的上限：和核数一样多，最少 4、最多 16
+fn max_concurrency_for(cores: u32) -> u32 {
+    cores.clamp(4, 16)
+}
+
+/// 没设置过时的默认值：核数的一半，2–8 之间（ffmpeg 单个任务本身也会用多个线程）
+fn default_concurrency_for(cores: u32) -> u32 {
+    (cores / 2).clamp(2, 8)
+}
+
+/// 实际使用的并行数：用户设置过就用设置的值（不超过上限），否则按核数自动
+fn effective_concurrency(set: Option<u32>, cores: u32) -> u32 {
+    match set {
+        Some(c) if c > 0 => c.clamp(1, max_concurrency_for(cores)),
+        _ => default_concurrency_for(cores),
+    }
+}
+
 fn concurrency(conn: &Connection) -> usize {
-    load_settings(conn).concurrency.unwrap_or(2).clamp(1, 4) as usize
+    effective_concurrency(load_settings(conn).concurrency, cpu_count()) as usize
 }
 
 /// 插件目录里第一个 .exe
@@ -1097,6 +1120,10 @@ pub struct SettingsView {
     pub out_dir_audio: String,
     pub out_dir_video: String,
     pub concurrency: u32,
+    /// true：没有手动设置，按 CPU 核数自动
+    pub concurrency_auto: bool,
+    pub concurrency_default: u32,
+    pub concurrency_max: u32,
     pub plugin_enabled: bool,
     pub plugin_ack: bool,
     pub plugin_dir: String,
@@ -1118,6 +1145,7 @@ pub fn convert_get_settings(st: State<AppState>) -> R<SettingsView> {
     let conn = st.db.lock();
     let s = load_settings(&conn);
     let p = load_plugin(&conn);
+    let cores = cpu_count();
     let custom = s.out_dir.clone().filter(|x| !x.trim().is_empty());
     let audio = custom.clone().map(PathBuf::from).unwrap_or_else(|| default_out_dir(true, &st.dirs.data));
     let video = custom.clone().map(PathBuf::from).unwrap_or_else(|| default_out_dir(false, &st.dirs.data));
@@ -1125,7 +1153,10 @@ pub fn convert_get_settings(st: State<AppState>) -> R<SettingsView> {
         out_dir: custom,
         out_dir_audio: audio.to_string_lossy().to_string(),
         out_dir_video: video.to_string_lossy().to_string(),
-        concurrency: s.concurrency.unwrap_or(2).clamp(1, 4),
+        concurrency: effective_concurrency(s.concurrency, cores),
+        concurrency_auto: !matches!(s.concurrency, Some(c) if c > 0),
+        concurrency_default: default_concurrency_for(cores),
+        concurrency_max: max_concurrency_for(cores),
         plugin_enabled: p.enabled && p.ack,
         plugin_ack: p.ack,
         plugin_dir: st.dirs.data.join("plugins").to_string_lossy().to_string(),
@@ -1133,7 +1164,8 @@ pub fn convert_get_settings(st: State<AppState>) -> R<SettingsView> {
     })
 }
 
-/// out_dir：Some("") 清除自定义目录（恢复默认）；None 表示不改。concurrency 限制在 1–4
+/// out_dir：Some("") 清除自定义目录（恢复默认）；None 表示不改。
+/// concurrency：Some(0) 恢复按 CPU 核数自动；其他值限制在 1 到上限之间
 #[tauri::command]
 pub fn convert_set_settings(st: State<AppState>, out_dir: Option<String>, concurrency: Option<u32>) -> R<()> {
     let conn = st.db.lock();
@@ -1142,7 +1174,7 @@ pub fn convert_set_settings(st: State<AppState>, out_dir: Option<String>, concur
         cfg.out_dir = if d.trim().is_empty() { None } else { Some(d) };
     }
     if let Some(c) = concurrency {
-        cfg.concurrency = Some(c.clamp(1, 4));
+        cfg.concurrency = if c == 0 { None } else { Some(c.clamp(1, max_concurrency_for(cpu_count()))) };
     }
     library::set_setting(&conn, "convert", &serde_json::to_value(&cfg).map_err(s)?).map_err(s)?;
     Ok(())
@@ -1221,16 +1253,19 @@ pub fn convert_add(
     } else {
         None
     };
-    let conn = st.db.lock();
+    // 一次加几百个文件时放在一个事务里，要么全部排上，要么一个都不加
+    let mut conn = st.db.lock();
+    let tx = conn.transaction().map_err(s)?;
     let mut ids = vec![];
     for path in &paths {
-        conn.execute(
+        tx.execute(
             "INSERT INTO jobs(input,output,preset,after,status,progress,created_at) VALUES(?1,?2,?3,?4,'queued',0,?5)",
             params![path, output, preset, after, db::now()],
         )
         .map_err(s)?;
-        ids.push(conn.last_insert_rowid());
+        ids.push(tx.last_insert_rowid());
     }
+    tx.commit().map_err(s)?;
     Ok(ids)
 }
 
@@ -1259,7 +1294,11 @@ pub struct JobView {
 pub fn convert_list(st: State<AppState>) -> R<Vec<JobView>> {
     let conn = st.db.lock();
     let mut stmt = conn
-        .prepare("SELECT id,input,output,preset,after,status,progress,error,backup,created_at,finished_at FROM jobs ORDER BY id DESC LIMIT 200")
+        .prepare(
+            "SELECT id,input,output,preset,after,status,progress,error,backup,created_at,finished_at FROM jobs \
+             ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, \
+             CASE WHEN status IN ('running','queued') THEN id ELSE -id END",
+        )
         .map_err(s)?;
     let rows = stmt
         .query_map([], |r| {
@@ -1505,6 +1544,21 @@ pub fn setup(app: &AppHandle) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn concurrency_follows_cpu_count() {
+        // 默认：核数一半，2–8
+        assert_eq!(effective_concurrency(None, 2), 2);
+        assert_eq!(effective_concurrency(None, 8), 4);
+        assert_eq!(effective_concurrency(None, 32), 8);
+        // 0 视为自动
+        assert_eq!(effective_concurrency(Some(0), 12), 6);
+        // 手动设置：不超过上限（核数，4–16）
+        assert_eq!(effective_concurrency(Some(6), 4), 4);
+        assert_eq!(effective_concurrency(Some(12), 16), 12);
+        assert_eq!(effective_concurrency(Some(40), 64), 16);
+        assert_eq!(max_concurrency_for(2), 4);
+    }
 
     fn probe_audio_with_cover(codec: &str) -> Value {
         json!({

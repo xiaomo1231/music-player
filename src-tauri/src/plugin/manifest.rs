@@ -365,11 +365,16 @@ fn is_interpreter(s: &str) -> bool {
 /// 相对路径，且不含 `..`
 pub fn safe_rel(p: &str) -> bool {
     let path = Path::new(p);
+    // Windows 上 `/etc/passwd` 也算相对路径（没有盘符），所以以斜杠开头的另外排除
     !p.is_empty()
+        && !p.starts_with(['/', '\\'])
         && path.is_relative()
-        && !path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_)))
+        && !path.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        })
 }
 
 #[cfg(test)]
@@ -451,6 +456,8 @@ mod tests {
         assert!(safe_rel("rules/a.em"));
         assert!(!safe_rel("../a.em"));
         assert!(!safe_rel("/etc/passwd"));
+        assert!(!safe_rel("\\x\\a.em"));
+        assert!(!safe_rel("a/../../b"));
         assert!(!safe_rel(""));
     }
 }

@@ -4,6 +4,7 @@ import { lib } from './library.svelte';
 import { ui, toast } from './ui.svelte';
 import { fmtSize } from './util';
 import { openCoverPicker } from './media.svelte';
+import { openMusicCover } from './musicart.svelte';
 
 export type MediaKind = 'track' | 'video' | 'series' | 'book' | 'comic';
 export type MenuEntry = { label: string; run: () => unknown; danger?: boolean } | 'sep';
@@ -106,6 +107,14 @@ export async function resetCover(kind: MediaKind, id: number, official = false) 
   }, official ? '已恢复默认封面，正在重新匹配官方海报' : '已恢复默认封面');
 }
 
+/** 歌曲恢复默认封面：去掉这一首手动指定的图，整张专辑手动选的封面也清掉，重新自动找 */
+async function resetTrackCover(id: number) {
+  await run(async () => {
+    await invoke('item_set_cover', { kind: 'track', id, image: null });
+    await invoke('music_art_reset', { track: id });
+  }, '已恢复默认封面');
+}
+
 export async function showInFolder(kind: MediaKind, id: number) {
   const f = await invoke<{ files: string[] }>('item_files', { kind, id });
   if (f.files[0]) invoke('show_in_folder', { path: f.files[0] });
@@ -143,9 +152,15 @@ export function mediaEntries(kind: MediaKind, id: number, title: string, extra: 
     { label: '重命名…', run: () => renameItem(kind, id, title) },
     {
       label: '更换封面…',
-      run: () => (official && (kind === 'series' || kind === 'video') ? openCoverPicker(kind, id, title) : changeCover(kind, id)),
+      // 歌曲：按所在专辑联网搜封面（面板里也能用本地图片、只换这一首）
+      run: () =>
+        kind === 'track'
+          ? openMusicCover(id, title)
+          : official && (kind === 'series' || kind === 'video')
+            ? openCoverPicker(kind, id, title)
+            : changeCover(kind, id),
     },
-    { label: '恢复默认封面', run: () => resetCover(kind, id, official) },
+    { label: '恢复默认封面', run: () => (kind === 'track' ? resetTrackCover(id) : resetCover(kind, id, official)) },
     { label: '打开所在文件夹', run: () => showInFolder(kind, id) },
     'sep',
     { label: kind === 'series' ? '从媒体库移除整部…' : '从媒体库移除…', run: () => removeItem(kind, id, title) },

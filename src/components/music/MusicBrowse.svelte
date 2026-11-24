@@ -7,6 +7,7 @@
   import { player } from '../../lib/player.svelte';
   import { ui, toast } from '../../lib/ui.svelte';
   import type { Track } from '../../lib/api';
+  import { openMusicCover, refetchCovers } from '../../lib/musicart.svelte';
   import { fmtT } from '../../lib/util';
   import {
     DIMS, dimLabel, groupTracks, sortGroups, groupSub, albumArtist, albumKey,
@@ -90,6 +91,9 @@
       { label: '加入播放队列', run: () => { player.enqueue(g.tracks); toast(`已加入队列：${ids.length} 首`); } },
       { label: '加入歌单…', run: () => ui.open('playlist-add', ids) },
       { label: '转换格式…', run: () => { ui.convertPaths = g.tracks.map(t => t.path); ui.go('convert'); } },
+      // 专辑：按这张专辑联网搜封面、整张一起换；其他分组可以批量重新获取
+      ...(d === 'album' && g.tracks[0] ? [{ label: '更换封面…', run: () => openMusicCover(g.tracks[0].id, g.name) }] : []),
+      { label: '重新获取封面', run: () => refetchCovers(ids) },
     ];
   }
   function cardMenu(e: MouseEvent, g: Group, d: Dim) {

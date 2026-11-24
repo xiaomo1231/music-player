@@ -64,16 +64,12 @@ pub fn read_track(path: &Path, cover_dir: &Path) -> TrackMeta {
             m.track_no = tag.track();
             m.disc_no = tag.disk();
             m.year = tag.date().map(|d| d.year as u32);
-            if let Some(pic) = tag
-                .pictures()
-                .iter()
-                .find(|p| p.pic_type() == lofty::picture::PictureType::CoverFront)
-                .or(tag.pictures().first())
-            {
-                if let Some((name, hue)) = save_cover(pic.data(), cover_dir) {
-                    m.cover = Some(name);
-                    m.hue = Some(hue);
-                }
+        }
+        // 封面可能不在主标签里（例如 FLAC 前面多了一个 ID3v2，图放在那里），所有标签都找一遍
+        if let Some(bytes) = embedded_picture(&tf) {
+            if let Some((name, hue)) = save_cover(&bytes, cover_dir) {
+                m.cover = Some(name);
+                m.hue = Some(hue);
             }
         }
     }
@@ -103,15 +99,135 @@ pub fn read_track(path: &Path, cover_dir: &Path) -> TrackMeta {
     m
 }
 
-/// 同目录的 cover.jpg / folder.jpg 等
+/// 文件里内嵌的封面：所有标签里优先“封面（正面）”，没有就用第一张图
+pub fn embedded_picture(tf: &lofty::file::TaggedFile) -> Option<Vec<u8>> {
+    use lofty::picture::PictureType;
+    let pics: Vec<&lofty::picture::Picture> = tf.tags().iter().flat_map(|t| t.pictures()).collect();
+    pics.iter()
+        .find(|p| p.pic_type() == PictureType::CoverFront)
+        .or_else(|| {
+            pics.iter()
+                .find(|p| p.pic_type() != PictureType::CoverBack && p.pic_type() != PictureType::Artist)
+        })
+        .or(pics.first())
+        .map(|p| p.data().to_vec())
+}
+
+const IMG_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "gif"];
+/// 专辑封面常用的文件名（不含扩展名，忽略大小写），越靠前越优先
+const COVER_NAMES: &[&str] = &[
+    "cover",
+    "folder",
+    "front",
+    "album",
+    "albumart",
+    "jacket",
+    "封面",
+    "poster",
+    "front cover",
+    "albumartlarge",
+];
+/// 文件名里出现这些字的图片也当封面（back / 背面 / 歌词本内页除外）
+const COVER_WORDS: &[&str] = &["cover", "front", "folder", "jacket", "封面", "正面"];
+const NOT_COVER_WORDS: &[&str] = &["back", "背面", "inlay", "inside", "booklet", "disc", "cd ", "obi", "tray", "spine"];
+/// 扫图目录：里面的 front / cover 才是封面
+const SCAN_DIRS: &[&str] = &[
+    "scans", "scan", "artwork", "artworks", "covers", "cover", "images", "image", "pics", "扫图", "封面",
+];
+
+fn images_in(dir: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.is_file()
+                        && p.extension()
+                            .and_then(|e| e.to_str())
+                            .is_some_and(|e| IMG_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+fn stem_lower(p: &Path) -> String {
+    p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase()
+}
+
+/// 一个目录里最像专辑封面的图：固定名字 > 和目录同名 > 名字带 cover / front 的
+fn cover_in(dir: &Path, imgs: &[PathBuf]) -> Option<PathBuf> {
+    for n in COVER_NAMES {
+        if let Some(p) = imgs.iter().find(|p| stem_lower(p) == *n) {
+            return Some(p.clone());
+        }
+    }
+    let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+    if let Some(p) = imgs.iter().find(|p| !dir_name.is_empty() && stem_lower(p) == dir_name) {
+        return Some(p.clone());
+    }
+    imgs.iter()
+        .find(|p| {
+            let s = stem_lower(p);
+            COVER_WORDS.iter().any(|w| s.contains(w)) && !NOT_COVER_WORDS.iter().any(|w| s.contains(w))
+        })
+        .cloned()
+}
+
+/// 碟片子目录：CD1、Disc 2、DISK1、碟1
+pub fn is_disc_dir(name: &str) -> bool {
+    let n: String = name
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_' && *c != '.')
+        .collect();
+    ["cd", "disc", "disk", "碟", "dvd"].iter().any(|p| {
+        n.strip_prefix(p)
+            .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+    })
+}
+
+/// 看起来像专辑封面的单张图片：接近正方形、不太小（只读文件头，不解码）
+fn squareish(p: &Path) -> bool {
+    image::image_dimensions(p).is_ok_and(|(w, h)| w >= 200 && h >= 200 && (w as f64 / h as f64) > 0.8 && (w as f64 / h as f64) < 1.25)
+}
+
+/// 本地封面图：和歌曲同名的图 > 歌曲目录里的封面 > 扫图目录里的封面 > 碟片目录上一层的封面 > 目录里唯一一张方图
 pub fn folder_cover(path: &Path) -> Option<PathBuf> {
     let dir = path.parent()?;
-    for n in ["cover", "folder", "front", "album", "poster", "Cover", "Folder", "Front"] {
-        for e in ["jpg", "jpeg", "png", "webp"] {
-            let p = dir.join(format!("{n}.{e}"));
-            if p.exists() {
-                return Some(p);
+    let imgs = images_in(dir);
+    let stem = stem_lower(path);
+    if let Some(p) = imgs.iter().find(|p| stem_lower(p) == stem) {
+        return Some(p.clone());
+    }
+    let mut dirs = vec![(dir.to_path_buf(), imgs)];
+    if dir.file_name().and_then(|n| n.to_str()).is_some_and(is_disc_dir) {
+        if let Some(up) = dir.parent() {
+            dirs.push((up.to_path_buf(), images_in(up)));
+        }
+    }
+    for (d, imgs) in &dirs {
+        if let Some(p) = cover_in(d, imgs) {
+            return Some(p);
+        }
+        let subs: Vec<PathBuf> = std::fs::read_dir(d)
+            .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
+            .unwrap_or_default();
+        for s in subs {
+            let name = s.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+            if SCAN_DIRS.contains(&name.as_str()) {
+                let simgs = images_in(&s);
+                if let Some(p) = cover_in(&s, &simgs) {
+                    return Some(p);
+                }
             }
+        }
+    }
+    for (_, imgs) in &dirs {
+        if imgs.len() == 1 && squareish(&imgs[0]) {
+            return Some(imgs[0].clone());
         }
     }
     None
@@ -314,6 +430,52 @@ pub fn lyrics_for(path: &Path) -> Vec<LyricLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn png(p: &Path, w: u32, h: u32) {
+        image::RgbImage::new(w, h).save(p).unwrap();
+    }
+
+    #[test]
+    fn disc_dirs() {
+        assert!(is_disc_dir("CD1"));
+        assert!(is_disc_dir("Disc 2"));
+        assert!(is_disc_dir("disk-01"));
+        assert!(!is_disc_dir("CDs"));
+        assert!(!is_disc_dir("Discovery"));
+    }
+
+    #[test]
+    fn finds_folder_covers() {
+        let base = std::env::temp_dir().join(format!("mp_fc_{}", std::process::id()));
+        let album = base.join("陈奕迅 - CHIN UP!");
+        let cd1 = album.join("CD1");
+        std::fs::create_dir_all(&cd1).unwrap();
+        let song = cd1.join("01.flac");
+        assert_eq!(folder_cover(&song), None);
+        // 碟片目录上一层的扫图目录
+        std::fs::create_dir_all(album.join("Scans")).unwrap();
+        png(&album.join("Scans").join("Back.png"), 10, 10);
+        assert_eq!(folder_cover(&song), None);
+        png(&album.join("Scans").join("Front.png"), 10, 10);
+        assert_eq!(folder_cover(&song), Some(album.join("Scans").join("Front.png")));
+        // 名字带 cover 的图
+        png(&album.join("Eason Chan - CHIN UP! (Cover).png"), 10, 10);
+        assert_eq!(folder_cover(&song), Some(album.join("Eason Chan - CHIN UP! (Cover).png")));
+        // 歌曲目录里的优先
+        png(&cd1.join("folder.png"), 10, 10);
+        assert_eq!(folder_cover(&song), Some(cd1.join("folder.png")));
+        // 和歌曲同名的图最优先
+        png(&cd1.join("01.png"), 10, 10);
+        assert_eq!(folder_cover(&song), Some(cd1.join("01.png")));
+        // 目录里只有一张不知名的图：方图才用
+        let loose = base.join("loose");
+        std::fs::create_dir_all(&loose).unwrap();
+        png(&loose.join("IMG_1234.png"), 400, 200);
+        assert_eq!(folder_cover(&loose.join("a.mp3")), None);
+        png(&loose.join("IMG_1234.png"), 300, 300);
+        assert_eq!(folder_cover(&loose.join("a.mp3")), Some(loose.join("IMG_1234.png")));
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn lrc_basic() {

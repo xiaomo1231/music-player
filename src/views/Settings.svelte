@@ -30,10 +30,12 @@
   import PluginsCard from '../components/plugin/PluginsCard.svelte';
   import { updater } from '../lib/updater.svelte';
   import { VIDEO_AUTOHIDE_DEFAULT } from '../lib/media.svelte';
+  import { musicArt, refetchCovers } from '../lib/musicart.svelte';
 
   // 设置项的当前值（启动时从 settings 表读取）
   let watch = $state(true);
   let metaOnline = $state(false);
+  let coverMissing = $state<number | null>(null);
   let fade = $state(false);
   let useDefVol = $state(false);
   let defVol = $state(80);
@@ -65,6 +67,7 @@
     watch = await getSetting('watch', true);
     autoUpdate = await getSetting('update_auto_check', true);
     metaOnline = await getSetting('metadata_online', false);
+    coverMissing = await invoke<number>('music_art_missing').catch(() => null);
     fade = await getSetting('fade', false);
     const dv = await getSetting<number | null>('default_volume', null);
     useDefVol = dv != null;
@@ -307,8 +310,15 @@
       </label>
       <label class="mp-opt">
         <div>联网补全元数据<small>用于补全歌曲、视频的信息和封面；默认关闭，开启后会联网</small></div>
-        <input type="checkbox" class="mp-sw" checked={metaOnline} onchange={flag('metadata_online', v => (metaOnline = v))} />
+        <input type="checkbox" class="mp-sw" checked={metaOnline} onchange={flag('metadata_online', v => { metaOnline = v; if (v) invoke('music_art_auto').catch(() => {}); })} />
       </label>
+      <div class="mp-opt">
+        <div>歌曲封面<small>{musicArt.progress.running
+          ? `正在获取：${musicArt.progress.done} / ${musicArt.progress.total} 张专辑，已补上 ${musicArt.progress.found} 张`
+          : `${coverMissing != null ? `还有 ${coverMissing} 首歌没有封面。` : ''}新加入的歌会自动从文件夹图片、同专辑的歌和网上（需打开上面的开关）补封面；找错了可以右键歌曲“更换封面”`}</small></div>
+        <button class="mp-btn ghost" disabled={musicArt.progress.running || !metaOnline} title={metaOnline ? '' : '先打开“联网补全元数据”'}
+          onclick={async () => { await refetchCovers(); coverMissing = await invoke<number>('music_art_missing').catch(() => null); }}>重新获取缺失的封面</button>
+      </div>
     </div>
 
     <!-- 外观与桌面 -->

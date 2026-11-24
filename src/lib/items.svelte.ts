@@ -3,6 +3,7 @@ import { invoke, inTauri } from './api';
 import { lib } from './library.svelte';
 import { ui, toast } from './ui.svelte';
 import { fmtSize } from './util';
+import { openCoverPicker } from './media.svelte';
 
 export type MediaKind = 'track' | 'video' | 'series' | 'book' | 'comic';
 export type MenuEntry = { label: string; run: () => unknown; danger?: boolean } | 'sep';
@@ -89,13 +90,20 @@ export async function renameItem(kind: MediaKind, id: number, current: string) {
   await run(() => invoke('item_rename', { kind, id, name }), name ? '已重命名' : '已恢复原名');
 }
 
-export async function changeCover(kind: MediaKind, id: number) {
+/** 用本地图片当封面；换成了返回 true */
+export async function changeCover(kind: MediaKind, id: number): Promise<boolean> {
   const p = await pickImage();
-  if (p) await run(() => invoke('item_set_cover', { kind, id, image: p }), '已更换封面');
+  if (!p) return false;
+  const ok = await run(async () => (await invoke('item_set_cover', { kind, id, image: p }), true), '已更换封面');
+  return ok === true;
 }
 
-export async function resetCover(kind: MediaKind, id: number) {
-  await run(() => invoke('item_set_cover', { kind, id, image: null }), '已恢复默认封面');
+/** 恢复默认封面：去掉手动指定的图片；有官方海报的（番剧、电视剧、电影）还会清掉手动选的海报，重新自动匹配 */
+export async function resetCover(kind: MediaKind, id: number, official = false) {
+  await run(async () => {
+    await invoke('item_set_cover', { kind, id, image: null });
+    if (official) await invoke('art_reset', { kind, id });
+  }, official ? '已恢复默认封面，正在重新匹配官方海报' : '已恢复默认封面');
 }
 
 export async function showInFolder(kind: MediaKind, id: number) {
@@ -126,13 +134,18 @@ export async function deleteItem(kind: MediaKind, id: number, title: string) {
 }
 
 /** 媒体条目的通用菜单项：改名、封面、文件夹、移除、删除 */
-export function mediaEntries(kind: MediaKind, id: number, title: string, extra: MenuEntry[] = []): MenuEntry[] {
+export function mediaEntries(kind: MediaKind, id: number, title: string, extra: MenuEntry[] = [], opts: { official?: boolean } = {}): MenuEntry[] {
+  // 番剧 / 电视剧 / 电影：“更换封面”打开官方海报面板（面板里也能选本地图片）
+  const official = opts.official ?? kind === 'series';
   return [
     ...extra,
     ...(extra.length ? (['sep'] as MenuEntry[]) : []),
     { label: '重命名…', run: () => renameItem(kind, id, title) },
-    { label: '更换封面…', run: () => changeCover(kind, id) },
-    { label: '恢复默认封面', run: () => resetCover(kind, id) },
+    {
+      label: '更换封面…',
+      run: () => (official && (kind === 'series' || kind === 'video') ? openCoverPicker(kind, id, title) : changeCover(kind, id)),
+    },
+    { label: '恢复默认封面', run: () => resetCover(kind, id, official) },
     { label: '打开所在文件夹', run: () => showInFolder(kind, id) },
     'sep',
     { label: kind === 'series' ? '从媒体库移除整部…' : '从媒体库移除…', run: () => removeItem(kind, id, title) },

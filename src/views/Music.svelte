@@ -16,6 +16,8 @@
   import { fmtT, coverCSS } from '../lib/util';
   import { smartLists, customLists, matchRules, type SmartDef } from '../lib/smart.svelte';
   import SmartRuleModal from '../components/SmartRuleModal.svelte';
+  import MusicBrowse from '../components/music/MusicBrowse.svelte';
+  import { DIMS, loadView, saveView, albumKey, splitArtists, type Dim } from '../lib/musicgroups';
 
   let filter = $state<string>('all'); // all / smart:<key> / pl:<id>
   let group = $state<'none' | 'artist' | 'album' | 'format' | 'folder' | 'year'>('none');
@@ -23,6 +25,26 @@
   let q = $state('');
   let plTracks = $state<number[]>([]);
   let ruleEdit = $state<SmartDef | null | undefined>(undefined);
+
+  // 分类浏览：歌曲（长列表）/ 艺人 / 专辑 / 流派 / 文件夹 / 格式 / 年份
+  let view = $state<'songs' | Dim>(loadView());
+  let stack = $state<{ dim: Dim; key: string }[]>([]);
+  $effect(() => saveView(view));
+  function setView(v: 'songs' | Dim) {
+    if (v !== view) q = '';
+    view = v;
+    stack = [];
+    scroller?.scrollTo(0, 0);
+  }
+  /** 从歌曲跳到它的艺人 / 专辑页 */
+  function showGroup(d: Dim, key: string) {
+    view = d;
+    q = '';
+    stack = [{ dim: d, key }];
+    scroller?.scrollTo(0, 0);
+  }
+  // 加密格式不能播放，不参与分类
+  const browsable = $derived(lib.tracks.filter(t => !t.encrypted && t.format !== '加密格式'));
 
   // 侧栏点了歌单就切过来
   $effect(() => {
@@ -190,6 +212,8 @@
       { label: '加入歌单…', run: () => ui.open('playlist-add', [t.id]) },
       ...(pl ? [{ label: '从这个歌单移除', run: async () => { await invoke('playlist_remove', { id: pl.id, files: [t.id] }); plTracks = plTracks.filter(x => x !== t.id); lib.refreshPlaylists(); toast('已从歌单移除'); } }] : []),
       { label: t.favorite ? '取消收藏' : '收藏', run: () => lib.toggleFav(t.id).then(v => toast(v ? '已收藏' : '已取消收藏')) },
+      ...(t.album ? [{ label: `查看专辑「${t.album}」`, run: () => showGroup('album', albumKey(t)) }] : []),
+      ...splitArtists(t.artist || t.album_artist || '').slice(0, 3).map(a => ({ label: `查看艺人「${a}」`, run: () => showGroup('artist', a.toLowerCase()) })),
       { label: '转换格式…', run: () => { ui.convertPaths = [t.path]; ui.go('convert'); } },
       { label: '文件信息', run: () => ui.open('about', t) },
     ]));
@@ -283,7 +307,8 @@
 <section class="lib on" class:multi={sel.on} bind:this={scroller} onscroll={onScroll}>
   <header>
     <div><h2>音乐</h2><p>共 {lib.tracks.length} 首{list.length !== lib.tracks.length ? `，当前显示 ${list.length} 首` : ''} · 点卡片上的播放键直接播放整组</p></div>
-    <input class="tin" placeholder="在音乐库里筛选" bind:value={q} style="width:200px" />
+    <input class="tin" placeholder={view === 'songs' ? '在音乐库里筛选' : `筛选${DIMS.find(d => d[0] === view)?.[1] ?? ''}`} bind:value={q} style="width:200px" />
+    {#if view === 'songs'}
     <select class="sel" bind:value={group}>
       <option value="none">不分组</option><option value="artist">按艺人分组</option><option value="album">按专辑分组</option>
       <option value="format">按格式分组</option><option value="folder">按文件夹分组</option><option value="year">按年份分组</option>
@@ -295,10 +320,22 @@
       <button class="mp-chip msel" class:on={sel.on} title="多选后批量播放、加入歌单、移除或删除（也可以 Ctrl / Shift 点击，Ctrl+A 全选）"
         onclick={() => (sel.on ? sel.clear() : (sel.mode = true))}><Icon name="check" /> {sel.on ? '退出多选' : '多选'}</button>
     {/if}
+    {/if}
   </header>
+
+  {#if lib.tracks.length}
+    <div class="mp-chips views" role="tablist">
+      <button class="mp-chip" class:on={view === 'songs'} role="tab" aria-selected={view === 'songs'} onclick={() => setView('songs')}>歌曲</button>
+      {#each DIMS as [d, label] (d)}
+        <button class="mp-chip" class:on={view === d} role="tab" aria-selected={view === d} onclick={() => setView(d)}>{label}</button>
+      {/each}
+    </div>
+  {/if}
 
   {#if !lib.tracks.length}
     <div class="empty"><b>音乐库还是空的</b>添加一个音乐文件夹，或者直接把文件拖进窗口<br /><button class="mp-btn" onclick={() => ui.open('scan')}>扫描媒体库</button></div>
+  {:else if view !== 'songs'}
+    <MusicBrowse tracks={browsable} dim={view} {q} bind:stack />
   {:else}
     <div class="smart">
       {#each allSmart as s (s.key)}
@@ -406,6 +443,7 @@
 
   /* 多选：序号位置悬停时变成勾选框，多选状态下一直显示 */
   .msel { display: inline-flex; align-items: center; gap: 5px; }
+  .views { margin: 14px 0 4px; }
   .mrow .mp-n { display: grid; align-items: center; justify-items: start; }
   .mrow .mp-n > :global(*) { grid-area: 1 / 1; }
   .mrow .mp-n :global(.selck) { opacity: 0; }

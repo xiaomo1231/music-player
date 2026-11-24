@@ -79,6 +79,8 @@ export interface PluginView {
   installed_at: number;
   updated_at: number;
   has_prev: boolean;
+  /** 插件文件夹被删了（只剩记录） */
+  missing: boolean;
   sha256: string;
   update: PluginUpdate | null;
 }

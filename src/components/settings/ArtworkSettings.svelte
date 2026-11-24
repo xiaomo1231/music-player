@@ -73,6 +73,7 @@
 
 <style>
   .art-in { flex-wrap: wrap; gap: 8px; }
+  .art-in > div { flex: 1 1 100%; }
   .art-in .tin { flex: 1 1 260px; }
   .art-res { margin: 10px 0 0; padding-left: 18px; }
 </style>

@@ -46,7 +46,7 @@
 
 {#if items.dialog}
   {@const d = items.dialog}
-  <Modal title={d.title} onclose={() => finish(null)}>
+  <Modal title={d.title} onclose={() => finish(null)} top>
     {#if d.type === 'prompt'}
       {#if d.desc}<p class="mp-desc">{d.desc}</p>{/if}
       <input class="tin" style="width:100%" bind:this={input} bind:value={d.value} placeholder={d.placeholder} maxlength="120"

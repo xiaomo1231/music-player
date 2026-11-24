@@ -482,7 +482,11 @@ fn load_row(r: &Row) -> Loaded {
     let manifest = match std::fs::read_to_string(dir.join("plugin.json")).map_err(es).and_then(|t| Manifest::parse(&t)) {
         Ok(m) => m,
         Err(e) => {
-            problem = format!("读不到插件：{e}");
+            problem = if dir.join("plugin.json").exists() {
+                format!("读不到插件：{e}")
+            } else {
+                MISSING.into()
+            };
             saved.clone()
         }
     };
@@ -543,6 +547,30 @@ fn refresh_dev(id: &str) {
             apply(app, id, true, None);
         }
         let _ = app.emit(CHANGED, "reload");
+    }
+}
+
+const MISSING: &str = "插件文件夹不见了（可能被手动删除），已停用。点“移除”把它从列表里去掉，或重新安装";
+
+/// 插件文件夹还在不在（运行中被手动删掉时，启动时读进来的记录还留着）
+fn files_missing(l: &Loaded) -> bool {
+    !l.dir.join("plugin.json").is_file()
+}
+
+/// 文件夹被删了：停用并标记，列表里显示“文件丢失”和一键移除
+fn check_missing(id: &str) {
+    let cur = REG.read().get(id).cloned();
+    let Some(cur) = cur.filter(|l| files_missing(l) && l.problem != MISSING) else {
+        return;
+    };
+    let mut next = cur.clone();
+    next.problem = MISSING.into();
+    REG.write().insert(id.to_string(), next);
+    if let Some(app) = APP.get() {
+        if cur.active() {
+            apply(app, id, false, Some(&cur));
+        }
+        let _ = app.emit(CHANGED, "missing");
     }
 }
 
@@ -730,6 +758,8 @@ pub struct PluginView {
     pub installed_at: i64,
     pub updated_at: i64,
     pub has_prev: bool,
+    /// 插件文件夹被删了（只剩记录）
+    pub missing: bool,
     /// 安装时整包的 sha256（开发者模式为空）
     pub sha256: String,
     pub update: Option<repo::Available>,
@@ -813,6 +843,7 @@ fn view(id: &str, l: &Loaded) -> PluginView {
         installed_at: l.installed_at,
         updated_at: l.updated_at,
         has_prev: !l.dev && prev_dir(id).join("plugin.json").is_file(),
+        missing: files_missing(l),
         sha256: l.sha256.clone(),
         update: repo::available(id, &m.version),
     }
@@ -823,6 +854,7 @@ pub fn plugin_list() -> Vec<PluginView> {
     let ids: Vec<String> = REG.read().keys().cloned().collect();
     for id in &ids {
         refresh_dev(id);
+        check_missing(id);
     }
     let g = REG.read();
     let mut v: Vec<PluginView> = g.iter().map(|(id, l)| view(id, l)).collect();
@@ -1415,6 +1447,10 @@ pub fn plugin_clear_logs(id: String) {
 #[tauri::command]
 pub fn plugin_open_dir(id: String) -> R<()> {
     let dir = REG.read().get(&id).map(|l| l.dir.clone()).ok_or("找不到这个插件")?;
+    if !dir.is_dir() {
+        check_missing(&id);
+        return Err("插件文件夹已经不在了（可能被手动删除）。点“移除”把它从列表里去掉，或重新安装".into());
+    }
     tauri_plugin_opener::open_path(&dir, None::<&str>).map_err(|e| format!("打不开：{e}"))
 }
 
@@ -1422,6 +1458,10 @@ pub fn plugin_open_dir(id: String) -> R<()> {
 #[tauri::command]
 pub fn plugin_pack(id: String, path: String) -> R<()> {
     let dir = REG.read().get(&id).map(|l| l.dir.clone()).ok_or("找不到这个插件")?;
+    if !dir.join("plugin.json").is_file() {
+        check_missing(&id);
+        return Err("插件文件夹已经不在了（可能被手动删除），没法导出".into());
+    }
     package::pack(&dir, Path::new(&path)).map_err(|e| format!("打包失败：{e}"))
 }
 

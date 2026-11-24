@@ -1,0 +1,31 @@
+{
+  "manifest": 1,
+  "id": "my-converter",
+  "name": "我的转换工具",
+  "version": "1.0.0",
+  "author": "你的名字",
+  "description": "把一个现成的命令行转换程序接进“格式转换”页，不用写代码",
+  "engines": { "app": ">=0.6.0" },
+  "runtime": { "type": "process" },
+  "contributes": {
+    "converters": [
+      {
+        "id": "main",
+        "name": "我的转换工具",
+        "inputs": ["wav", "flac"],
+        "outputs": ["mp3"],
+        "exec": ["{setting:tool}", "{input}", "{output}"],
+        "note": "改 inputs / outputs / exec 成你的程序支持的格式和参数"
+      }
+    ]
+  },
+  "settings": [
+    {
+      "key": "tool",
+      "type": "string",
+      "label": "转换程序的完整路径",
+      "help": "例如 D:\\Tools\\mytool.exe",
+      "required": true
+    }
+  ]
+}

@@ -3,9 +3,12 @@
 用法：
     python tools/mpplugin_check.py <插件文件夹或 .mpx> [--query 关键字] [--set key=value ...]
                                    [--source 源 id] [--kind music] [--download] [--app-version 0.6.0]
+                                   [--convert 文件 [--to 扩展名] [--converter id] [--opt key=value ...] [--out 文件]]
 
 - process 入口（协议 2）：依次调用 info、search、episodes、resolve（不下载），加 --download 时把第一条
   结果实际 download 到临时文件夹，检查返回值的格式。
+- 格式转换器（contributes.converters）：加 --convert 时把这个文件实际转换一次（协议 2 的 convert 方法，
+  或 exec 命令模板），输出到临时文件夹，--out 可以另存一份。
 - js / rule 入口：只检查清单（js 在软件的 QuickJS 沙箱里运行，请用软件里插件详情的“测试”页）。
 
 只用 Python 标准库。工具本身不联网（插件自己联网除外）。退出码：0 没有错误，1 有错误。
@@ -36,7 +39,15 @@ INTERPRETERS = {"python", "python3", "py", "node", "deno", "bun", "pwsh", "power
 TARGET_HEADERS = {"referer", "accept", "accept-language", "authorization"}
 YTDLP_FORMAT_RE = re.compile(r"^[A-Za-z0-9*+/\[\]<>=!:._,\-?^$|()]{0,120}$")
 # 和软件一样的时限：总时长（秒），download 另有 300 秒没有输出就停
-TIMEOUT = {"info": 15, "search": 60, "episodes": 60, "resolve": 120, "download": 24 * 3600}
+TIMEOUT = {"info": 15, "search": 60, "episodes": 60, "resolve": 120, "download": 24 * 3600, "convert": 24 * 3600}
+OPTION_TYPES = {"string", "bool", "int", "select"}
+INPUT_GROUPS = {"audio", "video", "*"}
+EXEC_VARS = {"input", "output", "output_dir", "input_ext", "output_ext", "work_dir", "plugin_dir", "ffmpeg", "ffprobe"}
+AUDIO = {"mp3", "flac", "m4a", "aac", "alac", "wav", "ape", "wv", "ogg", "oga", "opus", "wma", "aif", "aiff",
+         "dsf", "dff", "tta", "tak", "ac3", "dts", "mka"}
+VIDEO = {"mp4", "m4v", "mkv", "avi", "mov", "wmv", "flv", "webm", "ts", "m2ts", "mts", "rmvb", "rm", "3gp",
+         "mpg", "mpeg", "vob", "ogv"}
+EXT_RE = re.compile(r"^[a-z0-9]{1,16}$")
 IDLE = {"download": 300}
 
 problems = []
@@ -135,7 +146,12 @@ def check_manifest(root, app_version):
 
     rt = obj(m.get("runtime"))
     rtype = rt.get("type")
-    if rtype == "process":
+    c = obj(m.get("contributes"))
+    converters = [obj(x) for x in lst(c.get("converters"))]
+    exec_only = not lst(c.get("sources")) and converters and all(lst(x.get("exec")) for x in converters)
+    if rtype == "process" and exec_only and not obj(rt.get("command")):
+        pass
+    elif rtype == "process":
         cmd = obj(rt.get("command"))
         for k in cmd:
             if k not in ("windows", "macos", "linux", "default"):
@@ -160,7 +176,7 @@ def check_manifest(root, app_version):
             err(f"runtime.file 指向的文件不存在：{f}")
     else:
         err("runtime.type 只能是 rule / process / js")
-    if rtype in ("process", "js") and protocol not in (1, 2):
+    if (rtype == "js" or (rtype == "process" and not exec_only)) and protocol not in (1, 2):
         if isinstance(protocol, int) and protocol > 2:
             err(f"这个插件用的是更新的协议 {protocol}，请先升级软件")
         else:
@@ -170,11 +186,10 @@ def check_manifest(root, app_version):
     if rtype == "process" and protocol == 1:
         warn("协议 1 是旧协议，新插件请写 engines.protocol: 2")
 
-    c = obj(m.get("contributes"))
     sources = lst(c.get("sources"))
     rules = lst(c.get("rules"))
-    if not sources and not rules:
-        err("contributes 里至少要有 sources 或 rules")
+    if not sources and not rules and not converters:
+        err("contributes 里至少要有 sources、rules 或 converters")
     if rtype == "rule" and len(sources) > 1:
         err("rule 入口只能有一个下载源")
     seen = set()
@@ -209,6 +224,7 @@ def check_manifest(root, app_version):
             err(f"contributes.rules 里的文件不存在：{r}")
 
     p = obj(m.get("permissions"))
+    check_converters(m, root, rtype, converters, lst(p.get("tools")))
     login = p.get("login") or "none"
     hosts = lst(p.get("hosts"))
     if login not in ("none", "optional", "required"):
@@ -250,8 +266,147 @@ def check_manifest(root, app_version):
         check_rule_hosts(root, rt.get("file"), hosts)
 
     if not problems:
-        ok(f"plugin.json：{m['name']} {m['version']}（{rtype}，{len(sources)} 个下载源）")
+        conv = f"，{len(converters)} 个转换器" if converters else ""
+        ok(f"plugin.json：{m['name']} {m['version']}（{rtype}，{len(sources)} 个下载源{conv}）")
     return m
+
+
+def output_list(cv):
+    """转换器的输出格式 [(ext, name)]；写错的项返回 None"""
+    out = []
+    for o in lst(cv.get("outputs")):
+        if isinstance(o, str):
+            out.append((o.strip().lstrip(".").lower(), ""))
+        elif isinstance(o, dict) and isinstance(o.get("ext"), str):
+            out.append((o["ext"].strip().lstrip(".").lower(), str(o.get("name") or "")))
+        else:
+            out.append(None)
+    return out
+
+
+def exec_vars(arg):
+    """命令模板一项里的占位符；{{ 和 }} 是字面的花括号"""
+    out, i = [], 0
+    while i < len(arg):
+        two = arg[i:i + 2]
+        if two in ("{{", "}}"):
+            i += 2
+        elif arg[i] == "{":
+            j = arg.find("}", i + 1)
+            if j < 0:
+                raise ValueError(f"花括号没有闭合：{arg}")
+            out.append(arg[i + 1:j])
+            i = j + 1
+        elif arg[i] == "}":
+            raise ValueError(f"多了一个 }}：{arg}")
+        else:
+            i += 1
+    return out
+
+
+def fill_exec(arg, values):
+    out, i = [], 0
+    while i < len(arg):
+        two = arg[i:i + 2]
+        if two == "{{":
+            out.append("{")
+            i += 2
+        elif two == "}}":
+            out.append("}")
+            i += 2
+        elif arg[i] == "{":
+            j = arg.find("}", i + 1)
+            name = arg[i + 1:j]
+            if name not in values:
+                raise ValueError(f"占位符 {{{name}}} 没有值")
+            out.append(values[name])
+            i = j + 1
+        else:
+            out.append(arg[i])
+            i += 1
+    return "".join(out)
+
+
+def accepts(inputs, ext):
+    e = ext.lower()
+    return any(i == "*" or (i == "audio" and e in AUDIO) or (i == "video" and e in VIDEO) or (e and i == e)
+               for i in inputs)
+
+
+def check_converters(m, root, rtype, converters, tools):
+    if converters and rtype != "process":
+        err("converters 只能用在 process 入口（转换要读写文件）")
+    setting_keys = {obj(s).get("key") for s in lst(m.get("settings"))}
+    seen = set()
+    for i, cv in enumerate(converters):
+        w = f"contributes.converters[{i}]"
+        cid = cv.get("id", "")
+        if not id_ok(cid, 1):
+            err(f"{w}.id 只能用小写字母、数字、-")
+        if cid in seen:
+            err(f"{w}.id 重复：{cid}")
+        seen.add(cid)
+        inputs = lst(cv.get("inputs"))
+        if not inputs:
+            err(f"{w}.inputs 至少写一种输入格式（扩展名，或 audio / video / *）")
+        for x in inputs:
+            if not (x in INPUT_GROUPS or (isinstance(x, str) and EXT_RE.match(x))):
+                err(f"{w}.inputs 只能写不带点的小写扩展名，或 audio / video / *：{x}")
+        outs = output_list(cv)
+        if not outs:
+            err(f"{w}.outputs 至少写一种输出格式")
+        if any(o is None for o in outs):
+            err(f'{w}.outputs 每一项是扩展名字符串，或 {{"ext": "mp3", "name": "…"}}')
+        exts = [o[0] for o in outs if o]
+        for e in exts:
+            if not (e == "same" or EXT_RE.match(e)):
+                err(f"{w}.outputs 的扩展名只能用小写字母和数字（或 same）：{e}")
+        for e in {e for e in exts if exts.count(e) > 1}:
+            err(f"{w}.outputs 重复：{e}")
+        okeys = set()
+        for j, o in enumerate(lst(cv.get("options"))):
+            o = obj(o)
+            if not o.get("key") or not o.get("label"):
+                err(f"{w}.options[{j}] 要有 key 和 label")
+            if o.get("key") in okeys:
+                err(f"{w}.options[{j}].key 重复：{o.get('key')}")
+            okeys.add(o.get("key"))
+            if o.get("type") not in OPTION_TYPES:
+                err(f"{w}.options[{j}].type 只能是 string / bool / int / select")
+            if o.get("type") == "select" and not o.get("options"):
+                err(f"{w}.options[{j}] 是 select，要写 options")
+        ex = [str(a) for a in lst(cv.get("exec"))]
+        if not ex:
+            continue
+        a0 = ex[0]
+        if os.path.isabs(a0) or re.match(r"^[A-Za-z]:", a0) or a0.startswith(("/", "\\")):
+            err(f"{w}.exec 不能写绝对路径，用相对插件文件夹的路径")
+        elif not a0.startswith("{"):
+            looks_local = "/" in a0 or "\\" in a0 or os.path.splitext(a0)[1]
+            if looks_local and (not safe_rel(a0) or not os.path.isfile(os.path.join(root, a0))):
+                err(f"{w}.exec 里的程序不存在：{a0}")
+        has_out = False
+        for a in ex:
+            try:
+                names = exec_vars(a)
+            except ValueError as e:
+                err(f"{w}.exec：{e}")
+                continue
+            for v in names:
+                if v in ("output", "output_dir"):
+                    has_out = True
+                if v in ("ffmpeg", "ffprobe") and v not in tools:
+                    err(f"{w}.exec 用了 {{{v}}}，要在 permissions.tools 里声明 {v}")
+                if v.startswith("option:"):
+                    if v[7:] not in okeys:
+                        err(f"{w}.exec 引用的参数不存在：{{{v}}}")
+                elif v.startswith("setting:"):
+                    if v[8:] not in setting_keys:
+                        err(f"{w}.exec 引用的设置项不存在：{{{v}}}")
+                elif v not in EXEC_VARS:
+                    err(f"{w}.exec 不认识的占位符：{{{v}}}")
+        if not has_out:
+            err(f"{w}.exec 要用 {{output}}（或 {{output_dir}}）告诉程序输出到哪里")
 
 
 def check_rule_hosts(root, file, hosts):
@@ -288,14 +443,14 @@ def command_for(m):
 class Runner:
     def __init__(self, root, m, app_version, data_dir):
         self.root, self.m = root, m
-        self.argv = command_for(m)
-        a0 = os.path.basename(self.argv[0]).lower()
+        self.argv = command_for(m) or []
+        a0 = os.path.basename(self.argv[0]).lower() if self.argv else ""
         if a0 in ("python", "python3", "py", "python.exe", "python3.exe", "py.exe"):
             if shutil.which(self.argv[0]) is None:
                 warn(f"PATH 里找不到 {self.argv[0]}，用 {sys.executable} 代替（用户电脑上也要有它，"
                      "或者按系统分别写 runtime.command）")
             self.argv = [sys.executable] + self.argv[1:]
-        else:
+        elif self.argv:
             local = os.path.join(root, self.argv[0])
             if os.path.isfile(local):
                 self.argv = [local] + self.argv[1:]
@@ -630,7 +785,8 @@ def run(a):
     if rtype == "rule":
         print("  · rule 入口只检查清单。.em 规则可以在“设置 → 规则文件”里导入后用规则的测试面板试")
         return
-    if m["engines"].get("protocol") != 2:
+    has_cmd = bool(command_for(m))
+    if has_cmd and obj(m.get("engines")).get("protocol") != 2:
         print("  · 协议 1 插件只检查清单")
         return
 
@@ -673,6 +829,9 @@ def run(a):
         if not sources:
             err(f"没有 id 为 {a.source} 的下载源")
             return
+    converters = [obj(x) for x in lst(m["contributes"].get("converters"))]
+    if converters:
+        run_convert(a, runner, root, m, converters, settings)
     for src in sources:
         caps = set(src.get("capabilities") or [])
         kind = a.kind or (src.get("media_kinds") or ["music"])[0]
@@ -739,6 +898,121 @@ def run(a):
             print("  · 加 --download 实际下载第一条到临时文件夹")
 
 
+def run_convert(a, runner, root, m, converters, settings):
+    if a.converter:
+        converters = [c for c in converters if c.get("id") == a.converter]
+        if not converters:
+            err(f"没有 id 为 {a.converter} 的转换器")
+            return
+    if command_for(m) and not all(lst(c.get("exec")) for c in converters):
+        print("\n转换器自检 info")
+        res, e = runner.call("info", {}, settings)
+        if e and e.get("code") != "unsupported":
+            err(f"info：[{e.get('code')}] {e.get('message')}")
+        elif not e:
+            ok(f"info：{json.dumps(res, ensure_ascii=False)[:200]}")
+    if not a.convert:
+        names = "、".join(c.get("name") or c.get("id", "") for c in converters)
+        print(f"  · 转换器：{names}。加 --convert 文件 实际转换一次")
+        return
+    src = os.path.abspath(a.convert)
+    if not os.path.isfile(src):
+        err(f"找不到要转换的文件：{a.convert}")
+        return
+    in_ext = os.path.splitext(src)[1].lstrip(".").lower()
+    cv = next((c for c in converters if accepts(lst(c.get("inputs")), in_ext)), None)
+    if cv is None:
+        err(f"没有转换器支持 .{in_ext} 文件")
+        return
+    outs = [o for o in output_list(cv) if o]
+    spec = (a.to or outs[0][0]).lstrip(".").lower()
+    if spec not in [o[0] for o in outs]:
+        err(f"转换器 {cv.get('id')} 不能输出 {spec}，可选：{[o[0] for o in outs]}")
+        return
+    out_ext = in_ext if spec == "same" else spec
+    opts = {}
+    for o in [obj(x) for x in lst(cv.get("options"))]:
+        opts[o.get("key")] = o.get("default")
+    otypes = {obj(o).get("key"): obj(o).get("type") for o in lst(cv.get("options"))}
+    for kv in a.opt:
+        k, _, v = kv.partition("=")
+        if k not in otypes:
+            warn(f"--opt {k}：转换器没有这个参数")
+        if otypes.get(k) == "int":
+            try:
+                v = int(v)
+            except ValueError:
+                err(f"--opt {k} 要是整数")
+                return
+        elif otypes.get(k) == "bool":
+            v = v.lower() in ("1", "true", "yes", "on")
+        opts[k] = v
+    work = tempfile.mkdtemp(prefix="mp-conv-")
+    a.cleanup.append(work)
+    out_dir = os.path.join(work, "out")
+    os.makedirs(out_dir)
+    dst = os.path.join(work, "result" + (f".{out_ext}" if out_ext else ""))
+    print(f"\n转换器 {cv.get('id')}：{os.path.basename(src)} → {out_ext or '（无扩展名）'}")
+    t0 = time.time()
+    ex = [str(x) for x in lst(cv.get("exec"))]
+    if ex:
+        values = {"input": src, "output": dst, "output_dir": out_dir, "input_ext": in_ext, "output_ext": out_ext,
+                  "work_dir": work, "plugin_dir": root,
+                  "ffmpeg": runner.env.get("MP_FFMPEG", ""), "ffprobe": runner.env.get("MP_FFPROBE", "")}
+        for k, v in opts.items():
+            values[f"option:{k}"] = "" if v is None else str(v).lower() if isinstance(v, bool) else str(v)
+        for k, v in settings.items():
+            values[f"setting:{k}"] = "" if v is None else str(v).lower() if isinstance(v, bool) else str(v)
+        try:
+            argv = [fill_exec(x, values) for x in ex]
+        except ValueError as e:
+            err(f"exec：{e}")
+            return
+        if not ex[0].startswith("{") and ("/" in ex[0] or "\\" in ex[0] or os.path.splitext(ex[0])[1]):
+            argv[0] = os.path.join(root, argv[0])
+        print(f"      运行 {argv}")
+        try:
+            r = subprocess.run(argv, cwd=work, env=runner.env, capture_output=True, timeout=TIMEOUT["convert"])
+        except OSError as e:
+            err(f"exec：启动失败：{e}")
+            return
+        tail = [l for l in r.stderr.decode("utf-8", "replace").splitlines() if l.strip()][-6:]
+        for l in tail:
+            print(f"      stderr {l[:300]}")
+        if r.returncode != 0:
+            err(f"exec：程序出错（退出码 {r.returncode}）")
+            return
+    else:
+        params = {"converter": cv.get("id"), "input": src, "output": dst, "input_ext": in_ext, "output_ext": out_ext,
+                  "options": opts, "work_dir": work, "duration": None}
+        last = {}
+        res, e = runner.call("convert", params, settings, last.update)
+        if last:
+            print(f"      最后进度 {last.get('done')}/{last.get('total', 1)}")
+        if e:
+            err(f"convert：[{e.get('code')}] {e.get('message')}")
+            return
+        given = obj(res).get("output") if isinstance(res, dict) else None
+        if given and os.path.abspath(given) != dst:
+            if not os.path.abspath(given).startswith(work) or not os.path.isfile(given):
+                err("convert：返回的 output 不在软件给的位置（output 或 work_dir 里）")
+                return
+            shutil.move(given, dst)
+    if not os.path.isfile(dst):
+        files = [os.path.join(out_dir, f) for f in os.listdir(out_dir)]
+        files = [f for f in files if os.path.isfile(f)]
+        hit = files if len(files) == 1 else [f for f in files if f.lower().endswith("." + out_ext)]
+        if hit:
+            shutil.move(hit[0], dst)
+    if not os.path.isfile(dst) or os.path.getsize(dst) == 0:
+        err("转换没有生成输出文件（要写到 params.output / {output}，或 {output_dir} 里）")
+        return
+    ok(f"转换完成：{os.path.getsize(dst)} 字节，用时 {time.time() - t0:.1f} 秒")
+    if a.out:
+        shutil.copyfile(dst, a.out)
+        print(f"      已另存到 {a.out}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="检查播放器插件（plugin.json + process 协议 2）")
     ap.add_argument("plugin", help="插件文件夹或 .mpx")
@@ -748,6 +1022,11 @@ def main():
     ap.add_argument("--set", action="append", default=[], metavar="key=value", help="设置项的值，可以写多次")
     ap.add_argument("--download", action="store_true", help="实际调用 download（下到临时文件夹，用完删掉）")
     ap.add_argument("--app-version", default="", help="按这个软件版本检查 engines.app，如 0.6.0")
+    ap.add_argument("--convert", default="", help="用转换器实际转换这个文件")
+    ap.add_argument("--to", default="", help="输出扩展名（outputs 里的一项，可以是 same），默认第一个")
+    ap.add_argument("--converter", default="", help="只用这个转换器 id")
+    ap.add_argument("--opt", action="append", default=[], metavar="key=value", help="转换参数，可以写多次")
+    ap.add_argument("--out", default="", help="把转换结果另存到这个文件")
     a = ap.parse_args()
     a.cleanup = []
     try:

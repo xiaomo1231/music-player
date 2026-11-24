@@ -329,6 +329,7 @@ pub fn run() {
             convert::convert_undo,
             convert::convert_expand,
             convert::convert_remove,
+            convert::convert_converters,
             subtitle::sub_list_videos,
             subtitle::sub_start,
             subtitle::sub_batch,

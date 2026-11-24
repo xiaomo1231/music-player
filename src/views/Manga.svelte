@@ -13,7 +13,7 @@
   import ComicExportModal from '../components/em/ComicExportModal.svelte';
   import CoverPicker from '../components/media/CoverPicker.svelte';
   import WorkDetail from '../components/shelf/WorkDetail.svelte';
-  import { art, artPoster, artPending, loadArt } from '../lib/media.svelte';
+  import { art, artPoster, artPending, artUi, loadArt, openCoverPicker } from '../lib/media.svelte';
   import { comicDone, comicVol, comicFmt, nextVol, unitOf, type Vol } from '../lib/shelf';
 
   /** 一部漫画：同一系列的所有话 / 卷；没有系列名的单本自成一部 */
@@ -51,12 +51,10 @@
     if (v.length) exportIds = v;
     else toast('PDF 不能按规则导出');
   }
-  /** 打开中的“选择官方海报”面板（漫画按系列） */
-  let picker = $state<{ kind: 'comic'; id: number; title: string } | null>(null);
 
   async function pickSeries(name: string) {
     const id = art.comicByName[name]?.id ?? (await invoke<number>('art_comic_id', { series: name }));
-    picker = { kind: 'comic', id, title: name };
+    openCoverPicker('comic', id, name);
   }
 
   // 媒体库变化、关掉阅读器（进度变了）时重新读取
@@ -322,8 +320,8 @@
 {#if exportIds}
   <ComicExportModal ids={exportIds} onclose={() => (exportIds = null)} ondone={r => r.outputs.length && sel.clear()} />
 {/if}
-{#if picker}
-  <CoverPicker {...picker} onclose={() => (picker = null)} />
+{#if artUi.picker}
+  <CoverPicker {...artUi.picker} onclose={() => (artUi.picker = null)} />
 {/if}
 
 <style>

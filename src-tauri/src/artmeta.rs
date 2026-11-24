@@ -39,8 +39,13 @@ CREATE TABLE IF NOT EXISTS art_match(
 );
 "#,
     )?;
+    // 按哪一版匹配规则配的：规则改进后，自动配的（不含手动选的）重新匹配一次
+    crate::db::add_column(conn, "art_match", "rules", "INTEGER NOT NULL DEFAULT 0")?;
     Ok(())
 }
+
+/// 匹配规则的版本。2：搜索带上文件名里的标题，打分看时长，AI 先说出官方名字再搜
+const MATCH_RULES: i64 = 2;
 
 pub fn setup(app: &AppHandle) {
     let app = app.clone();
@@ -367,6 +372,8 @@ pub struct Local {
     pub year: Option<i64>,
     /// 偏好的条目形式（漫画：Bangumi 书籍里优先“漫画”，不要小说）
     pub want: String,
+    /// 正片平均时长（秒），0 表示不知道
+    pub duration: f64,
 }
 
 pub fn name_score(c: &Candidate, local: &Local) -> f64 {
@@ -384,9 +391,18 @@ pub fn score(c: &Candidate, local: &Local) -> f64 {
     }
     // 类型对得上
     let f = c.format.to_lowercase();
-    let is_movie = f.contains("剧场") || f.contains("movie") || f.contains("电影");
+    let tv = f == "tv" || f.contains("tv");
+    let is_movie = f.contains("剧场") || f.contains("movie") || f.contains("电影") || (c.episodes == Some(1) && !tv);
     if is_movie == local.movie {
         s += 0.1;
+    }
+    // 一个多小时的单集是电影长度，TV 动画一集二十多分钟
+    if local.duration >= 50.0 * 60.0 && tv && c.episodes.unwrap_or(0) > 1 {
+        s -= 0.1;
+    }
+    // Bangumi 的“其他”多是 PV、广告、短片
+    if f == "其他" {
+        s -= 0.1;
     }
     // 集数接近
     if let (Some(e), true) = (c.episodes, local.episodes > 0) {
@@ -475,7 +491,8 @@ fn jobs(conn: &Connection, only: Option<(&str, i64)>, force: bool) -> Result<Vec
     let mut st = conn.prepare(
         "SELECT s.id,coalesce(s.custom_title,s.title),s.kind,s.year,
                 sum(coalesce(v.season,1)=1),sum(coalesce(v.season,1)>=1),
-                a.state,a.query,a.checked_at
+                a.state,a.query,a.checked_at,coalesce(a.rules,0),
+                avg(CASE WHEN coalesce(v.season,1)>=1 THEN v.duration END)
          FROM series s JOIN videos v ON v.series_id=s.id JOIN files f ON f.id=v.file_id
          LEFT JOIN art_match a ON a.kind='series' AND a.id=s.id
          WHERE f.missing=0 GROUP BY s.id",
@@ -491,13 +508,25 @@ fn jobs(conn: &Connection, only: Option<(&str, i64)>, force: bool) -> Result<Vec
             r.get::<_, Option<String>>(6)?,
             r.get::<_, Option<String>>(7)?,
             r.get::<_, Option<i64>>(8)?,
+            r.get::<_, i64>(9)?,
+            r.get::<_, Option<f64>>(10)?,
         ))
     })?;
-    for r in rows.flatten() {
-        let (id, title, kind, year, s1, main, state, query, at) = r;
-        if !due(only, ("series", id), force, &title, state.as_deref(), query.as_deref(), at) {
+    let rows: Vec<_> = rows.flatten().collect();
+    drop(st);
+    for r in rows {
+        let (id, title, kind, year, s1, main, state, query, at, rules, dur) = r;
+        if !due(only, ("series", id), force, &title, state.as_deref(), query.as_deref(), at, rules) {
             continue;
         }
+        let paths: Vec<String> = conn
+            .prepare(
+                "SELECT f.path FROM videos v JOIN files f ON f.id=v.file_id
+                 WHERE v.series_id=?1 AND f.missing=0 ORDER BY coalesce(v.season,1)<1,v.season,v.episode LIMIT 4",
+            )?
+            .query_map([id], |r| r.get(0))?
+            .flatten()
+            .collect();
         let movie = main == 0;
         out.push(Job {
             kind: "series",
@@ -509,17 +538,18 @@ fn jobs(conn: &Connection, only: Option<(&str, i64)>, force: bool) -> Result<Vec
                 _ => "tv",
             },
             local: Local {
-                names: query_names(&title),
+                names: with_file_titles(query_names(&title), &paths),
                 episodes: s1,
                 movie,
                 year,
                 want: String::new(),
+                duration: dur.unwrap_or(0.0),
             },
         });
     }
     // 电影
     let mut st = conn.prepare(
-        "SELECT f.id,coalesce(f.custom_title,v.title),f.kind,a.state,a.query,a.checked_at
+        "SELECT f.id,coalesce(f.custom_title,v.title),f.kind,a.state,a.query,a.checked_at,coalesce(a.rules,0),f.path,v.duration
          FROM videos v JOIN files f ON f.id=v.file_id
          LEFT JOIN art_match a ON a.kind='video' AND a.id=f.id
          WHERE f.missing=0 AND v.movie=1 AND v.series_id IS NULL",
@@ -532,11 +562,14 @@ fn jobs(conn: &Connection, only: Option<(&str, i64)>, force: bool) -> Result<Vec
             r.get::<_, Option<String>>(3)?,
             r.get::<_, Option<String>>(4)?,
             r.get::<_, Option<i64>>(5)?,
+            r.get::<_, i64>(6)?,
+            r.get::<_, String>(7)?,
+            r.get::<_, f64>(8)?,
         ))
     })?;
     for r in rows.flatten() {
-        let (id, title, kind, state, query, at) = r;
-        if !due(only, ("video", id), force, &title, state.as_deref(), query.as_deref(), at) {
+        let (id, title, kind, state, query, at, rules, path, dur) = r;
+        if !due(only, ("video", id), force, &title, state.as_deref(), query.as_deref(), at, rules) {
             continue;
         }
         let year = movie_year(&title);
@@ -546,11 +579,12 @@ fn jobs(conn: &Connection, only: Option<(&str, i64)>, force: bool) -> Result<Vec
             title: title.clone(),
             what: if kind == "anime" { "anime-movie" } else { "movie" },
             local: Local {
-                names: query_names(&strip_year(&title)),
+                names: with_file_titles(query_names(&strip_year(&title)), &[path]),
                 episodes: 0,
                 movie: true,
                 year,
                 want: String::new(),
+                duration: dur,
             },
         });
     }
@@ -562,13 +596,15 @@ fn jobs(conn: &Connection, only: Option<(&str, i64)>, force: bool) -> Result<Vec
         .collect();
     for name in series {
         let id = comic_id(&name);
-        let (state, query, at): (Option<String>, Option<String>, Option<i64>) = conn
-            .query_row("SELECT state,query,checked_at FROM art_match WHERE kind='comic' AND id=?1", [id], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-            })
+        let (state, query, at, rules): (Option<String>, Option<String>, Option<i64>, i64) = conn
+            .query_row(
+                "SELECT state,query,checked_at,coalesce(rules,0) FROM art_match WHERE kind='comic' AND id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
             .optional()?
-            .unwrap_or((None, None, None));
-        if !due(only, ("comic", id), force, &name, state.as_deref(), query.as_deref(), at) {
+            .unwrap_or((None, None, None, MATCH_RULES));
+        if !due(only, ("comic", id), force, &name, state.as_deref(), query.as_deref(), at, rules) {
             continue;
         }
         out.push(Job {
@@ -584,6 +620,20 @@ fn jobs(conn: &Connection, only: Option<(&str, i64)>, force: bool) -> Result<Vec
         });
     }
     Ok(out)
+}
+
+/// 文件名里的标题也拿来搜：文件夹常是简称或译名，压制组的文件名里往往是罗马音 / 英文原名
+/// （“辉夜姬”文件夹里的 `[MAI] Chou Kaguya-hime! [WebRip 2160p].mkv`）
+fn with_file_titles(mut names: Vec<String>, paths: &[String]) -> Vec<String> {
+    for p in paths {
+        let t = crate::parse::parse_episode(std::path::Path::new(p)).title;
+        let t = strip_year(t.trim());
+        if norm(&t).chars().count() < 2 || names.iter().any(|n| similarity(n, &t) >= 0.85) {
+            continue;
+        }
+        names.push(t);
+    }
+    names
 }
 
 /// 漫画系列没有自己的表，用系列名的哈希当编号（只取 52 位，前端 JS 数字也能精确表示）
@@ -608,7 +658,8 @@ fn strip_year(title: &str) -> String {
 }
 
 /// 要不要（重新）匹配这一项
-fn due(only: Option<(&str, i64)>, me: (&str, i64), force: bool, title: &str, state: Option<&str>, query: Option<&str>, at: Option<i64>) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn due(only: Option<(&str, i64)>, me: (&str, i64), force: bool, title: &str, state: Option<&str>, query: Option<&str>, at: Option<i64>, rules: i64) -> bool {
     // 指定了某一项（手动更换、恢复自动）时不看状态
     if let Some(o) = only {
         return o == me;
@@ -618,8 +669,8 @@ fn due(only: Option<(&str, i64)>, me: (&str, i64), force: bool, title: &str, sta
         // 手动选的、手动关掉联网封面的都不再自动匹配
         Some("locked") | Some("off") => false,
         _ if force => true,
-        // 作品改名（重新归类）了就重新匹配
-        _ if query != Some(title) => true,
+        // 作品改名（重新归类）了、匹配规则改进了就重新匹配
+        _ if query != Some(title) || rules < MATCH_RULES => true,
         // 没搜到的一周后再试
         Some("none") => crate::db::now() - at.unwrap_or(0) > 7 * 86400,
         _ => false,
@@ -661,18 +712,37 @@ async fn run_jobs(app: &AppHandle, cfg: &ArtSettings, list: Vec<Job>) -> Result<
     let posters = app.state::<AppState>().dirs.covers.clone();
     let mut done = 0;
     for job in list {
-        let cands = search(&bgm, &tmdb, cfg, &job).await;
-        let Ok(cands) = cands else {
+        let mut job = job;
+        let cands = search(&bgm, &tmdb, cfg, &job, &job.local.names).await;
+        let Ok(mut cands) = cands else {
             // 网络不通：这次先不记，下次启动再试
             continue;
         };
-        let (mut cands, mut auto) = rank(cands, &job.local);
-        // 拿不准时，配置了 AI 并打开了“AI 辅助识别”就让 AI 从候选里挑
+        let (mut ranked, mut auto) = rank(cands.clone(), &job.local);
+        // 拿不准时（配置了 AI 并打开了“AI 辅助识别”）：先让 AI 说出这部作品的官方名字，用这些名字再搜一轮
+        if !auto && ai_on(app) {
+            let names: Vec<String> = ai_names(app, &job)
+                .await
+                .into_iter()
+                .filter(|n| !job.local.names.iter().any(|m| norm(m) == norm(n)))
+                .collect();
+            if !names.is_empty() {
+                if let Ok(more) = search(&bgm, &tmdb, cfg, &job, &names).await {
+                    cands.extend(more);
+                }
+                job.local.names.extend(names);
+                (ranked, auto) = rank(cands, &job.local);
+            }
+        }
+        let mut cands = ranked;
+        // 还是拿不准：让 AI 从候选里挑；挑中的名字也得有几分像，AI 也拿不准就留着待确认
         if !auto && cands.len() > 1 && !cands.first().is_none_or_low() {
             if let Some(i) = ai_pick(app, &job, &cands).await {
-                let c = cands.remove(i);
-                cands.insert(0, c);
-                auto = true;
+                if cands[i].name_score >= 0.5 {
+                    let c = cands.remove(i);
+                    cands.insert(0, c);
+                    auto = true;
+                }
             }
         }
         // 最像的也差得远：当作没搜到（候选还留着，手动更换时可以看）
@@ -711,11 +781,14 @@ async fn run_jobs(app: &AppHandle, cfg: &ArtSettings, list: Vec<Job>) -> Result<
     Ok(done)
 }
 
-async fn search(bgm: &reqwest::Client, tmdb: &reqwest::Client, cfg: &ArtSettings, job: &Job) -> Result<Vec<Candidate>> {
+async fn search(bgm: &reqwest::Client, tmdb: &reqwest::Client, cfg: &ArtSettings, job: &Job, names: &[String]) -> Result<Vec<Candidate>> {
     let has_tmdb = !cfg.tmdb_key.trim().is_empty();
     let mut all = vec![];
     let mut last_err = None;
-    for q in job.local.names.iter().take(2) {
+    for (n, q) in names.iter().take(3).enumerate() {
+        if n > 0 {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+        }
         let r = match job.what {
             "anime" | "anime-movie" => match bangumi_search(bgm, q, 2).await {
                 // Bangumi 没有结果（或连不上）时退到 AniList，再退到 TMDB
@@ -752,30 +825,75 @@ async fn search(bgm: &reqwest::Client, tmdb: &reqwest::Client, cfg: &ArtSettings
     }
 }
 
-const AI_SYSTEM: &str = r#"你帮本地媒体库给作品配官方海报。用户给出本地作品名、类型、本地集数，以及资料库搜到的候选条目。
-请选出和本地作品是同一部作品的那一个（整部作品优先选第一季 / 正篇，本地是剧场版时选剧场版）。都不是就回答 null。
-只输出 JSON：{"pick":候选编号或null}"#;
-
-/// AI 从候选里挑一个，返回下标；没配置 AI、没打开 AI 辅助识别或 AI 也拿不准时返回 None
-async fn ai_pick(app: &AppHandle, job: &Job, cands: &[Candidate]) -> Option<usize> {
-    {
+fn ai_on(app: &AppHandle) -> bool {
+    let on = {
         let st = app.state::<AppState>();
-        if !crate::ai::load_config(&st.db.lock()).classify_media {
-            return None;
+        let conn = st.db.lock();
+        crate::ai::load_config(&conn).classify_media
+    };
+    on && crate::ai::ready(app).is_ok()
+}
+
+/// 给 AI 看的本地作品情况（只有名字和数字，不含路径）
+fn ai_local(job: &Job) -> Value {
+    json!({
+        "folder": job.title,
+        "names_in_files": job.local.names.iter().skip(1).take(3).collect::<Vec<_>>(),
+        "type": job.what,
+        "episodes": job.local.episodes,
+        "minutes_per_episode": (job.local.duration > 0.0).then(|| (job.local.duration / 60.0).round() as i64),
+        "year": job.local.year,
+    })
+}
+
+const AI_NAMES: &str = r#"你帮本地媒体库识别作品。用户给出文件夹名、文件名里的标题、类型、集数和单集时长。
+文件夹名常是简称或译名，文件名里常是罗马音或英文名。请判断这是哪部作品，给出它的官方名字：日文原名、中文名、英文名（知道几个给几个，最多 3 个）。
+不知道是哪部作品就给空数组，不要猜。只输出 JSON：{"names":["…"]}"#;
+
+/// AI 说出作品的官方名字，用来再搜一轮
+async fn ai_names(app: &AppHandle, job: &Job) -> Vec<String> {
+    let user = ai_local(job).to_string();
+    let Ok(reply) = crate::ai::chat_simple(app, AI_NAMES, &user, true).await else {
+        return vec![];
+    };
+    let Ok(v) = crate::ai::extract_json(&reply) else {
+        return vec![];
+    };
+    let mut out: Vec<String> = vec![];
+    for n in v["names"].as_array().into_iter().flatten().filter_map(|n| n.as_str()) {
+        let n = n.trim().to_string();
+        if norm(&n).chars().count() >= 2 && !out.iter().any(|m| norm(m) == norm(&n)) {
+            out.push(n);
         }
     }
-    crate::ai::ready(app).ok()?;
+    out.truncate(3);
+    out
+}
+
+const AI_SYSTEM: &str = r#"你帮本地媒体库给作品配官方海报。用户给出本地作品的情况（文件夹名、文件名里的标题、类型、集数、单集时长），以及资料库搜到的候选条目。
+请选出和本地作品是同一部作品的那一个（整部作品优先选第一季 / 正篇；本地是一个多小时的单集时选剧场版 / 电影）。
+名字只是部分相同的不同作品不要选。都不是或拿不准就回答 null。只输出 JSON：{"pick":候选编号或null}"#;
+
+/// AI 从候选里挑一个，返回下标；AI 也拿不准时返回 None
+async fn ai_pick(app: &AppHandle, job: &Job, cands: &[Candidate]) -> Option<usize> {
+    if !ai_on(app) {
+        return None;
+    }
     let list: Vec<Value> = cands
         .iter()
-        .take(6)
+        .take(8)
         .enumerate()
-        .map(|(i, c)| json!({"n": i, "names": c.names.iter().take(4).collect::<Vec<_>>(), "year": c.year, "format": c.format, "episodes": c.episodes}))
+        .map(|(i, c)| {
+            json!({"n": i, "names": c.names.iter().chain(std::iter::once(&c.title)).take(5).collect::<Vec<_>>(),
+                   "year": c.year, "format": c.format, "episodes": c.episodes,
+                   "summary": c.summary.chars().take(80).collect::<String>()})
+        })
         .collect();
-    let user = json!({"local": {"title": job.title, "type": job.what, "episodes": job.local.episodes}, "candidates": list}).to_string();
+    let user = json!({"local": ai_local(job), "candidates": list}).to_string();
     let reply = crate::ai::chat_simple(app, AI_SYSTEM, &user, true).await.ok()?;
     let v = crate::ai::extract_json(&reply).ok()?;
     let i = v["pick"].as_u64()? as usize;
-    (i < cands.len().min(6)).then_some(i)
+    (i < cands.len().min(8)).then_some(i)
 }
 
 /// 下载海报，缩到长边 900 像素存成 jpg，返回本地路径
@@ -795,10 +913,10 @@ async fn download_poster(bgm: &reqwest::Client, tmdb: &reqwest::Client, c: &Cand
 }
 
 fn save(conn: &Connection, job: &Job, cands: &[Candidate], state: &str, poster: Option<&str>) -> Result<()> {
-    let best = cands.first().filter(|_| state == "auto");
+    let best = cands.first().filter(|_| state == "auto" || state == "locked");
     conn.execute(
-        "INSERT OR REPLACE INTO art_match(kind,id,source,remote_id,title,year,summary,poster,score,state,query,candidates,checked_at)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+        "INSERT OR REPLACE INTO art_match(kind,id,source,remote_id,title,year,summary,poster,score,state,query,candidates,checked_at,rules)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
         params![
             job.kind,
             job.id,
@@ -812,7 +930,8 @@ fn save(conn: &Connection, job: &Job, cands: &[Candidate], state: &str, poster: 
             state,
             job.title,
             serde_json::to_string(&cands.iter().take(12).collect::<Vec<_>>())?,
-            crate::db::now()
+            crate::db::now(),
+            MATCH_RULES
         ],
     )?;
     Ok(())
@@ -1115,6 +1234,7 @@ mod tests {
             movie: false,
             year: None,
             want: String::new(),
+            duration: 0.0,
         };
         let cands = vec![
             cand("孤独摇滚！第二季", &["ぼっち・ざ・ろっく！ 2nd Season", "孤独摇滚！第二季"], "TV", Some(12)),
@@ -1139,6 +1259,7 @@ mod tests {
             movie: true,
             year: None,
             want: String::new(),
+            duration: 0.0,
         };
         let cands = vec![
             cand("辉夜大小姐想让我告白", &["かぐや様は告らせたい"], "TV", Some(12)),
@@ -1193,6 +1314,7 @@ mod tests {
                     movie,
                     year: None,
                     want: String::new(),
+                    duration: 0.0,
                 },
             );
             (r[0].remote_id.clone(), auto && !Some(&r[0]).is_none_or_low())
@@ -1270,7 +1392,25 @@ mod tests {
             bgm("517768", "かぐやひめ", "辉夜姬", "其他", 0, &[]),
             bgm("604826", "超かぐや姫！", "超辉夜姬！", "WEB", 1, &["Cosmic Princess Kaguya!"]),
         ];
-        assert!(!pick("辉夜姬", 1, true, kaguya).1);
+        assert!(!pick("辉夜姬", 1, true, kaguya.clone()).1);
+        // 文件名里的标题也拿来搜
+        let names = with_file_titles(
+            query_names("辉夜姬"),
+            &["/番剧/辉夜姬/[MAI] Chou Kaguya-hime! [WebRip 2160p HEVC-10bit EAC3 ASS].mkv".into()],
+        );
+        assert_eq!(names, vec!["辉夜姬".to_string(), "Chou Kaguya-hime!".to_string()]);
+        // AI 说出官方名字后，《超辉夜姬！》名字对上了，2 小时 22 分的单集也是电影长度，可以自动采用
+        let local = Local {
+            names: [names, vec!["超かぐや姫！".into(), "Cosmic Princess Kaguya!".into()]].concat(),
+            episodes: 1,
+            movie: true,
+            duration: 8523.0,
+            ..Default::default()
+        };
+        let (r, auto) = rank(kaguya, &local);
+        assert_eq!(r[0].remote_id, "604826");
+        assert!(auto);
+        assert!(r.iter().find(|c| c.remote_id == "517768").unwrap().score < 0.75);
         // 搜不到的：只有毫不相干的结果
         let none = vec![bgm("543189", "野原ひろし 昼メシの流儀", "野原广志午餐流派", "TV", 12, &[])];
         let (r, _) = rank(
@@ -1309,10 +1449,14 @@ mod tests {
     fn jobs_and_due() {
         let conn = crate::db::open_memory().unwrap();
         init(&conn).unwrap();
-        assert!(due(None, ("series", 1), false, "A", None, None, None));
-        assert!(!due(None, ("series", 1), true, "A", Some("locked"), Some("A"), Some(0)));
-        assert!(!due(None, ("series", 1), false, "A", Some("auto"), Some("A"), Some(0)));
-        assert!(due(None, ("series", 1), false, "B", Some("auto"), Some("A"), Some(0)));
+        assert!(due(None, ("series", 1), false, "A", None, None, None, 0));
+        assert!(!due(None, ("series", 1), true, "A", Some("locked"), Some("A"), Some(0), MATCH_RULES));
+        assert!(!due(None, ("series", 1), false, "A", Some("auto"), Some("A"), Some(0), MATCH_RULES));
+        assert!(due(None, ("series", 1), false, "B", Some("auto"), Some("A"), Some(0), MATCH_RULES));
+        // 匹配规则改进后，自动配的重新匹配一次，手动选的、关掉的不动
+        assert!(due(None, ("series", 1), false, "A", Some("auto"), Some("A"), Some(0), 0));
+        assert!(!due(None, ("series", 1), false, "A", Some("locked"), Some("A"), Some(0), 0));
+        assert!(!due(None, ("series", 1), false, "A", Some("off"), Some("A"), Some(0), 0));
         assert!(jobs(&conn, None, false).unwrap().is_empty());
     }
 }

@@ -93,7 +93,8 @@
     if (out) await run(() => pluginApi.packDir(dir, out), '已打包');
   }
 
-  const kinds = (p: PluginView) => [...new Set(p.sources.flatMap(s => s.media_kinds))].map(k => MEDIA_TEXT[k] ?? k).join('、');
+  const kinds = (p: PluginView) =>
+    [...[...new Set(p.sources.flatMap(s => s.media_kinds))].map(k => MEDIA_TEXT[k] ?? k), ...(p.converters?.length ? ['格式转换'] : [])].join('、');
   const updates = $derived(list.filter(p => p.update).length);
   const STATE: Record<string, string> = { install: '安装', update: '更新', installed: '已安装', newer_app: '要先升级软件' };
 </script>
@@ -101,7 +102,7 @@
 <div class="card pl-card">
   <h5>插件</h5>
   <p class="note">
-    插件可以接入新的下载源（音乐、视频、番剧、漫画、小说），装好后出现在“自动获取 → 我的来源”。双击或拖入 .mpx 文件、点“安装插件…”，或从仓库安装都可以。
+    插件可以接入新的下载源（音乐、视频、番剧、漫画、小说），装好后出现在“自动获取 → 我的来源”；也可以提供格式转换器，出现在“格式转换”页。双击或拖入 .mpx 文件、点“安装插件…”，或从仓库安装都可以。
     软件不自带任何插件和仓库；请只安装能合法获取内容的插件。插件不能绕过登录、验证码或 DRM 保护。
   </p>
   <div class="pl-bar">

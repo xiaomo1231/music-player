@@ -9,6 +9,7 @@
 //! - `js`：js 入口（QuickJS 沙箱）
 //!
 //! 完整说明见 `docs/插件开发.md`。软件不内置任何第三方网站插件，也不内置插件仓库地址。
+pub mod converter;
 pub mod js;
 pub mod manifest;
 pub mod package;
@@ -719,6 +720,8 @@ pub struct PluginView {
     pub icon: String,
     pub readme: String,
     pub sources: Vec<SourceView>,
+    /// 格式转换器
+    pub converters: Vec<converter::ConverterView>,
     /// 没填的必填设置
     pub needs_settings: Vec<String>,
     pub has_settings: bool,
@@ -802,6 +805,7 @@ fn view(id: &str, l: &Loaded) -> PluginView {
         },
         readme: readme(&l.dir),
         sources,
+        converters: m.contributes.converters.iter().map(|c| converter::view(id, &m.name, c, vec![])).collect(),
         needs_settings: missing_settings(m, &settings),
         has_settings: !m.settings.is_empty(),
         rules: l.rules.clone(),
@@ -847,6 +851,8 @@ pub struct Preview {
     pub trust: String,
     pub media_kinds: Vec<String>,
     pub sources: Vec<String>,
+    /// 格式转换器：“名字（输入 → 输出）”
+    pub converters: Vec<String>,
     pub hosts: Vec<String>,
     pub lan_hosts: Vec<String>,
     pub login: String,
@@ -897,6 +903,11 @@ pub fn preview_of(dir: &Path, m: &Manifest) -> Preview {
         }
     }
     p.media_kinds = kinds;
+    for c in &m.contributes.converters {
+        let name = if c.name.trim().is_empty() { m.name.clone() } else { c.name.clone() };
+        let outs: Vec<String> = c.output_list().into_iter().map(|o| o.name).collect();
+        p.converters.push(format!("{name}（{} → {}）", c.inputs.join(" / "), outs.join(" / ")));
+    }
     // rule 入口：.em 里的 hosts 必须和清单一致
     if m.runtime.kind == "rule" && p.issues.is_empty() {
         match std::fs::read_to_string(dir.join(&m.runtime.file))
@@ -1114,10 +1125,51 @@ pub fn install(app: &AppHandle, path: &Path, allow_login: bool, origin: &str) ->
 /// 装好后调一次 info 自检（只记日志和状态）
 async fn self_check(id: &str) {
     let Some(l) = REG.read().get(id).cloned() else { return };
-    let Some(s) = l.manifest.contributes.sources.first() else { return };
+    let Some(s) = l.manifest.contributes.sources.first() else {
+        // 只有格式转换器：有程序入口时也调一次 info（只记日志）
+        if l.manifest.runtime.kind == "process" && l.manifest.command().is_some() && !l.manifest.contributes.converters.is_empty() {
+            converter_info(id).await;
+        }
+        return;
+    };
     if l.manifest.runtime.kind == "process" && l.manifest.engines.protocol == 2 {
         let src = source::PluginSource::new(id, &l.manifest.name, s);
         let _ = info_call(&src).await;
+    }
+}
+
+async fn converter_info(id: &str) {
+    let Ok(rt) = runtime(id) else { return };
+    let c = process::Call {
+        argv: rt.argv,
+        dir: rt.dir,
+        env: rt.env,
+        method: "info".into(),
+        params: json!({}),
+        settings: rt.settings,
+        context: rt.context,
+        timeout: Some(std::time::Duration::from_secs(15)),
+        idle: None,
+    };
+    let r = process::run(
+        &c,
+        |e| {
+            if let process::Event::Log { level, msg } = e {
+                log(id, "info", &level, &msg)
+            }
+        },
+        None,
+    )
+    .await;
+    match r {
+        Ok(v) => log(
+            id,
+            "info",
+            "call",
+            &format!("自检完成：{}", v.get("message").and_then(|m| m.as_str()).unwrap_or("正常")),
+        ),
+        Err(e) if e.starts_with("[unsupported]") => {}
+        Err(e) => log(id, "info", "error", &e),
     }
 }
 

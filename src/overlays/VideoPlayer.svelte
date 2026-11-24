@@ -4,7 +4,9 @@
   import { ui } from '../lib/ui.svelte';
   import { invoke, inTauri, fileUrl, type Video } from '../lib/api';
   import { clamp, fmtT, fmtSize, typing } from '../lib/util';
-  import { parseVtt, pickSub, type Cue, type MediaInfo, type SubItem } from '../lib/media.svelte';
+  import { parseVtt, pickSub, VIDEO_AUTOHIDE_DEFAULT, type Cue, type MediaInfo, type SubItem } from '../lib/media.svelte';
+  import { getSetting } from '../lib/shell.svelte';
+  import { DEFAULT_SKIP, inIntro, introTarget, loadIntro, parseT, saveIntro, type Intro } from '../lib/skipintro';
   import Danmaku, { type DmItem } from '../components/media/Danmaku.svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { engine } from '../lib/engine.svelte';
@@ -12,7 +14,6 @@
 
   const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
   const FRAME = 1 / 25; // 没有读到帧率时按 25 帧算
-  const SKIP = 85; // Ctrl + → 跳过片头的秒数
   const VOL_KEY = 'mp.videoVol';
 
   function loadDmOn(): boolean {
@@ -67,6 +68,13 @@
   let fsOn = $state(false);
   let hoverT = $state<number | null>(null);
   let hoverX = $state(0);
+  // 跳过片头：这部番剧的片头设置（null = 默认，前进 85 秒）和设置面板
+  let intro = $state<Intro | null>(null);
+  let introOpen = $state(false);
+  let introStart = $state('');
+  let introEnd = $state('');
+  let introAuto = $state(false);
+  let prevT = 0; // 上一次 timeupdate 的时间，用来判断是不是“播到”了片头
 
   // 非响应式的内部状态
   let loadNo = 0;
@@ -82,6 +90,12 @@
   let mouseHolding = false;
   let pressing = false;
   let scrubbing = false;
+  // 控制栏自动隐藏：鼠标在不在上下栏上、下拉菜单是否打开、上次鼠标位置、延迟（秒，0 = 不隐藏）
+  let onCtl = false;
+  let menu = false;
+  let lastX = NaN;
+  let lastY = NaN;
+  let hideAfter = VIDEO_AUTOHIDE_DEFAULT;
   const subCache = new Map<string, Cue[]>();
 
   const list = $derived(ui.videoList);
@@ -91,7 +105,7 @@
   const progress = $derived(dur > 0 ? clamp(time / dur) : 0);
   const effRate = $derived(holdRate ?? rate);
   const showNext = $derived(nextId != null && dur > 0 && dur - time <= 30);
-  const showSkip = $derived(dur > 600 && time < 150);
+  const showSkip = $derived(inIntro(intro, time, dur));
   const activeCues = $derived(
     subVisible && subIdx >= 0 ? cues.filter(c => c.start <= time + subOffset && time + subOffset < c.end) : [],
   );
@@ -105,11 +119,64 @@
     if (!sticky) osdT = setTimeout(() => (osdShow = false), 1000);
   }
 
+  // ---------- 控制栏自动隐藏 ----------
+
+  /** 现在能不能收起上下栏：只在正常播放、没有在操作控件时收 */
+  function canHide(): boolean {
+    return (
+      hideAfter > 0 &&
+      ui.videoId != null &&
+      !!srcUrl &&
+      !paused &&
+      !err &&
+      !helpOpen &&
+      !infoOpen &&
+      !introOpen &&
+      !onCtl &&
+      !menu &&
+      !scrubbing
+    );
+  }
+
+  /** 显示上下栏，并重新开始计时 */
   function wake() {
     idle = false;
     clearTimeout(idleT);
-    idleT = setTimeout(() => (idle = true), 3000);
+    if (hideAfter > 0) idleT = setTimeout(() => (idle = canHide()), hideAfter * 1000);
   }
+
+  const BARS = '.mp-vbar,.mp-vtop';
+
+  function onMove(e: MouseEvent) {
+    // 字幕、弹幕在鼠标下面变化时，内核会补发坐标不变的“假”移动事件，不算动
+    if (e.clientX === lastX && e.clientY === lastY) return;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    onCtl = !!(e.target as HTMLElement | null)?.closest?.(BARS);
+    // 下拉菜单打开时页面收不到鼠标事件；能收到画面上的移动说明菜单已经关了
+    if (!onCtl) menu = false;
+    wake();
+  }
+
+  function onLeave() {
+    onCtl = false;
+    menu = false;
+    lastX = lastY = NaN;
+    wake();
+  }
+
+  /** 选完下拉项后把焦点还给播放器，否则空格、方向键会被下拉框吃掉 */
+  function menuDone(e: Event) {
+    menu = false;
+    (e.currentTarget as HTMLElement).blur();
+    wake();
+  }
+
+  // 暂停、开始播放、打开/关闭面板、出错时：先显示，再按需重新计时
+  $effect(() => {
+    void [paused, helpOpen, infoOpen, introOpen, err, srcUrl];
+    untrack(wake);
+  });
 
   // ---------- 进度与存档 ----------
 
@@ -256,6 +323,10 @@
       err = '不在桌面程序中运行，无法读取本地视频。';
       return;
     }
+    getSetting('video_autohide', VIDEO_AUTOHIDE_DEFAULT).then(v => {
+      hideAfter = Number(v) >= 0 ? Number(v) : VIDEO_AUTOHIDE_DEFAULT;
+      wake();
+    });
     let v: Video | null;
     try {
       v = await invoke<Video | null>('get_video', { id });
@@ -269,6 +340,11 @@
       return;
     }
     cur = v;
+    intro = null;
+    prevT = 0;
+    loadIntro(v).then(i => {
+      if (no === loadNo) intro = i;
+    });
     resumeAt = v.watched ? 0 : v.position;
     srcUrl = fileUrl(v.path);
     // 媒体信息与字幕列表在后台读取，不阻塞播放
@@ -305,6 +381,8 @@
     err = '';
     helpOpen = false;
     infoOpen = false;
+    introOpen = false;
+    intro = null;
     ab = { a: null, b: null };
     if (fsOn) void setFs(false);
   }
@@ -354,7 +432,15 @@
 
   function onTime() {
     if (!video) return;
-    time = video.currentTime;
+    const prev = prevT;
+    time = prevT = video.currentTime;
+    // 这部番剧开了自动跳过：从片头之前播进片头时直接跳到片头结束；
+    // 手动拖进片头中间（想看片头）不跳
+    if (intro?.auto && prev < intro.start + 0.5 && time >= intro.start && time < intro.end - 1) {
+      seek(intro.end);
+      osdMsg('已自动跳过片头');
+      return;
+    }
     if (ab.a != null && ab.b != null && video.currentTime >= ab.b) video.currentTime = ab.a;
   }
 
@@ -524,6 +610,49 @@
     }
   }
 
+  // ---------- 跳过片头 ----------
+
+  function skipIntro() {
+    const t = video?.currentTime ?? time;
+    const to = introTarget(intro, t);
+    seek(to);
+    osdMsg(intro && t < intro.end ? '已跳过片头' : `跳过 ${DEFAULT_SKIP} 秒`);
+  }
+
+  function openIntro() {
+    introStart = intro ? fmtT(intro.start) : '';
+    introEnd = intro ? fmtT(intro.end) : '';
+    introAuto = intro?.auto ?? false;
+    introOpen = true;
+  }
+
+  async function saveIntroForm() {
+    if (!cur) return;
+    const a = parseT(introStart);
+    const b = parseT(introEnd);
+    if (a == null || b == null) {
+      osdMsg('时间格式写成 1:30 或 90');
+      return;
+    }
+    if (b <= a + 1) {
+      osdMsg('片头结束要在开始之后');
+      return;
+    }
+    const i: Intro = { start: a, end: b, auto: introAuto };
+    await saveIntro(cur, i);
+    intro = i;
+    introOpen = false;
+    osdMsg(cur.series_id != null ? '已保存，这部番剧的每一集都按这个跳过' : '已保存片头设置');
+  }
+
+  async function resetIntro() {
+    if (!cur) return;
+    await saveIntro(cur, null);
+    intro = null;
+    introOpen = false;
+    osdMsg(`已恢复默认（前进 ${DEFAULT_SKIP} 秒）`);
+  }
+
   // ---------- 窗口 ----------
 
   async function isFs(): Promise<boolean> {
@@ -566,7 +695,7 @@
 
   // ---------- 鼠标 ----------
 
-  const CONTROLS = '.mp-vbar,.mp-vtop,.mp-vhelp,.vinfo,.mp-verr,.mp-next,.mp-skip';
+  const CONTROLS = '.mp-vbar,.mp-vtop,.mp-vhelp,.vinfo,.vintro,.mp-verr,.mp-next,.mp-skip';
 
   function onStageDown(e: PointerEvent) {
     if (e.button !== 0 || (e.target as HTMLElement).closest(CONTROLS)) return;
@@ -629,6 +758,7 @@
 
   function barDown(e: PointerEvent) {
     if (!dur || !barEl) return;
+    wake();
     scrubbing = true;
     barEl.setPointerCapture(e.pointerId);
     seek(barT(e));
@@ -643,6 +773,7 @@
 
   function barUp() {
     scrubbing = false;
+    wake();
   }
 
   function barLeave() {
@@ -653,6 +784,7 @@
 
   function onKey(e: KeyboardEvent) {
     if (ui.videoId == null || typing(e)) return;
+    wake();
     const k = e.key;
     const key = k.length === 1 ? k.toLowerCase() : k;
 
@@ -662,8 +794,7 @@
           void shot(true);
           break;
         case 'ArrowRight':
-          seek((video?.currentTime ?? time) + SKIP);
-          osdMsg(`跳过 ${SKIP} 秒`);
+          skipIntro();
           break;
         case '=':
         case '+':
@@ -781,6 +912,7 @@
         break;
       case 'Escape':
         if (helpOpen) helpOpen = false;
+        else if (introOpen) introOpen = false;
         else if (infoOpen) infoOpen = false;
         else
           void (async () => {
@@ -825,7 +957,9 @@
   class:idle={idle && !paused}
   class:help={helpOpen}
   bind:this={overlay}
-  onmousemove={wake}
+  onmousemove={onMove}
+  onmouseleave={onLeave}
+  onpointerdown={wake}
   role="dialog"
   aria-label="视频播放器"
   tabindex="-1"
@@ -886,6 +1020,7 @@
         {#if info.width}<span class="mp-tag">{info.width}×{info.height}</span>{/if}
       {/if}
       <span class="grow"></span>
+      <button class="vtxt" onclick={() => (introOpen ? (introOpen = false) : openIntro())} title="设置这部番剧的片头，用来跳过片头">片头</button>
       <button class="vtxt" onclick={() => (helpOpen = !helpOpen)} title="快捷键 (?)">⌨</button>
     </div>
 
@@ -928,7 +1063,15 @@
           />
         </span>
         <label class="sel">速度
-          <select value={String(rate)} onchange={e => setRate(Number(e.currentTarget.value))}>
+          <select
+            value={String(rate)}
+            onpointerdown={() => (menu = true)}
+            onchange={e => {
+              setRate(Number(e.currentTarget.value));
+              menuDone(e);
+            }}
+            onblur={() => (menu = false)}
+          >
             {#each RATES as r (r)}<option value={String(r)}>{r}</option>{/each}
           </select>
         </label>
@@ -936,7 +1079,15 @@
           <button class="dmb" class:on={dmOn} onclick={toggleDanmaku} title="弹幕开关 (D)">弹</button>
         {/if}
         <label class="sel">字幕
-          <select value={String(subIdx)} onchange={e => void selectSub(Number(e.currentTarget.value))}>
+          <select
+            value={String(subIdx)}
+            onpointerdown={() => (menu = true)}
+            onchange={e => {
+              void selectSub(Number(e.currentTarget.value));
+              menuDone(e);
+            }}
+            onblur={() => (menu = false)}
+          >
             <option value="-1">关闭</option>
             {#each subs as s, i (i)}<option value={String(i)}>{s.label}</option>{/each}
           </select>
@@ -953,7 +1104,30 @@
       <button class="mp-next" onclick={() => goEpisode(nextId)}>下一集 ▸</button>
     {/if}
     {#if showSkip}
-      <button class="mp-skip" onclick={() => seekBy(SKIP)}>跳过片头 {SKIP} 秒</button>
+      <button class="mp-skip" onclick={skipIntro}>{intro ? '跳过片头' : `跳过片头 ${DEFAULT_SKIP} 秒`}</button>
+    {/if}
+
+    {#if introOpen}
+      <div class="vintro">
+        <b>跳过片头</b>
+        <p class="dim">{cur?.series_id != null ? '对这部番剧的所有集生效' : '只对这个视频生效'}。时间写成 1:30 或 90。</p>
+        <div class="row">
+          <span>开始</span>
+          <input bind:value={introStart} placeholder="0:00" aria-label="片头开始" />
+          <button class="mp-btn ghost" onclick={() => (introStart = fmtT(time))}>用当前时间</button>
+        </div>
+        <div class="row">
+          <span>结束</span>
+          <input bind:value={introEnd} placeholder="1:30" aria-label="片头结束" />
+          <button class="mp-btn ghost" onclick={() => (introEnd = fmtT(time))}>用当前时间</button>
+        </div>
+        <label class="row"><input type="checkbox" bind:checked={introAuto} /> 播到片头时自动跳过</label>
+        <div class="acts">
+          <button class="mp-btn" onclick={saveIntroForm}>保存</button>
+          {#if intro}<button class="mp-btn ghost" onclick={resetIntro}>恢复默认</button>{/if}
+          <button class="mp-btn ghost" onclick={() => (introOpen = false)}>取消</button>
+        </div>
+      </div>
     {/if}
 
     {#if infoOpen}
@@ -990,7 +1164,7 @@
       <p><kbd>J</kbd> <kbd>L</kbd>　后退 / 前进 10 秒</p>
       <p>双击画面左 / 右三分之一　后退 / 前进 10 秒</p>
       <p><kbd>PgUp</kbd> <kbd>PgDn</kbd>　上一集 / 下一集</p>
-      <p><kbd>Ctrl</kbd>+<kbd>→</kbd>　跳过片头（85 秒）</p>
+      <p><kbd>Ctrl</kbd>+<kbd>→</kbd>　跳过片头（右上角“片头”可按番剧设置）</p>
       <p><kbd>C</kbd>　切换字幕，<kbd>V</kbd> 显示 / 隐藏</p>
       <p><kbd>D</kbd>　弹幕开关（有弹幕的视频）</p>
       <p><kbd>Z</kbd> <kbd>X</kbd>　字幕提前 / 延后 0.1 秒</p>
@@ -1023,8 +1197,14 @@
     height: 100%;
     background: #000;
   }
-  .mp-over.idle {
-    cursor: none;
+  .mp-over.idle,
+  .mp-over.idle :global(*) {
+    cursor: none !important;
+  }
+  .mp-over.idle .mp-next,
+  .mp-over.idle .mp-skip {
+    opacity: 0;
+    pointer-events: none;
   }
   .grow {
     flex: 1;
@@ -1134,6 +1314,7 @@
     padding: 8px 18px;
     font-size: 13px;
     cursor: pointer;
+    transition: opacity 0.4s;
   }
   .mp-skip {
     right: auto;
@@ -1155,6 +1336,44 @@
     line-height: 1.7;
     display: grid;
     gap: 2px;
+  }
+  .vintro {
+    position: absolute;
+    right: 28px;
+    top: 70px;
+    width: 340px;
+    padding: 16px 18px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.82);
+    font-size: 13px;
+    display: grid;
+    gap: 10px;
+  }
+  .vintro p {
+    margin: 0;
+  }
+  .vintro .dim {
+    color: #ffffff90;
+    font-size: 12px;
+  }
+  .vintro .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .vintro .row input:not([type]) {
+    width: 90px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    border: 1px solid #ffffff30;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+  }
+  .vintro .acts {
+    display: flex;
+    gap: 8px;
   }
   .vinfo p {
     margin: 0;

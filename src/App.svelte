@@ -120,6 +120,15 @@
     idleT = setTimeout(() => (ui.idle = true), 3500);
     if (ui.oled.dim) dimT = setTimeout(() => (ui.dimmed = true), ui.oled.dimSec * 1000);
   }
+  // 鼠标没动时，页面内容变化（歌词滚动、封面转动等）也会让 WebView 补发 mousemove，
+  // 当成有操作的话沉浸模式下的播放条永远不会自动隐藏：只在指针位置真的变了时才算
+  let lastX = -1, lastY = -1;
+  function onMove(e: MouseEvent) {
+    if (e.screenX === lastX && e.screenY === lastY) return;
+    lastX = e.screenX;
+    lastY = e.screenY;
+    wake();
+  }
 
   async function setImmersive(v?: boolean) {
     ui.immersive = v ?? !ui.immersive;
@@ -291,7 +300,7 @@
   }
 </script>
 
-<svelte:window oncontextmenu={onContextMenu} onkeydown={onKey} onmousemove={wake} onmousedown={wake} onkeydowncapture={wake} onwheel={wake} />
+<svelte:window oncontextmenu={onContextMenu} onkeydown={onKey} onmousemove={onMove} onmousedown={wake} onkeydowncapture={wake} onwheel={wake} />
 
 <FxBackground />
 <aside data-static>

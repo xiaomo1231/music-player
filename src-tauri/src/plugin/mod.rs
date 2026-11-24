@@ -1573,6 +1573,28 @@ pub async fn plugin_test(id: String, source: String, query: String, media_kind: 
     Ok(out)
 }
 
+/// 重新检查一个下载源（来源卡片上的“重试”）：用一个简单关键字搜一次，结果写进状态。
+/// 返回空字符串表示正常，否则是这次的错误（带错误码）
+#[tauri::command]
+pub async fn plugin_recheck(id: String, source: String) -> R<String> {
+    let l = REG.read().get(&id).cloned().ok_or("找不到这个插件")?;
+    if l.manifest.runtime.kind == "rule" {
+        return Err("规则插件不记录状态，直接搜索试试".into());
+    }
+    let decl = l.manifest.source(&source).cloned().ok_or("找不到这个下载源")?;
+    let pid = provider_id(&id, &decl.id);
+    let p = provider::get(&pid).ok_or_else(|| missing_reason(&pid).unwrap_or_else(|| "插件没有生效，请先启用".into()))?;
+    let mk = decl.media_kinds.first().cloned().unwrap_or_else(|| "music".into());
+    // 搜索会自己记状态（成功就清掉上次的错误）；结果多少不重要，能连上就行
+    Ok(match p.search(RECHECK_QUERY, &mk, 1).await {
+        Ok(_) => String::new(),
+        Err(e) => e,
+    })
+}
+
+/// 重新检查时用的搜索词
+const RECHECK_QUERY: &str = "test";
+
 #[cfg(test)]
 mod tests {
     use super::*;

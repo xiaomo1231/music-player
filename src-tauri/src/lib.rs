@@ -304,6 +304,7 @@ pub fn run() {
             plugin::plugin_pack,
             plugin::plugin_pack_dir,
             plugin::plugin_test,
+            plugin::plugin_recheck,
             plugin::repo::plugin_repos,
             plugin::repo::plugin_repo_add,
             plugin::repo::plugin_repo_remove,

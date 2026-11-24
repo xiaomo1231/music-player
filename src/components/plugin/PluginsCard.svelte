@@ -93,6 +93,12 @@
     if (out) await run(() => pluginApi.packDir(dir, out), '已打包');
   }
 
+  /** 文件夹已被手动删掉的插件：直接去掉记录（保留设置，重装后还能用） */
+  async function removeMissing(p: PluginView) {
+    await run(() => pluginApi.uninstall(p.id, false), `已移除「${p.name}」`);
+    plugins.version++;
+  }
+
   const kinds = (p: PluginView) =>
     [...[...new Set(p.sources.flatMap(s => s.media_kinds))].map(k => MEDIA_TEXT[k] ?? k), ...(p.converters?.length ? ['格式转换'] : [])].join('、');
   const updates = $derived(list.filter(p => p.update).length);
@@ -117,6 +123,7 @@
   {#if tab === 'installed'}
     {#if !list.length}<p class="note empty">还没有安装插件</p>{/if}
     {#each list as p (p.id)}
+      <div class="pl-item">
       <button class="pl-row" onclick={() => (plugins.detail = p.id)}>
         {#if p.icon}<img src={fileUrl(p.icon)} alt="" />{:else}<span class="pl-ico">{p.name.slice(0, 1)}</span>{/if}
         <span class="pl-main">
@@ -125,8 +132,10 @@
           {#if p.problem}<small class="bad">{p.problem}</small>{:else if p.needs_settings.length}<small class="warn">先填写设置：{p.needs_settings.join('、')}</small>{/if}
         </span>
         {#if p.update}<span class="tag">可更新 v{p.update.version}</span>{/if}
-        <span class="tag {p.enabled && !p.problem ? 'ok' : 'off'}">{p.problem ? '有问题' : p.enabled ? '已启用' : '已停用'}</span>
+        <span class="tag {p.enabled && !p.problem ? 'ok' : 'off'}">{p.missing ? '文件丢失' : p.problem ? '有问题' : p.enabled ? '已启用' : '已停用'}</span>
       </button>
+      {#if p.missing}<button class="mp-btn ghost danger" disabled={busy} onclick={() => removeMissing(p)}>移除</button>{/if}
+      </div>
     {/each}
   {:else if tab === 'repos'}
     <div class="frow">
@@ -213,6 +222,18 @@
   }
   .pl-row {
     cursor: pointer;
+    min-width: 0;
+  }
+  .pl-item {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .pl-item > .mp-btn {
+    flex-shrink: 0;
+  }
+  .danger {
+    color: #ff8a8a;
   }
   .pl-row:hover {
     background: rgba(127, 127, 127, 0.08);

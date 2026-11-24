@@ -62,11 +62,17 @@
       "additionalProperties": false,
       "properties": {
         "sources": { "type": "array", "items": { "$ref": "#/definitions/source" } },
-        "rules": { "description": "随插件安装的其他 .em 规则（相对路径）", "type": "array", "items": { "$ref": "#/definitions/relpath" } }
+        "rules": { "description": "随插件安装的其他 .em 规则（相对路径）", "type": "array", "items": { "$ref": "#/definitions/relpath" } },
+        "converters": {
+          "description": "格式转换器（只能用在 process 入口），见 docs/插件开发.md 第 15 节",
+          "type": "array",
+          "items": { "$ref": "#/definitions/converter" }
+        }
       },
       "anyOf": [
         { "required": ["sources"], "properties": { "sources": { "minItems": 1 } } },
-        { "required": ["rules"], "properties": { "rules": { "minItems": 1 } } }
+        { "required": ["rules"], "properties": { "rules": { "minItems": 1 } } },
+        { "required": ["converters"], "properties": { "converters": { "minItems": 1 } } }
       ]
     },
     "permissions": {
@@ -103,7 +109,14 @@
   },
   "allOf": [
     {
-      "if": { "properties": { "runtime": { "properties": { "type": { "const": "process" } } } } },
+      "if": {
+        "description": "有下载源的 process 入口要写命令和协议；只有 exec 转换器时可以不写（软件里有完整检查）",
+        "required": ["contributes"],
+        "properties": {
+          "runtime": { "properties": { "type": { "const": "process" } } },
+          "contributes": { "required": ["sources"], "properties": { "sources": { "minItems": 1 } } }
+        }
+      },
       "then": {
         "required": ["engines"],
         "properties": {
@@ -137,7 +150,8 @@
         "properties": {
           "contributes": {
             "properties": {
-              "sources": { "items": { "properties": { "capabilities": { "not": { "contains": { "const": "download" } } } } } }
+              "sources": { "items": { "properties": { "capabilities": { "not": { "contains": { "const": "download" } } } } } },
+              "converters": { "maxItems": 0 }
             }
           }
         }
@@ -184,6 +198,51 @@
           ]
         },
         "note": { "description": "一句话说明，显示在来源列表里", "type": "string" }
+      }
+    },
+    "converter": {
+      "type": "object",
+      "required": ["id", "inputs", "outputs"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$" },
+        "name": { "type": "string" },
+        "inputs": {
+          "description": "能处理的扩展名（不带点、小写），或 audio / video / *（任何文件）",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^(audio|video|\\*|[a-z0-9]{1,16})$" }
+        },
+        "outputs": {
+          "description": "能输出的扩展名；same 表示和输入相同",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "oneOf": [
+              { "type": "string", "pattern": "^(same|[a-z0-9]{1,16})$" },
+              {
+                "type": "object",
+                "required": ["ext"],
+                "additionalProperties": false,
+                "properties": { "ext": { "type": "string", "pattern": "^(same|[a-z0-9]{1,16})$" }, "name": { "type": "string" } }
+              }
+            ]
+          }
+        },
+        "options": {
+          "description": "每次转换的参数，格式同 settings，类型只能是 string / bool / int / select",
+          "type": "array",
+          "items": { "allOf": [{ "$ref": "#/definitions/setting" }, { "properties": { "type": { "enum": ["string", "bool", "int", "select"] } } }] }
+        },
+        "exec": {
+          "description": "不写代码时直接运行的命令模板，如 [\"bin/tool.exe\", \"{input}\", \"{output}\"]",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "changes_duration": { "description": "输出时长和输入不同（剪辑、去静音）：替换原文件时不比较时长", "type": "boolean" },
+        "note": { "description": "一句话说明，显示在格式转换页", "type": "string" }
       }
     },
     "setting": {

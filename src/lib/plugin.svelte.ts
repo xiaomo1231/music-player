@@ -19,6 +19,28 @@ export interface PluginSourceView {
   status: PluginStatus | null;
 }
 
+export interface ConverterOutput {
+  /** 扩展名；same 表示和输入相同 */
+  ext: string;
+  name: string;
+}
+
+/** 插件提供的格式转换器（plugin.json 的 contributes.converters） */
+export interface ConverterView {
+  plugin: string;
+  plugin_name: string;
+  id: string;
+  name: string;
+  /** 扩展名，或 audio / video / * */
+  inputs: string[];
+  outputs: ConverterOutput[];
+  options: SettingDef[];
+  note: string;
+  /** 直接运行命令行程序（没有进度） */
+  exec: boolean;
+  needs_settings: string[];
+}
+
 export interface PluginUpdate {
   version: string;
   repo: string;
@@ -49,6 +71,7 @@ export interface PluginView {
   icon: string;
   readme: string;
   sources: PluginSourceView[];
+  converters: ConverterView[];
   needs_settings: string[];
   has_settings: boolean;
   rules: string[];
@@ -83,6 +106,8 @@ export interface PluginPreview {
   trust: string;
   media_kinds: string[];
   sources: string[];
+  /** 格式转换器：“名字（输入 → 输出）” */
+  converters: string[];
   hosts: string[];
   lan_hosts: string[];
   login: 'none' | 'optional' | 'required';

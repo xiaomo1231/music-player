@@ -1,0 +1,66 @@
+{
+  "manifest": 1,
+  "id": "loudness-normalize",
+  "name": "两遍响度标准化",
+  "version": "1.0.0",
+  "author": "示例",
+  "description": "用软件自带的 FFmpeg 做两遍 EBU R128 响度标准化：先测量，再按测量值精确调整，比单遍 loudnorm 更准、不会忽大忽小。",
+  "license": "MIT",
+  "engines": { "app": ">=0.6.0", "protocol": 2 },
+  "runtime": {
+    "type": "process",
+    "command": {
+      "default": ["python", "main.py"],
+      "macos": ["python3", "main.py"],
+      "linux": ["python3", "main.py"]
+    }
+  },
+  "contributes": {
+    "converters": [
+      {
+        "id": "main",
+        "name": "响度标准化",
+        "inputs": ["audio", "video"],
+        "outputs": [
+          { "ext": "same", "name": "原格式" },
+          { "ext": "flac", "name": "FLAC" },
+          { "ext": "mp3", "name": "MP3 320k" }
+        ],
+        "options": [
+          {
+            "key": "target",
+            "type": "select",
+            "label": "目标响度",
+            "default": "-16",
+            "options": [
+              { "value": "-14", "label": "-14 LUFS（流媒体平台）" },
+              { "value": "-16", "label": "-16 LUFS（播客、手机）" },
+              { "value": "-23", "label": "-23 LUFS（EBU R128 广播）" }
+            ]
+          },
+          {
+            "key": "true_peak",
+            "type": "select",
+            "label": "峰值上限",
+            "default": "-1.5",
+            "options": ["-1.0", "-1.5", "-2.0"]
+          },
+          { "key": "lra", "type": "int", "label": "响度范围（LRA）", "default": 11, "help": "越小动态越收紧，一般 7–15" },
+          {
+            "key": "sample_rate",
+            "type": "select",
+            "label": "采样率",
+            "default": "keep",
+            "options": [
+              { "value": "keep", "label": "保持原样" },
+              { "value": "44100", "label": "44.1 kHz" },
+              { "value": "48000", "label": "48 kHz" }
+            ]
+          }
+        ],
+        "note": "视频保持画面不变，只处理音轨"
+      }
+    ]
+  },
+  "permissions": { "tools": ["ffmpeg", "ffprobe"] }
+}

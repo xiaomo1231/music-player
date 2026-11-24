@@ -108,6 +108,7 @@
       <h6>会提供</h6>
       <ul>
         {#if p.sources.length}<li>下载源：{p.sources.join('、')}{kinds ? `（${kinds}）` : ''}，装好后出现在“自动获取 → 我的来源”</li>{/if}
+        {#each p.converters ?? [] as c (c)}<li>格式转换：{c}，装好后出现在“格式转换”页</li>{/each}
         {#each p.rules as r (r)}<li>规则文件 {r}</li>{/each}
         {#if p.settings.length}<li>{p.settings.length} 项设置{p.settings.some(s => s.required) ? '（有必填项，装好后填写）' : ''}</li>{/if}
       </ul>

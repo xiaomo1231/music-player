@@ -132,3 +132,23 @@ export function saveAfter(v: ConvertAfter): void {
     // 忽略：不影响转换
   }
 }
+
+// ---------- 插件转换器 ----------
+
+/** 插件转换任务的 preset：plg:<插件>/<转换器>:<输出扩展名或 same> */
+export function converterPreset(plugin: string, id: string, ext: string): string {
+  return `plg:${plugin}/${id}:${ext}`;
+}
+
+export function parseConverterPreset(preset: string): { plugin: string; id: string; ext: string } | null {
+  const m = /^plg:([^/]+)\/(.+):([^:]+)$/.exec(preset);
+  return m ? { plugin: m[1], id: m[2], ext: m[3] } : null;
+}
+
+/** 转换器能不能处理这个文件（和后端 accepts_ext 同一套规则） */
+export function converterAccepts(inputs: string[], path: string): boolean {
+  const e = extOf(path);
+  return inputs.some(
+    i => i === '*' || (i === 'audio' && AUDIO_EXTS.includes(e)) || (i === 'video' && VIDEO_EXTS.includes(e)) || (e !== '' && i === e),
+  );
+}

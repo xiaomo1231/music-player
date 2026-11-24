@@ -11,6 +11,22 @@ pub const KINDS: [&str; 5] = ["music", "video", "anime", "manga", "novel"];
 pub const CAPS: [&str; 4] = ["search", "episodes", "resolve", "download"];
 pub const TOOLS: [&str; 3] = ["ytdlp", "ffmpeg", "ffprobe"];
 pub const SETTING_TYPES: [&str; 6] = ["string", "secret", "bool", "int", "select", "folder"];
+/// 转换参数（options）能用的类型
+pub const OPTION_TYPES: [&str; 4] = ["string", "bool", "int", "select"];
+/// 转换器 inputs 里的格式组
+pub const INPUT_GROUPS: [&str; 3] = ["audio", "video", "*"];
+/// exec 命令模板里能用的占位符（另外还有 `{option:<key>}`、`{setting:<key>}`）
+pub const EXEC_VARS: [&str; 9] = [
+    "input",
+    "output",
+    "output_dir",
+    "input_ext",
+    "output_ext",
+    "work_dir",
+    "plugin_dir",
+    "ffmpeg",
+    "ffprobe",
+];
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(default)]
@@ -58,6 +74,236 @@ pub struct Runtime {
 pub struct Contributes {
     pub sources: Vec<SourceDecl>,
     pub rules: Vec<String>,
+    pub converters: Vec<ConverterDecl>,
+}
+
+/// 格式转换器：声明能处理的输入格式、能输出的格式和每次转换的参数。说明见 `docs/插件开发.md` 第 15 节
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct ConverterDecl {
+    pub id: String,
+    pub name: String,
+    /// 扩展名（不带点，小写），或格式组 `audio` / `video` / `*`
+    pub inputs: Vec<String>,
+    /// `"mp3"`、`"same"`（和输入同格式），或 `{"ext": "mp3", "name": "MP3 320k"}`
+    pub outputs: Vec<serde_json::Value>,
+    /// 每次转换的参数，格式同 settings（类型只能是 string / bool / int / select）
+    pub options: Vec<Setting>,
+    /// 不写代码，直接运行的命令模板，如 `["bin/tool.exe", "{input}", "{output}"]`；空表示走协议 2 的 convert 方法
+    pub exec: Vec<String>,
+    /// 输出时长会和输入不同（剪掉静音、截取片段……）：替换原文件时不比较时长
+    pub changes_duration: bool,
+    pub note: String,
+}
+
+/// 转换器的一种输出格式
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct OutputFmt {
+    /// 扩展名，`same` 表示和输入相同
+    pub ext: String,
+    pub name: String,
+}
+
+/// 扩展名：小写字母和数字，1–16 位
+pub fn ext_ok(e: &str) -> bool {
+    (1..=16).contains(&e.len()) && e.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+}
+
+/// 输入格式列表里有没有这个扩展名（不分大小写）。`*` 是任何文件，`audio` / `video` 是软件认识的音频 / 视频扩展名
+pub fn accepts_ext(inputs: &[String], ext: &str) -> bool {
+    let e = ext.to_ascii_lowercase();
+    inputs.iter().any(|i| match i.as_str() {
+        "*" => true,
+        "audio" => crate::parse::AUDIO.contains(&e.as_str()),
+        "video" => crate::parse::VIDEO.contains(&e.as_str()),
+        x => !e.is_empty() && x == e,
+    })
+}
+
+impl ConverterDecl {
+    /// 这个转换器能不能处理这个扩展名（不分大小写）
+    pub fn accepts(&self, ext: &str) -> bool {
+        accepts_ext(&self.inputs, ext)
+    }
+
+    /// 输出格式列表（写错的项跳过，检查时会报出来）
+    pub fn output_list(&self) -> Vec<OutputFmt> {
+        self.outputs
+            .iter()
+            .filter_map(|o| {
+                let (ext, name) = match o {
+                    serde_json::Value::String(e) => (e.clone(), String::new()),
+                    serde_json::Value::Object(m) => (
+                        m.get("ext")?.as_str()?.to_string(),
+                        m.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(),
+                    ),
+                    _ => return None,
+                };
+                let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+                let name = if !name.trim().is_empty() {
+                    name
+                } else if ext == "same" {
+                    "同格式".to_string()
+                } else {
+                    ext.to_uppercase()
+                };
+                Some(OutputFmt { ext, name })
+            })
+            .collect()
+    }
+
+    /// 输出扩展名：`same` 换成输入的扩展名
+    pub fn resolve_ext(spec: &str, input_ext: &str) -> String {
+        if spec == "same" {
+            input_ext.to_ascii_lowercase()
+        } else {
+            spec.to_string()
+        }
+    }
+
+    fn check(&self, w: &str, m: &Manifest, dir: &Path, is: &mut Vec<String>) {
+        if !id_ok(&self.id, 1) {
+            is.push(format!("{w}.id 只能用小写字母、数字、-"));
+        }
+        if self.inputs.is_empty() {
+            is.push(format!("{w}.inputs 至少写一种输入格式（扩展名，或 audio / video / *）"));
+        }
+        for i in &self.inputs {
+            if !(INPUT_GROUPS.contains(&i.as_str()) || ext_ok(i)) {
+                is.push(format!("{w}.inputs 只能写不带点的小写扩展名，或 audio / video / *：{i}"));
+            }
+        }
+        if self.outputs.is_empty() {
+            is.push(format!("{w}.outputs 至少写一种输出格式"));
+        }
+        let list = self.output_list();
+        if list.len() != self.outputs.len() {
+            is.push(format!("{w}.outputs 每一项是扩展名字符串，或 {{\"ext\": \"mp3\", \"name\": \"…\"}}"));
+        }
+        let mut seen = vec![];
+        for o in &list {
+            if !(o.ext == "same" || ext_ok(&o.ext)) {
+                is.push(format!("{w}.outputs 的扩展名只能用小写字母和数字（或 same）：{}", o.ext));
+            }
+            if seen.contains(&o.ext) {
+                is.push(format!("{w}.outputs 重复：{}", o.ext));
+            }
+            seen.push(o.ext.clone());
+        }
+        let mut okeys = vec![];
+        for (j, o) in self.options.iter().enumerate() {
+            if o.key.is_empty() || o.label.is_empty() {
+                is.push(format!("{w}.options[{j}] 要有 key 和 label"));
+            }
+            if okeys.contains(&o.key) {
+                is.push(format!("{w}.options[{j}].key 重复：{}", o.key));
+            }
+            okeys.push(o.key.clone());
+            if !OPTION_TYPES.contains(&o.kind.as_str()) {
+                is.push(format!("{w}.options[{j}].type 只能是 string / bool / int / select"));
+            }
+            if o.kind == "select" && o.options.is_empty() {
+                is.push(format!("{w}.options[{j}] 是 select，要写 options"));
+            }
+        }
+        if !self.exec.is_empty() {
+            let first = &self.exec[0];
+            if Path::new(first).is_absolute() || first.starts_with(['/', '\\']) {
+                is.push(format!("{w}.exec 不能写绝对路径，用相对插件文件夹的路径"));
+            } else if !first.starts_with('{') {
+                let looks_local = first.contains(['/', '\\']) || Path::new(first).extension().is_some();
+                if looks_local && (!safe_rel(first) || !dir.join(first).is_file()) {
+                    is.push(format!("{w}.exec 里的程序不存在：{first}"));
+                }
+            }
+            let mut has_out = false;
+            for a in &self.exec {
+                match exec_vars(a) {
+                    Ok(vars) => {
+                        for v in vars {
+                            if v == "output" || v == "output_dir" {
+                                has_out = true;
+                            }
+                            if (v == "ffmpeg" || v == "ffprobe") && !m.permissions.tools.iter().any(|t| t == v) {
+                                is.push(format!("{w}.exec 用了 {{{v}}}，要在 permissions.tools 里声明 {v}"));
+                            }
+                            if let Some(k) = v.strip_prefix("option:") {
+                                if !self.options.iter().any(|o| o.key == k) {
+                                    is.push(format!("{w}.exec 引用的参数不存在：{{{v}}}"));
+                                }
+                            } else if let Some(k) = v.strip_prefix("setting:") {
+                                if !m.settings.iter().any(|s| s.key == k) {
+                                    is.push(format!("{w}.exec 引用的设置项不存在：{{{v}}}"));
+                                }
+                            } else if !EXEC_VARS.contains(&v) {
+                                is.push(format!("{w}.exec 不认识的占位符：{{{v}}}"));
+                            }
+                        }
+                    }
+                    Err(e) => is.push(format!("{w}.exec：{e}")),
+                }
+            }
+            if !has_out {
+                is.push(format!("{w}.exec 要用 {{output}}（或 {{output_dir}}）告诉程序输出到哪里"));
+            }
+        }
+    }
+}
+
+/// 取出命令模板一项里的占位符名。`{{` 和 `}}` 表示字面的花括号
+pub fn exec_vars(arg: &str) -> Result<Vec<&str>, String> {
+    let mut out = vec![];
+    let b = arg.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'{' if b.get(i + 1) == Some(&b'{') => i += 2,
+            b'}' if b.get(i + 1) == Some(&b'}') => i += 2,
+            b'{' => {
+                let end = arg[i + 1..].find('}').ok_or_else(|| format!("花括号没有闭合：{arg}"))?;
+                out.push(&arg[i + 1..i + 1 + end]);
+                i += end + 2;
+            }
+            b'}' => return Err(format!("多了一个 }}：{arg}")),
+            _ => i += 1,
+        }
+    }
+    Ok(out)
+}
+
+/// 按占位符填好命令模板的一项；`get` 返回 None 时报错
+pub fn fill_exec(arg: &str, get: &dyn Fn(&str) -> Option<String>) -> Result<String, String> {
+    let mut out = String::new();
+    let b = arg.as_bytes();
+    let mut i = 0;
+    let mut start = 0;
+    while i < b.len() {
+        match b[i] {
+            b'{' if b.get(i + 1) == Some(&b'{') => {
+                out.push_str(&arg[start..i]);
+                out.push('{');
+                i += 2;
+                start = i;
+            }
+            b'}' if b.get(i + 1) == Some(&b'}') => {
+                out.push_str(&arg[start..i]);
+                out.push('}');
+                i += 2;
+                start = i;
+            }
+            b'{' => {
+                out.push_str(&arg[start..i]);
+                let end = arg[i + 1..].find('}').ok_or_else(|| format!("花括号没有闭合：{arg}"))?;
+                let name = &arg[i + 1..i + 1 + end];
+                out.push_str(&get(name).ok_or_else(|| format!("占位符 {{{name}}} 没有值"))?);
+                i += end + 2;
+                start = i;
+            }
+            _ => i += 1,
+        }
+    }
+    out.push_str(&arg[start..]);
+    Ok(out)
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -202,6 +448,16 @@ impl Manifest {
         self.contributes.sources.iter().find(|s| s.id == id)
     }
 
+    pub fn converter(&self, id: &str) -> Option<&ConverterDecl> {
+        self.contributes.converters.iter().find(|c| c.id == id)
+    }
+
+    /// 只有 exec 转换器、没有下载源时，process 入口可以不写 runtime.command
+    fn command_optional(&self) -> bool {
+        let c = &self.contributes;
+        c.sources.is_empty() && !c.converters.is_empty() && c.converters.iter().all(|x| !x.exec.is_empty())
+    }
+
     /// 检查清单。`dir` 是插件文件夹（检查入口文件是否存在），`app_version` 是当前软件版本
     pub fn check(&self, dir: &Path, app_version: &str) -> Vec<String> {
         let mut is = vec![];
@@ -226,6 +482,7 @@ impl Manifest {
         match rt {
             "process" => {
                 match self.command() {
+                    None if self.command_optional() && self.runtime.command.is_empty() => {}
                     None => is.push("runtime.command 要按系统写命令数组，如 {\"default\": [\"python\", \"main.py\"]}".into()),
                     Some(argv) => {
                         let first = Path::new(&argv[0]);
@@ -252,7 +509,7 @@ impl Manifest {
             }
             _ => is.push("runtime.type 只能是 rule / process / js".into()),
         }
-        if matches!(rt, "process" | "js") && !PROTOCOLS.contains(&self.engines.protocol) {
+        if (rt == "js" || (rt == "process" && !self.command_optional())) && !PROTOCOLS.contains(&self.engines.protocol) {
             if self.engines.protocol > *PROTOCOLS.last().unwrap() {
                 is.push(format!("这个插件用的是更新的协议 {}，请先升级软件", self.engines.protocol));
             } else {
@@ -263,8 +520,20 @@ impl Manifest {
             is.push("js 入口只支持协议 2".into());
         }
         let c = &self.contributes;
-        if c.sources.is_empty() && c.rules.is_empty() {
-            is.push("contributes 里至少要有 sources 或 rules".into());
+        if c.sources.is_empty() && c.rules.is_empty() && c.converters.is_empty() {
+            is.push("contributes 里至少要有 sources、rules 或 converters".into());
+        }
+        if rt != "process" && !c.converters.is_empty() {
+            is.push("converters 只能用在 process 入口（转换要读写文件）".into());
+        }
+        let mut cseen = vec![];
+        for (i, cv) in c.converters.iter().enumerate() {
+            let w = format!("contributes.converters[{i}]");
+            if cseen.contains(&cv.id) {
+                is.push(format!("{w}.id 重复：{}", cv.id));
+            }
+            cseen.push(cv.id.clone());
+            cv.check(&w, self, dir, &mut is);
         }
         if rt == "rule" && c.sources.len() > 1 {
             is.push("rule 入口只能有一个下载源".into());
@@ -449,6 +718,60 @@ mod tests {
         m.engines.app.clear();
         m.engines.protocol = 3;
         assert!(m.check(&std::env::temp_dir(), "0.6.0").iter().any(|s| s.contains("更新的协议")));
+    }
+
+    #[test]
+    fn converters_are_checked() {
+        let ok = Manifest::parse(
+            r#"{"manifest":1,"id":"wrap-tool","name":"包装","version":"1.0.0","runtime":{"type":"process"},
+               "contributes":{"converters":[{"id":"main","inputs":["xyz","audio"],"outputs":["mp3","same"],
+                 "options":[{"key":"q","type":"int","label":"质量","default":2}],
+                 "exec":["{setting:tool}","-q","{option:q}","{input}","{output}"]}]},
+               "settings":[{"key":"tool","type":"string","label":"程序","required":true}]}"#,
+        )
+        .unwrap();
+        // 只有 exec 转换器时可以不写 runtime.command 和 protocol
+        assert_eq!(ok.check(&std::env::temp_dir(), "0.6.0"), Vec::<String>::new());
+        assert!(ok.converter("main").unwrap().accepts("XYZ"));
+        assert!(ok.converter("main").unwrap().accepts("flac"));
+        assert!(!ok.converter("main").unwrap().accepts(""));
+
+        let bad = Manifest::parse(
+            r#"{"manifest":1,"id":"bad-conv","name":"坏","version":"1.0.0","runtime":{"type":"js","file":"x.js"},"engines":{"protocol":2},
+               "contributes":{"converters":[
+                 {"id":"a","inputs":[".MP3"],"outputs":[],"options":[{"key":"s","type":"secret","label":"x"}]},
+                 {"id":"a","inputs":["wav"],"outputs":["flac","flac",3],"exec":["/usr/bin/x","{input}","{ffmpeg}","{option:nope}","{huh}"]}
+               ]}}"#,
+        )
+        .unwrap();
+        let is = bad.check(&std::env::temp_dir(), "0.6.0").join("\n");
+        for want in [
+            "只能用在 process",
+            "id 重复",
+            "inputs 只能写",
+            "至少写一种输出",
+            "options[0].type",
+            "outputs 重复",
+            "outputs 每一项",
+            "绝对路径",
+            "permissions.tools",
+            "参数不存在",
+            "不认识的占位符",
+            "{output}",
+        ] {
+            assert!(is.contains(want), "缺少提示 {want}：\n{is}");
+        }
+    }
+
+    #[test]
+    fn exec_placeholders() {
+        assert_eq!(exec_vars("-o={output}.{output_ext}").unwrap(), vec!["output", "output_ext"]);
+        assert_eq!(exec_vars("{{x}}").unwrap(), Vec::<&str>::new());
+        assert!(exec_vars("{oops").is_err());
+        assert!(exec_vars("a}b").is_err());
+        let get = |n: &str| (n == "input").then(|| "in.wav".to_string());
+        assert_eq!(fill_exec("--in={input} {{raw}}", &get).unwrap(), "--in=in.wav {raw}");
+        assert!(fill_exec("{output}", &get).is_err());
     }
 
     #[test]
